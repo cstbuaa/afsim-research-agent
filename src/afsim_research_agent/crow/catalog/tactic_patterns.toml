@@ -1,0 +1,132 @@
+# Abstract tactic patterns (crow-tactic-proposal-v1 §5.3).
+# Maintained by humans. Models may only choose IDs from this table; new
+# patterns go through human review.
+
+[meta]
+version = "tactic-patterns-2026.10.1"
+
+[[patterns]]
+id = "bounding_overwatch"
+name = "交替掩护推进"
+en = "bounding overwatch"
+roles = ["bounding element", "overwatch element"]
+examples = "地面交替跃进；海上蛙跳护航"
+
+[[patterns]]
+id = "traveling_overwatch"
+name = "行进间掩护"
+en = "traveling overwatch"
+roles = ["lead element", "trail element"]
+examples = "地面行进间掩护"
+
+[[patterns]]
+id = "formation_by_terrain"
+name = "依地形变换队形"
+en = "terrain-dependent formation change"
+roles = ["whole formation"]
+examples = "开阔地楔形、城区纵队"
+
+[[patterns]]
+id = "fix_and_maneuver"
+name = "正面牵制、侧翼机动"
+en = "fix and maneuver"
+roles = ["fixing element", "maneuver element"]
+examples = "地面牵制迂回"
+
+[[patterns]]
+id = "envelopment"
+name = "两翼包围 / 钳形夹击"
+en = "envelopment / pincer"
+roles = ["left wing", "right wing", "front"]
+examples = "空战钳形夹击；地面两翼包围"
+
+[[patterns]]
+id = "penetration"
+name = "正面突破"
+en = "penetration"
+roles = ["assault element", "support element"]
+examples = "空战正面强攻"
+
+[[patterns]]
+id = "feint_decoy"
+name = "佯动 / 诱饵"
+en = "feint / decoy"
+roles = ["decoy", "main effort"]
+examples = "空战多向诱饵"
+
+[[patterns]]
+id = "ambush"
+name = "伏击"
+en = "ambush"
+roles = ["kill zone element", "blocking element", "security element"]
+examples = "地面伏击"
+
+[[patterns]]
+id = "relay"
+name = "接力（火力、制导、通信）"
+en = "relay / handover"
+roles = ["initiator", "relay", "successor"]
+examples = "空战接续制导"
+
+[[patterns]]
+id = "rotation"
+name = "轮换前出（磨盘）"
+en = "rotation / wheel"
+roles = ["forward", "standby", "withdrawing"]
+examples = "空战动态磨盘"
+
+[[patterns]]
+id = "sensor_shooter_split"
+name = "探测与打击分离"
+en = "sensor-shooter split"
+roles = ["sensor", "shooter", "assessor"]
+examples = "分布式杀伤链"
+
+[[patterns]]
+id = "massing_fires"
+name = "集中火力"
+en = "massing fires"
+roles = ["fire unit", "controller"]
+examples = "火力集中射击"
+
+[[patterns]]
+id = "dispersion"
+name = "疏开"
+en = "dispersion"
+roles = ["whole formation"]
+examples = "双向疏开"
+
+[[patterns]]
+id = "delay_withdraw"
+name = "迟滞 / 边打边撤"
+en = "delay / fighting withdrawal"
+roles = ["covering element", "withdrawing element"]
+examples = "交替后撤"
+
+[[patterns]]
+id = "cover_withdrawal"
+name = "掩护撤离"
+en = "covered withdrawal"
+roles = ["covering element", "withdrawing element"]
+examples = "掩护脱离"
+
+[[patterns]]
+id = "elastic_defense"
+name = "弹性防御"
+en = "elastic defense"
+roles = ["defensive line", "reserve"]
+examples = "空战弹性防御"
+
+[[patterns]]
+id = "report_and_wait"
+name = "报告待令"
+en = "report and wait"
+roles = ["reporter", "receiver"]
+examples = "接敌报告"
+
+[[patterns]]
+id = "tasking_with_ack"
+name = "命令—应答"
+en = "tasking with acknowledgment"
+roles = ["commander", "executor"]
+examples = "长机分配战术、僚机确认"

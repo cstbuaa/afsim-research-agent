@@ -1,0 +1,2286 @@
+format: PlatformCapabilityCatalogPart
+format_version: 0.3.0
+catalog:
+  id: afsim_2_9_capabilities
+  platform_family: afsim
+  platform_version: '2.9'
+  language: zh-CN
+  classification: public
+  updated_on: '2026-10-16'
+part:
+  domain: mobility
+  display_name: 运动类
+  summary: 平台如何运动、行为能下达哪些机动命令、能读取哪些自身运动状态。
+  subcategories:
+  - id: basic_maneuver
+    display_name: 基本机动命令
+    summary: 运行时下达的定点、航向、速度、高度与停止命令，是战术机动的基本单元。
+  - id: route
+    display_name: 路线与路网
+    summary: 沿预设路线或道路网络行进，以及路线相关的事件与终点行为。
+  - id: own_state
+    display_name: 自身运动状态
+    summary: 平台自身位置、速度、航向、高度的读取，用于到达判定、距离计算和队形保持。
+  - id: following_formation
+    display_name: 跟随与编队
+    summary: 相对领队保持站位、跟随与路线切换、运行时变换队形。
+  - id: domain_profile
+    display_name: 运动域特性
+    summary: 地面、空中、水面、水下、旋翼机等运动域的性能限值、适用命令与边界。
+  - id: high_fidelity_flight
+    display_name: 高保真飞行
+    summary: 基于质量、气动与推进数据的六自由度飞行及其控制开关。
+  - id: trajectory_playback
+    display_name: 轨迹回放
+    summary: 按记录的时空位置数据重放运动。
+  - id: space
+    display_name: 航天运动
+    summary: 轨道传播、轨道机动与在轨姿态控制。
+  - id: munition_flyout
+    display_name: 弹药飞行
+    summary: 导弹、炸弹、炮弹、火箭等被发射后的飞行模型，行为层通常不直接操纵。
+  - id: towed
+    display_name: 拖曳
+    summary: 拖曳资产的部署几何与卷收。
+  - id: fidelity_selection
+    display_name: 保真度选择
+    summary: 按保真度在多个运动模型之间选择。
+conventions:
+  status: capability/provides/accepts 状态：available | partial | unavailable | unknown；partial = 来源有说明但接口参数或运行验证未完成；unknown
+    = 推断存在但来源未给出接口。
+  ir_v1: 对应 IR 1.0 的动作或操作数；null 表示 IR 1.0 无对应项（ir_gap）。
+  kind: mover = 运动组件直接提供；composite = 由其他能力组合实现（见 composed_of）；state = 状态读取。
+  replaces: 记录从 0.2.0 目录迁移来的条目，便于对照。
+capabilities:
+- id: point_navigation
+  display_name: 定点机动
+  aliases: []
+  domain: mobility
+  subcategory: basic_maneuver
+  kind: mover
+  description: 在运行时命令平台机动到指定地理位置。
+  natural_language:
+    definition: 命令平台离开当前运动目标，向给定的地理位置机动。
+    use_when: 跃进到新的掩护位置、占领阵地、前出到侦察点、飞向指定点等不依赖预设路线的机动。
+    expected_result: 平台向指定位置运动；是否到达、到达后停止还是继续运动，需要另行观测或命令。
+    boundaries:
+    - 不包含路径规划、通行性判断或避障，接近方式由具体运动实现决定。
+    - 到达以到达状态判定；到达后的运动行为（停止或继续）由具体运动实现决定，需在绑定时明确。
+    requirement_example: 跃进组接到命令后机动到前方指定位置，到达后停车并转为掩护。
+  tactical_uses:
+  - 交替跃进到新掩护位置
+  - 前出侦察
+  - 占领阵地
+  - 机动到集结点
+  - 按计算出的队形站位机动
+  keywords:
+  - 定点
+  - 机动到
+  - 前往
+  - 跃进
+  - 占领位置
+  - go to location
+  - move to position
+  - waypoint-free
+  applicable_platform_classes: &id001
+  - air_vehicle
+  - ground_vehicle
+  - surface_vessel
+  - subsurface_vehicle
+  status: available
+  maturity: reviewed
+  ir_v1:
+  - move_to_position
+  - bound_to_position
+  provides:
+  - ir: mobility_state.at_destination
+    display_name: 已到达指定位置
+    value_type: boolean
+    cardinality: one
+    freshness: event
+    status: supported
+    ir_v1: mover_value.at_destination
+    note: 来源未给出到达事件；可由自身位置与目标位置的距离判定。
+    basis: user_attested
+  accepts:
+  - ir: mobility_action.go_to_location
+    display_name: 机动到指定位置
+    status: supported
+    ir_v1: move_to_position
+    parameters:
+    - name: position
+      type: geo_position
+      reference: wgs84
+      required: true
+    result:
+      type: command_status
+      values: &id002
+      - accepted
+      - rejected
+      status: unknown
+    side_effects:
+    - 请求生效时替换当前运动目标，可能中断正在执行的路线；是否返回原路线需另行请求。
+    note: 来源只给出方法名，未给出参数（是否包含高度、速度）与返回值。
+    basis: user_attested
+  settings: []
+  dependencies: []
+  constraints:
+  - 平台需配置可接受运行时导航命令的运动组件。
+  limitations:
+  - 参数以本目录契约为准，原生调用与结果映射由适配层实现，尚未运行验证。
+  binding: local
+  confirmation:
+    basis: user_attested
+    by: user
+    confirmed_on: '2026-10-16'
+    note: 手册无运行时脚本接口参考；平台使用者确认这些接口可以实现。参数以本目录契约为准，原生调用由适配层实现；尚未运行验证。
+    interfaces:
+    - mobility_action.go_to_location
+    - mobility_state.at_destination
+- id: heading_control
+  display_name: 航向控制
+  aliases: []
+  domain: mobility
+  subcategory: basic_maneuver
+  kind: mover
+  description: 在运行时命令平台转向指定航向。
+  natural_language:
+    definition: 命令平台把运动方向转到给定的方位角。
+    use_when: 调整行进方向、转向观察方向、规避或在无路线时按方位行进。
+    expected_result: 平台在转弯性能限制内转向请求的方向。
+    boundaries:
+    - 多数运动模型把“航向”请求按航迹方向（速度矢量方向）执行；机身朝向与航迹方向可能不同。
+    - 旋翼机在低于风标速度时可单独设定机身朝向，见旋翼机运动。
+    - 转向可能使平台偏离当前路线。
+    requirement_example: 排长车在开阔地按 045 度方向行进，接近城区后转向 090 度。
+  tactical_uses:
+  - 转向
+  - 按方位行进
+  - 调整观察方向
+  - 规避
+  keywords:
+  - 航向
+  - 转向
+  - 方位
+  - heading
+  - course
+  - turn
+  applicable_platform_classes: *id001
+  status: available
+  maturity: reviewed
+  ir_v1:
+  - set_heading
+  provides: []
+  accepts:
+  - ir: mobility_action.turn_to_heading
+    display_name: 转向指定航向
+    status: supported
+    ir_v1: set_heading
+    parameters:
+    - name: heading
+      type: angle
+      unit: deg
+      reference: true_north_clockwise
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 请求生效时改变运动方向，可能中断路线跟随。
+    note: 来源说明多数运动模型按航迹方向执行航向请求。
+    basis: user_attested
+  settings:
+  - name: turn_rate_limit
+    display_name: 转弯角速率限制
+    type: angular_speed
+    unit: deg/s
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_radial_acceleration
+    display_name: 最大径向加速度
+    type: acceleration
+    unit: m/s^2
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 参数以本目录契约为准，原生调用与结果映射由适配层实现，尚未运行验证。
+  binding: local
+  confirmation:
+    basis: user_attested
+    by: user
+    confirmed_on: '2026-10-16'
+    note: 手册无运行时脚本接口参考；平台使用者确认这些接口可以实现。参数以本目录契约为准，原生调用由适配层实现；尚未运行验证。
+    interfaces:
+    - mobility_action.turn_to_heading
+- id: speed_control
+  display_name: 速度控制
+  aliases: []
+  domain: mobility
+  subcategory: basic_maneuver
+  kind: mover
+  description: 在运行时请求平台改变运动速度。
+  natural_language:
+    definition: 命令平台向请求的速度过渡，过渡过程受加速度限值约束。
+    use_when: 加速、减速、协调到达时机，或在接近任务区域、城区时降速。
+    expected_result: 平台向请求速度过渡；新的速率在被路线或其他命令改变前保持。
+    boundaries:
+    - 速度请求受各运动域的最大、最小速度限制。
+    - 实际速度需通过自身运动状态另行观测。
+    requirement_example: 车队在开阔地以较高速度行进，接近城区时降低行驶速度。
+  tactical_uses:
+  - 加速通过开阔地
+  - 接近城区减速
+  - 跃进
+  - 停车（速度降为零，见停止运动）
+  keywords:
+  - 速度
+  - 加速
+  - 减速
+  - speed
+  - throttle
+  applicable_platform_classes: *id001
+  status: available
+  maturity: reviewed
+  ir_v1:
+  - set_speed
+  provides: []
+  accepts:
+  - ir: mobility_action.set_speed
+    display_name: 调整速度
+    status: supported
+    ir_v1: set_speed
+    aliases_ir:
+    - mobility_action.set_ground_speed
+    - mobility_action.set_air_speed
+    - mobility_action.set_surface_speed
+    parameters:
+    - name: target_speed
+      type: speed
+      unit: m/s
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 请求生效时改变目标速度及后续运动；道路、地形与性能约束仍然适用。
+    basis: user_attested
+  settings:
+  - name: maximum_speed
+    display_name: 最大速度
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: minimum_speed
+    display_name: 最小速度
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_linear_acceleration
+    display_name: 最大线加速度
+    type: acceleration
+    unit: m/s^2
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 参数以本目录契约为准，原生调用与结果映射由适配层实现，尚未运行验证。
+  replaces:
+  - air_navigation.accepts[mobility_action.set_air_speed]
+  - ground_navigation.accepts[mobility_action.set_ground_speed]
+  - surface_navigation.accepts[mobility_action.set_surface_speed]
+  binding: local
+  confirmation:
+    basis: user_attested
+    by: user
+    confirmed_on: '2026-10-16'
+    note: 手册无运行时脚本接口参考；平台使用者确认这些接口可以实现。参数以本目录契约为准，原生调用由适配层实现；尚未运行验证。
+    interfaces:
+    - mobility_action.set_speed
+- id: altitude_control
+  display_name: 高度控制
+  aliases: []
+  domain: mobility
+  subcategory: basic_maneuver
+  kind: mover
+  description: 在运行时命令空中平台改变高度。
+  natural_language:
+    definition: 命令空中平台向请求的高度爬升或下降。
+    use_when: 改变巡航高度、低空突防、爬升规避。
+    expected_result: 平台在爬升率与航迹角限制内向请求高度过渡。
+    boundaries:
+    - 部分低保真空中模型的高度过渡不连续（不建模垂直加速度）。
+    - 高度基准待在绑定中确认。
+    - 地面车辆不适用。
+    requirement_example: 侦察机接近目标区前下降到指定高度。
+  tactical_uses:
+  - 改变高度
+  - 低空突防
+  - 爬升
+  keywords:
+  - 高度
+  - 爬升
+  - 下降
+  - altitude
+  - climb
+  - descend
+  applicable_platform_classes:
+  - air_vehicle
+  status: available
+  maturity: reviewed
+  ir_v1:
+  - set_altitude
+  provides: []
+  accepts:
+  - ir: mobility_action.go_to_altitude
+    display_name: 改变高度
+    status: supported
+    ir_v1: set_altitude
+    parameters:
+    - name: altitude
+      type: distance
+      unit: m
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 请求生效时改变目标高度及后续垂直运动。
+    note: 高度基准（平均海平面或地面以上）未在来源中说明。
+    basis: user_attested
+  settings:
+  - name: maximum_climb_rate
+    display_name: 最大爬升率
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_flight_path_angle
+    display_name: 最大航迹角
+    type: angle
+    unit: deg
+    required: false
+    sensitivity: model_characteristic
+  - name: minimum_altitude
+    display_name: 最低高度
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_altitude
+    display_name: 最高高度
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 参数以本目录契约为准，原生调用与结果映射由适配层实现，尚未运行验证。
+  binding: local
+  confirmation:
+    basis: user_attested
+    by: user
+    confirmed_on: '2026-10-16'
+    note: 手册无运行时脚本接口参考；平台使用者确认这些接口可以实现。参数以本目录契约为准，原生调用由适配层实现；尚未运行验证。
+    interfaces:
+    - mobility_action.go_to_altitude
+- id: motion_halt
+  display_name: 停止运动
+  aliases: []
+  domain: mobility
+  subcategory: basic_maneuver
+  kind: composite
+  description: 使平台停止运动并停留在当前位置（组合能力）。
+  natural_language:
+    definition: 通过把速度降为零，或让路线在终点停止，使平台停止运动。
+    use_when: 占领掩护位置、停车观察、交替跃进中掩护组停止、到达目标后停止。
+    expected_result: 平台减速至停止；停止后是否保持位置取决于运动实现。
+    boundaries:
+    - 来源中没有专用的停止命令。
+    - 停止由速度置零实现，或在路线终点停止；停止后是否保持位置需运行验证
+    - 路线终点停止只在走完路线时生效，路线默认在终点继续外推。
+    requirement_example: 跃进组到达新位置后停车，转为掩护。
+  tactical_uses:
+  - 停车掩护
+  - 占领阵地
+  - 停车观察
+  - 到达后停止
+  keywords:
+  - 停止
+  - 停车
+  - 就地
+  - halt
+  - stop
+  - hold position
+  applicable_platform_classes: *id001
+  status: available
+  maturity: reviewed
+  ir_v1:
+  - halt
+  - hold_overwatch_position
+  provides: []
+  accepts: []
+  settings: []
+  dependencies:
+  - speed_control
+  - route_navigation
+  composed_of:
+  - capability: speed_control
+    use: mobility_action.set_speed
+    with:
+      target_speed: 0
+    when: 运行中随时停止
+  - capability: route_navigation
+    use: setting end_behavior
+    with:
+      end_behavior: stop
+    when: 走完路线时停止
+  constraints: []
+  limitations:
+  - 组合方式尚未运行验证。
+  binding: local
+  confirmation:
+    basis: derived_from_user_attested
+    by: user
+    confirmed_on: '2026-10-16'
+    note: 由已确认的基础能力组合；组合方式尚未运行验证。
+- id: route_navigation
+  display_name: 路线导航
+  aliases: []
+  domain: mobility
+  subcategory: route
+  kind: mover
+  description: 沿预设或运行时指定的航点路线行进，并在临时机动后返回路线。
+  natural_language:
+    definition: 依次通过路线中的航点，在位置与速度约束下把平台引导到任务区域。
+    use_when: 巡逻、转移、按计划路线接近任务区域，或临时机动后返回原路线。
+    expected_result: 平台沿路线前进；临时改变运动后可请求返回路线；到达终点时按终点行为处理。
+    boundaries:
+    - 路线可执行性受转弯、速度、加速度以及所处运动域限制。
+    - 路线末端可能继续外推、停止或移除平台，不能默认为到达后停止。
+    - 不承诺路径自动避障或所有导航实现都接受相同的运行时操作。
+    - 终点行为默认继续外推（沿最后的航向和速度继续运动），不会自动停止。
+    - 航点切换可设为接近航点时切换或通过航点后切换（默认）。
+    requirement_example: 沿指定巡逻路线移动，完成临时机动后恢复原路线；走完路线后停车。
+  tactical_uses:
+  - 按计划路线行进
+  - 巡逻
+  - 临时机动后返回路线
+  - 到达路线终点后停止
+  keywords:
+  - 路线
+  - 航点
+  - 沿路线
+  - 返回路线
+  - route
+  - waypoint
+  - follow route
+  - return to route
+  applicable_platform_classes:
+  - air_vehicle
+  - ground_vehicle
+  - surface_vessel
+  - subsurface_vehicle
+  - weapon_platform
+  status: partial
+  maturity: reviewed
+  ir_v1:
+  - follow_route
+  provides:
+  - ir: route_state.waypoint_passed
+    display_name: 通过或跳过航点
+    value_type: string
+    cardinality: collection
+    freshness: event
+    status: partial
+    ir_v1: null
+    note: 来源说明通过或跳过航点时会执行该航点挂接的脚本，可作为事件来源；没有通用读取接口。
+  - ir: route_state.end_of_path
+    display_name: 走完路线
+    value_type: boolean
+    cardinality: one
+    freshness: event
+    status: unknown
+    ir_v1: mover_value.route_complete
+    note: 来源只给出终点行为配置，未给出可观测的事件或状态。
+  accepts:
+  - ir: mobility_action.follow_route
+    display_name: 沿指定路线行进
+    status: supported
+    ir_v1: follow_route
+    parameters:
+    - name: route
+      type: route_reference
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 请求生效时以新路线替换当前运动目标。
+    note: 来源在空战运动模型一节将其列为常规运动命令，参数与适用范围待核实。
+    basis: user_attested
+  - ir: mobility_action.resume_route
+    display_name: 恢复路线
+    status: supported
+    ir_v1: null
+    parameters: []
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 请求生效时可改变当前导航目标并恢复路线跟随；是否返回路线仍需后续观测。
+    note: IR 1.0 没有对应动作（ir_gap：return_to_route）。
+    basis: user_attested
+  settings:
+  - name: route_reference
+    display_name: 路线标识
+    type: string
+    required: false
+    sensitivity: public_generic
+  - name: start_label
+    display_name: 起始航点标签
+    type: string
+    required: false
+    sensitivity: public_generic
+  - name: start_time
+    display_name: 开始移动时间
+    type: duration
+    unit: s
+    required: false
+    sensitivity: public_generic
+  - name: end_behavior
+    display_name: 路线终点行为
+    type: enumeration
+    values:
+    - extrapolate
+    - stop
+    - remove
+    required: false
+    sensitivity: public_generic
+  - name: waypoint_switching
+    display_name: 航点切换方式
+    type: enumeration
+    values:
+    - on_approach
+    - on_passing
+    required: false
+    sensitivity: public_generic
+  - name: turn_failure_behavior
+    display_name: 无法精确到达航点时的处理
+    type: enumeration
+    values:
+    - best_effort
+    - reverse_turn
+    - ignore_point
+    required: false
+    sensitivity: model_characteristic
+  - name: turn_failure_threshold
+    display_name: 转弯失败判定阈值（相对转弯半径）
+    type: ratio
+    unit: '1'
+    required: false
+    sensitivity: model_characteristic
+  - name: path_variance_radius
+    display_name: 航点随机偏移半径
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: speed_variance_percent
+    display_name: 航点速度随机变化百分比
+    type: ratio
+    unit: percent
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints:
+  - 平台必须具备可执行航点路线的导航组件并已分配路线。
+  limitations:
+  - 航点事件以挂接脚本的执行为来源，标准化的事件接口待设计。
+  - 参数以本目录契约为准，原生调用与结果映射由适配层实现，尚未运行验证。
+  source_gaps:
+  - 路线定义章节（航点、标签、停留时间、航点挂接脚本）
+  binding: local
+  confirmation:
+    basis: user_attested
+    by: user
+    confirmed_on: '2026-10-16'
+    note: 手册无运行时脚本接口参考；平台使用者确认这些接口可以实现。参数以本目录契约为准，原生调用由适配层实现；尚未运行验证。
+    interfaces:
+    - mobility_action.follow_route
+    - mobility_action.resume_route
+- id: road_network_navigation
+  display_name: 路网导航
+  aliases: []
+  domain: mobility
+  subcategory: route
+  kind: mover
+  description: 在道路网络上按最短路径于起止点（及中间点）之间行进。
+  natural_language:
+    definition: 地面平台在配置的道路网络上计算起点、中间点和终点之间的最短路径并沿其行进。
+    use_when: 车辆沿道路转移、按道路接近城区或任务区域。
+    expected_result: 平台沿计算出的道路路径行进，道路外的起止段按越野速度行进。
+    boundaries:
+    - 最短路径在初始化时按配置计算，运行中改道的接口未见。
+    - 越野捷径只按用时比较，不包含通行性判断。
+    - 不包含交通规则、避碰或障碍规避。
+    requirement_example: 装甲排沿道路网络从集结地机动到城区边缘，道路外的最后一段按越野速度行进。
+  tactical_uses:
+  - 沿道路机动
+  - 按道路接近城区
+  - 道路行军
+  keywords:
+  - 道路
+  - 路网
+  - 最短路径
+  - 越野
+  - road
+  - road network
+  - shortest path
+  - off road
+  applicable_platform_classes:
+  - ground_vehicle
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: road_network_reference
+    display_name: 道路网络标识
+    type: string
+    required: false
+    sensitivity: public_generic
+  - name: start_position
+    display_name: 起点
+    type: geo_position
+    required: false
+    sensitivity: public_generic
+  - name: end_position
+    display_name: 终点
+    type: geo_position
+    required: false
+    sensitivity: public_generic
+  - name: on_road_speed
+    display_name: 道路行驶速度
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: off_road_speed
+    display_name: 越野行驶速度
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: linear_acceleration
+    display_name: 线加速度
+    type: acceleration
+    unit: m/s^2
+    required: false
+    sensitivity: model_characteristic
+  - name: start_pause
+    display_name: 起点停留时间
+    type: duration
+    unit: s
+    required: false
+    sensitivity: public_generic
+  - name: use_closest_road_point
+    display_name: 起止点取最近道路点
+    type: boolean
+    required: false
+    sensitivity: public_generic
+  - name: consider_off_road_shortcut
+    display_name: 考虑越野捷径
+    type: boolean
+    required: false
+    sensitivity: public_generic
+  dependencies:
+  - ground_navigation
+  constraints:
+  - 需要已定义的道路网络；起点与终点必须同时给出或都由路线给出。
+  limitations:
+  - 只有配置项，运行时接口未见。
+  source_gaps:
+  - 道路网络定义章节
+  - 运动组件与平台对象的运行时脚本接口参考（方法参数、返回值、适用模型）
+  replaces:
+  - ground_navigation.settings[road_network_reference]
+  binding: local
+- id: own_kinematic_state
+  display_name: 自身运动状态
+  aliases: []
+  domain: mobility
+  subcategory: own_state
+  kind: state
+  description: 读取平台自身的位置、速度、航向和高度。
+  natural_language:
+    definition: 平台自身当前的地理位置、速度、航向和高度。
+    use_when: 判断是否到达、计算与敌方或友邻的距离、保持车距和队形、判断是否进入某区域。
+    expected_result: 行为获得带单位和参考系的自身运动状态。
+    boundaries:
+    - 航向与航迹方向可能不同，需在绑定时区分。
+    - 高度向上为正，水下深度为负高度。
+    requirement_example: 僚车读取自身位置，计算与长车的距离，判断是否保持 50 米车距。
+  tactical_uses:
+  - 到达判定
+  - 计算与敌距离
+  - 保持车距
+  - 区域进入判定
+  - 队形误差计算
+  keywords:
+  - 位置
+  - 速度
+  - 航向
+  - 高度
+  - 坐标
+  - position
+  - location
+  - speed
+  - heading
+  - altitude
+  - own state
+  applicable_platform_classes:
+  - air_vehicle
+  - ground_vehicle
+  - surface_vessel
+  - subsurface_vehicle
+  - space_vehicle
+  - weapon_platform
+  - static_node
+  status: available
+  maturity: reviewed
+  ir_v1:
+  - self_value.position_x
+  - self_value.position_y
+  - self_value.speed
+  - self_value.heading
+  - self_value.altitude
+  provides:
+  - ir: platform_state.position
+    display_name: 自身位置
+    value_type: geo_position
+    cardinality: one
+    reference_frame: wgs84
+    freshness: dynamic
+    status: supported
+    ir_v1: self_value.position_x
+    note: IR 1.0 使用局部平面坐标 position_x / position_y，需由经纬度转换。
+    basis: user_attested
+  - ir: platform_state.speed
+    display_name: 自身速度
+    value_type: speed
+    unit: m/s
+    cardinality: one
+    freshness: dynamic
+    status: supported
+    ir_v1: self_value.speed
+    basis: user_attested
+  - ir: platform_state.heading
+    display_name: 自身航向
+    value_type: angle
+    unit: deg
+    cardinality: one
+    reference_frame: true_north_clockwise
+    freshness: dynamic
+    status: supported
+    ir_v1: self_value.heading
+    note: 需区分航迹方向与机身朝向。
+    basis: user_attested
+  - ir: platform_state.altitude_msl
+    display_name: 自身高度（平均海平面）
+    value_type: distance
+    unit: m
+    cardinality: one
+    reference_frame: mean_sea_level_positive_up
+    freshness: dynamic
+    status: supported
+    ir_v1: self_value.altitude
+    aliases_ir:
+    - mobility_state.altitude_msl
+    basis: user_attested
+  accepts: []
+  settings: []
+  dependencies: []
+  constraints: []
+  limitations:
+  - 参数以本目录契约为准，原生调用与结果映射由适配层实现，尚未运行验证。
+  replaces:
+  - subsurface_navigation.provides[mobility_state.altitude_msl]
+  binding: local
+  confirmation:
+    basis: user_attested
+    by: user
+    confirmed_on: '2026-10-16'
+    note: 手册无运行时脚本接口参考；平台使用者确认这些接口可以实现。参数以本目录契约为准，原生调用由适配层实现；尚未运行验证。
+    interfaces:
+    - platform_state.position
+    - platform_state.speed
+    - platform_state.heading
+    - platform_state.altitude_msl
+- id: formation_following
+  display_name: 编队跟随
+  aliases: []
+  domain: mobility
+  subcategory: following_formation
+  kind: mover
+  description: 相对指定领队保持预定的前、右、下偏移站位。
+  natural_language:
+    definition: 跟随平台相对领队保持配置的偏移位置，并可读取相对领队的位置作为判断依据。
+    use_when: 僚车跟随长车保持队形站位、僚机跟随长机编队飞行。
+    expected_result: 跟随平台随领队运动并保持偏移；领队消失时按配置停止、外推或移除。
+    boundaries:
+    - 不提供自动选举领队、编队重组或避碰保证。
+    - 参考平台消失后的处置取决于具体跟随实现。
+    - 相对位置需保留参考系，读取绑定尚未逐类确认。
+    - 偏移在配置时给定，运行中修改偏移的接口未见；变换队形见“变换队形”。
+    - 地面与水面跟随只有刚性附着可用，来源注明弹性附着当前不起作用。
+    requirement_example: 跟随领队保持侧后方站位，依据相对位置判断是否脱离编队。
+  tactical_uses:
+  - 僚车跟随长车
+  - 保持队形站位
+  - 编队飞行
+  keywords:
+  - 编队
+  - 跟随
+  - 站位
+  - 偏移
+  - 长车
+  - 长机
+  - formation
+  - follow leader
+  - offset
+  - station keeping
+  applicable_platform_classes:
+  - air_vehicle
+  - ground_vehicle
+  - surface_vessel
+  - subsurface_vehicle
+  status: partial
+  maturity: draft
+  ir_v1:
+  - keep_station
+  provides:
+  - ir: formation_state.relative_forward
+    display_name: 相对领队前向位置
+    value_type: distance
+    unit: m
+    cardinality: one
+    reference_frame: leader_body
+    freshness: dynamic
+    status: unknown
+    ir_v1: null
+  - ir: formation_state.relative_right
+    display_name: 相对领队右向位置
+    value_type: distance
+    unit: m
+    cardinality: one
+    reference_frame: leader_body
+    freshness: dynamic
+    status: unknown
+    ir_v1: null
+  - ir: formation_state.relative_down
+    display_name: 相对领队下向位置
+    value_type: distance
+    unit: m
+    cardinality: one
+    reference_frame: leader_body
+    freshness: dynamic
+    status: unknown
+    ir_v1: null
+  accepts: []
+  settings:
+  - name: leader
+    display_name: 领队平台
+    type: platform_reference
+    required: false
+    sensitivity: public_generic
+  - name: desired_forward_offset
+    display_name: 期望前向偏移
+    type: distance
+    unit: m
+    required: false
+    sensitivity: public_generic
+  - name: desired_right_offset
+    display_name: 期望右向偏移
+    type: distance
+    unit: m
+    required: false
+    sensitivity: public_generic
+  - name: desired_down_offset
+    display_name: 期望下向偏移
+    type: distance
+    unit: m
+    required: false
+    sensitivity: public_generic
+  - name: attachment_mode
+    display_name: 附着方式
+    type: enumeration
+    values:
+    - rigid
+    - tether
+    required: false
+    sensitivity: public_generic
+  - name: leader_loss_behavior
+    display_name: 领队消失时的处理
+    type: enumeration
+    values:
+    - stop
+    - extrapolate
+    - remove
+    required: false
+    sensitivity: public_generic
+  - name: initialize_at_offset
+    display_name: 初始化时置于偏移位置
+    type: boolean
+    required: false
+    sensitivity: public_generic
+  dependencies: []
+  constraints:
+  - 领队平台须先于跟随平台定义，或跟随平台自带初始位置。
+  limitations:
+  - 相对位置契约是从平台状态访问与相对几何观测归纳的待绑定接口，不是已确认的通用读取方法。
+  - 刚性偏移跟随不代表真实的编队捕获动力学。
+  - IR 1.0 的保持站位动作带队形参数，与本能力的固定偏移不完全对应。
+  binding: local
+- id: follower_route_switching
+  display_name: 跟随与路线切换
+  aliases: []
+  domain: mobility
+  subcategory: following_formation
+  kind: mover
+  description: 在跟随领队与沿自身路线行进两种方式之间切换。
+  natural_language:
+    definition: 平台可配置为先跟随领队或先沿自身路线；领队消失时可自动切回路线并回到路线上最近的点。
+    use_when: 平时随长车行进、长车损失后按预定路线继续执行任务。
+    expected_result: 按当前方式运动；领队消失且启用自动切换时回到自身路线。
+    boundaries:
+    - 运行中主动切换方式的接口未见，来源只给出配置项。
+    - 自动切换只在领队消失时触发。
+    requirement_example: 僚车跟随长车行进；长车被击毁后，僚车自动沿预定路线继续前往集结点。
+  tactical_uses:
+  - 长车损失后继续执行任务
+  - 跟随与独立行进切换
+  keywords:
+  - 跟随
+  - 切换
+  - 领队消失
+  - 接替
+  - follow
+  - switch
+  - leader lost
+  applicable_platform_classes:
+  - air_vehicle
+  - ground_vehicle
+  - surface_vessel
+  status: partial
+  maturity: draft
+  provides: []
+  accepts:
+  - ir: mobility_action.set_following_mode
+    display_name: 切换跟随或路线方式
+    status: unknown
+    ir_v1: null
+    parameters:
+    - name: mode
+      type: enumeration
+      values:
+      - follow
+      - route
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 请求生效时改变当前运动方式。
+    note: 只有配置项有来源，运行时切换命令未确认。
+  settings:
+  - name: initial_mode
+    display_name: 初始方式
+    type: enumeration
+    values:
+    - follow
+    - route
+    required: false
+    sensitivity: public_generic
+  - name: auto_return_on_leader_loss
+    display_name: 领队消失时自动回到路线
+    type: boolean
+    required: false
+    sensitivity: public_generic
+  dependencies:
+  - formation_following
+  - route_navigation
+  constraints: []
+  limitations:
+  - 运行时切换命令与结果均未确认。
+  source_gaps:
+  - 运动组件与平台对象的运行时脚本接口参考（方法参数、返回值、适用模型）
+  binding: local
+- id: formation_change
+  display_name: 变换队形
+  aliases: []
+  domain: mobility
+  subcategory: following_formation
+  kind: composite
+  description: 在运行中改变编队几何（如楔形转纵队），由行为层组合实现。
+  natural_language:
+    definition: 根据新的队形计算每个成员相对领队的站位，再以定点机动和速度控制使成员到位并保持。
+    use_when: 开阔地楔形转纵队、展开、收拢、改变车距。
+    expected_result: 成员逐步移动到新站位；队形精度取决于更新周期、机动性能和自身状态读取。
+    boundaries:
+    - 来源中没有原生的运行时队形变换命令；固定偏移跟随不支持运行中改变偏移。
+    - 不包含避碰；成员同时机动可能交叉。
+    requirement_example: 接近城区时，排长下令由楔形转为纵队，各车依次进入纵队位置并保持 50 米车距。
+  tactical_uses:
+  - 楔形转纵队
+  - 展开
+  - 收拢
+  - 调整车距
+  keywords:
+  - 队形
+  - 变换队形
+  - 楔形
+  - 纵队
+  - 车距
+  - formation change
+  - wedge
+  - column
+  - spacing
+  applicable_platform_classes:
+  - ground_vehicle
+  - air_vehicle
+  - surface_vessel
+  status: available
+  maturity: reviewed
+  ir_v1:
+  - assume_formation
+  - keep_station
+  - follow_route_with_offset
+  - formation_value.slot_error
+  - formation_value.in_position
+  provides: []
+  accepts: []
+  settings: []
+  dependencies:
+  - own_kinematic_state
+  - point_navigation
+  - speed_control
+  composed_of:
+  - capability: own_kinematic_state
+    use: platform_state.position
+    when: 计算自身与站位的偏差
+  - capability: own_kinematic_state
+    use: platform_state.position（领队）
+    when: 获取领队位置；也可经消息或航迹获得
+  - capability: point_navigation
+    use: mobility_action.go_to_location
+    when: 机动到计算出的站位
+  - capability: speed_control
+    use: mobility_action.set_speed
+    when: 到位后匹配领队速度
+  constraints: []
+  limitations:
+  - 组合方式尚未运行验证。
+  binding: local
+  confirmation:
+    basis: derived_from_user_attested
+    by: user
+    confirmed_on: '2026-10-16'
+    note: 由已确认的基础能力组合；组合方式尚未运行验证。
+- id: ground_navigation
+  display_name: 地面导航
+  aliases: []
+  domain: mobility
+  subcategory: domain_profile
+  kind: mover
+  description: 沿地形或道路移动并响应行驶速度请求。
+  natural_language:
+    definition: 将地面平台沿路线引导到目标区域，并在行驶约束内改变速度。
+    use_when: 车辆转移、地面巡逻或按道路接近任务区域时。
+    expected_result: 平台依照所选地形或道路模型移动，并向请求速度过渡。
+    boundaries:
+    - 道路最短路径计算仅适用于已配置道路网络的实现。
+    - 地形跟随不表示具备通行性判断、交通规则或障碍规避能力。
+    - 道路与越野选项只影响平台是否滚转的姿态表现，不影响运动方式；路网行驶见“路网导航”。
+    - 转弯受径向加速度与转弯率限制，航点可能无法精确到达，按路线导航中的处理方式执行。
+    requirement_example: 车辆沿给定路线转移，在接近任务区域时降低行驶速度。
+  tactical_uses:
+  - 车辆机动
+  - 行军
+  - 接近城区
+  keywords:
+  - 地面
+  - 车辆
+  - 陆地
+  - 坦克
+  - 装甲
+  - ground
+  - vehicle
+  - land
+  - terrain following
+  applicable_platform_classes:
+  - ground_vehicle
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  supported_commands:
+  - speed_control
+  - point_navigation
+  - heading_control
+  - route_navigation
+  - motion_halt
+  - road_network_navigation
+  settings: &id008
+  - &id003
+    name: maximum_speed
+    display_name: 最大速度
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - &id004
+    name: minimum_speed
+    display_name: 最小速度
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - &id005
+    name: maximum_linear_acceleration
+    display_name: 最大线加速度
+    type: acceleration
+    unit: m/s^2
+    required: false
+    sensitivity: model_characteristic
+  - &id006
+    name: maximum_radial_acceleration
+    display_name: 最大径向加速度
+    type: acceleration
+    unit: m/s^2
+    required: false
+    sensitivity: model_characteristic
+  - &id007
+    name: turn_rate_limit
+    display_name: 转弯角速率限制
+    type: angular_speed
+    unit: deg/s
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - heading_control
+  - motion_halt
+  - point_navigation
+  - road_network_navigation
+  - route_navigation
+  - speed_control
+  constraints:
+  - 平台需要具备适用的地面导航组件。
+  limitations:
+  - 道路与越野速度限制可能不同。
+  replaces:
+  - ground_navigation.accepts → speed_control
+  - ground_navigation.settings[road_network_reference] → road_network_navigation
+  binding: local
+- id: air_navigation
+  display_name: 空中导航
+  aliases: []
+  domain: mobility
+  subcategory: domain_profile
+  kind: mover
+  description: 在空中调整飞行速度，配合路线完成空域机动。
+  natural_language:
+    definition: 使飞行平台在其速度与机动包线内响应速度请求。
+    use_when: 飞行任务需要加速、减速或与其他平台协调到达时机时。
+    expected_result: 平台向请求速度过渡，过渡过程受飞行性能限制。
+    boundaries:
+    - 不承诺连续垂直过渡、完整空气动力学或自动起降。
+    - 航迹方向与机身朝向可能不同，不能将二者混为一谈。
+    - 部分低保真模型只响应航点的位置、高度与速度，忽略航向、距离、时间、爬升率与航迹角等航点命令。
+    - 部分运动学模型不能完全替代基础空中模型，若干脚本与路线方法不适用。
+    requirement_example: 接近巡逻区域前降低飞行速度，并继续执行航点路线。
+  tactical_uses:
+  - 空中巡逻
+  - 飞向目标区
+  - 编队飞行
+  keywords:
+  - 空中
+  - 飞行
+  - 飞机
+  - 无人机
+  - air
+  - aircraft
+  - uav
+  - flight
+  applicable_platform_classes:
+  - air_vehicle
+  - weapon_platform
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  supported_commands:
+  - speed_control
+  - point_navigation
+  - heading_control
+  - altitude_control
+  - route_navigation
+  - motion_halt
+  settings:
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - name: maximum_climb_rate
+    display_name: 最大爬升率
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_flight_path_angle
+    display_name: 最大航迹角
+    type: angle
+    unit: deg
+    required: false
+    sensitivity: model_characteristic
+  - name: bank_angle_limit
+    display_name: 坡度限制
+    type: angle
+    unit: deg
+    required: false
+    sensitivity: model_characteristic
+  - name: minimum_altitude
+    display_name: 最低高度
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_altitude
+    display_name: 最高高度
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - altitude_control
+  - heading_control
+  - motion_halt
+  - point_navigation
+  - route_navigation
+  - speed_control
+  constraints:
+  - 请求速度必须在所选飞行导航实现的性能包线内。
+  limitations:
+  - 不同飞行导航实现对高度变化和平滑过渡的支持不同。
+  replaces:
+  - air_navigation.accepts → speed_control
+  binding: local
+- id: surface_navigation
+  display_name: 水面导航
+  aliases: []
+  domain: mobility
+  subcategory: domain_profile
+  kind: mover
+  description: 在水面沿路线航行并响应航速请求。
+  natural_language:
+    definition: 使水面平台按任务路线航行，在航行性能限制内调整航速。
+    use_when: 水面巡逻、转移或接近任务要求改变航速时。
+    expected_result: 平台在水面运动域内向请求航速过渡。
+    boundaries:
+    - 不包含水动力、海况响应或碰撞规避保证。
+    - 不因具有水面导航就认为平台能够下潜。
+    requirement_example: 水面平台沿巡逻路线航行，并在接近任务区域时减速。
+  tactical_uses:
+  - 水面巡逻
+  - 护航
+  - 转移
+  keywords:
+  - 水面
+  - 舰船
+  - 航行
+  - surface
+  - ship
+  - vessel
+  applicable_platform_classes:
+  - surface_vessel
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  supported_commands:
+  - speed_control
+  - point_navigation
+  - heading_control
+  - route_navigation
+  - motion_halt
+  settings: *id008
+  dependencies:
+  - heading_control
+  - motion_halt
+  - point_navigation
+  - route_navigation
+  - speed_control
+  constraints:
+  - 平台必须配置水面导航组件，航速请求应满足其运动约束。
+  limitations:
+  - 基础水面模型的俯仰与横滚默认不反映海况。
+  replaces:
+  - surface_navigation.accepts → speed_control
+  binding: local
+- id: subsurface_navigation
+  display_name: 水下导航
+  aliases: []
+  domain: mobility
+  subcategory: domain_profile
+  kind: mover
+  description: 在水下沿任务路线航行，并依据深度状态判断任务条件。
+  natural_language:
+    definition: 在潜航约束下沿路线运动，并以相对海平面的高度表征深度。
+    use_when: 水下转移或巡逻需要根据深度判断是否满足任务条件时。
+    expected_result: 平台按水下路线运动，行为获得带垂直基准的深度相关状态。
+    boundaries:
+    - 不包含声学隐蔽、浮力平衡、海底避碰或自动规避水面能力。
+    - 高度向上为正，水下深度不能直接当作正高度使用。
+    - 水下状态读取接口仍待确认。
+    requirement_example: 潜航平台沿任务路线移动，依据相对海平面的高度检查是否保持在指定深度范围。
+  tactical_uses:
+  - 水下转移
+  - 水下巡逻
+  keywords:
+  - 水下
+  - 潜航
+  - 潜艇
+  - 深度
+  - subsurface
+  - submarine
+  - depth
+  applicable_platform_classes:
+  - subsurface_vehicle
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  supported_commands:
+  - speed_control
+  - point_navigation
+  - heading_control
+  - route_navigation
+  - own_kinematic_state
+  settings:
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - name: minimum_altitude
+    display_name: 最低允许高度
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_altitude
+    display_name: 最高允许高度
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - heading_control
+  - own_kinematic_state
+  - point_navigation
+  - route_navigation
+  - speed_control
+  constraints:
+  - 平台必须配置适合水下运动的导航组件，路线必须满足高度与速度限制。
+  limitations:
+  - 深度读取改由“自身运动状态”的高度项提供。
+  replaces:
+  - subsurface_navigation.provides[mobility_state.altitude_msl] → own_kinematic_state
+  binding: local
+- id: rotorcraft_navigation
+  display_name: 旋翼机运动
+  aliases: []
+  domain: mobility
+  subcategory: domain_profile
+  kind: mover
+  description: 旋翼机的速率引导运动，支持运动模式切换、低速机身朝向和定点保持。
+  natural_language:
+    definition: 以预定义的运动模式（如悬停、巡航、冲刺）约束速度、爬升率和加速度，低速时可单独设定机身朝向。
+    use_when: 悬停观察、低速定点、在巡航与冲刺之间切换。
+    expected_result: 切换模式后立即采用该模式的速度与加速度限值；接近目标点时转为位置捕获并保持。
+    boundaries:
+    - 未定义模式时模式切换命令被忽略。
+    - 高于风标速度时机身朝向随航迹方向，低于时采用设定的机身朝向。
+    requirement_example: 侦察直升机在观察点切换到悬停模式并把机身朝向目标方向。
+  tactical_uses:
+  - 悬停观察
+  - 低速定点
+  - 模式切换
+  keywords:
+  - 旋翼
+  - 直升机
+  - 悬停
+  - 模式
+  - rotorcraft
+  - helicopter
+  - hover
+  - mode
+  applicable_platform_classes:
+  - air_vehicle
+  status: partial
+  maturity: draft
+  provides: []
+  accepts:
+  - ir: mobility_action.set_motion_mode
+    display_name: 切换运动模式
+    status: partial
+    ir_v1: null
+    parameters:
+    - name: mode
+      type: string
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 请求生效时立即采用该模式的速度、爬升率与加速度限值。
+    note: 来源给出脚本调用示例；IR 1.0 无对应动作。
+  - ir: mobility_action.set_body_heading
+    display_name: 设定机身朝向
+    status: partial
+    ir_v1: null
+    parameters:
+    - name: heading
+      type: angle
+      unit: deg
+      reference: true_north_clockwise
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 低于风标速度时改变机身朝向，不改变航迹方向。
+  supported_commands:
+  - speed_control
+  - point_navigation
+  - heading_control
+  - altitude_control
+  - route_navigation
+  settings:
+  - name: motion_modes
+    display_name: 运动模式定义
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  - name: start_mode
+    display_name: 初始模式
+    type: string
+    required: false
+    sensitivity: public_generic
+  - name: weathercock_speed
+    display_name: 风标速度
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: position_hold_capture_radius
+    display_name: 定点捕获半径
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_ground_speed
+    display_name: 模式最大地速
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_rate_of_climb
+    display_name: 模式最大爬升率
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_rate_of_descent
+    display_name: 模式最大下降率
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - speed_control
+  - point_navigation
+  - altitude_control
+  constraints: []
+  limitations:
+  - 参数与结果映射待核实。
+  binding: local
+- id: six_dof_flight_control
+  display_name: 六自由度飞行控制
+  aliases: []
+  domain: mobility
+  subcategory: high_fidelity_flight
+  kind: mover
+  description: 基于质量、气动与推进数据的高保真飞行，提供控制输入与推力相关开关。
+  natural_language:
+    definition: 按三个平移和三个旋转自由度积分运动方程，控制来源可以是手动、合成飞行员、自动驾驶仪或制导系统。
+    use_when: 需要真实飞行动力学的空战、导弹或航天器仿真。
+    expected_result: 平台按物理模型飞行；行为可以启用或禁用控制输入、使自动驾驶仪归零、开关推力矢量。
+    boundaries:
+    - 需要完整的质量、气动和推进数据，调校工作量大。
+    - 刚体模型内部更新率高、计算量大；点质量模型更简单。
+    - 高层机动命令（定点、航向等）在本模型上的适用性未在来源中说明。
+    requirement_example: 导弹从载机释放后先禁用控制以弹道方式下落，延时后再启用控制。
+  tactical_uses:
+  - 高保真空战
+  - 武器释放后控制时序
+  keywords:
+  - 六自由度
+  - 6dof
+  - 气动
+  - 推进
+  - 自动驾驶仪
+  - six dof
+  - autopilot
+  - rigid body
+  - point mass
+  applicable_platform_classes:
+  - air_vehicle
+  - weapon_platform
+  status: partial
+  maturity: draft
+  provides: []
+  accepts:
+  - ir: mobility_action.set_controls_enabled
+    display_name: 启用或禁用控制输入
+    status: partial
+    ir_v1: null
+    parameters:
+    - name: enabled
+      type: boolean
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 改变是否接受任何来源的控制输入。
+  - ir: mobility_action.set_autopilot_neutral
+    display_name: 使自动驾驶仪归零
+    status: partial
+    ir_v1: null
+    parameters:
+    - name: enabled
+      type: boolean
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 自动驾驶仪把操纵面居中、油门收至慢车。
+  - ir: mobility_action.set_thrust_vectoring_enabled
+    display_name: 开关推力矢量
+    status: partial
+    ir_v1: null
+    parameters:
+    - name: enabled
+      type: boolean
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 改变推力矢量控制是否生效。
+  settings:
+  - name: vehicle_type_reference
+    display_name: 载具类型
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  - name: engines_on
+    display_name: 发动机初始开启
+    type: boolean
+    required: false
+    sensitivity: public_generic
+  - name: initial_throttle
+    display_name: 初始油门
+    type: enumeration
+    values:
+    - idle
+    - full
+    - afterburner
+    required: false
+    sensitivity: model_characteristic
+  - name: ignore_crashes
+    display_name: 忽略坠毁判定
+    type: boolean
+    required: false
+    sensitivity: public_generic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 配置项与对应运行时方法的映射来自来源说明，重载与结果待核实。
+  binding: local
+- id: trajectory_playback
+  display_name: 轨迹回放
+  aliases: []
+  domain: mobility
+  subcategory: trajectory_playback
+  kind: mover
+  description: 按记录的时间、位置、速度和姿态数据重放平台运动。
+  natural_language:
+    definition: 从时空位置数据读取每个时刻的位置、速度、航向与姿态，并据此更新平台。
+    use_when: 回放真实航迹、让目标按剧本运动、复现历史态势。
+    expected_result: 平台严格按数据运动。
+    boundaries:
+    - 数据单位可配置，默认秒、米、米/秒和弧度。
+    - 回放期间是否响应其他机动命令未在来源中说明。
+    requirement_example: 敌方编队按记录的航迹回放，用于检验己方战术反应。
+  tactical_uses:
+  - 目标剧本运动
+  - 航迹回放
+  keywords:
+  - 回放
+  - 航迹
+  - 剧本
+  - playback
+  - tspi
+  - trajectory file
+  applicable_platform_classes:
+  - air_vehicle
+  - ground_vehicle
+  - surface_vessel
+  - subsurface_vehicle
+  status: partial
+  maturity: draft
+  provides: []
+  accepts:
+  - ir: mobility_action.set_trajectory_source
+    display_name: 指定回放数据
+    status: partial
+    ir_v1: null
+    parameters:
+    - name: trajectory_source
+      type: string
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 改变平台随后回放的数据来源。
+  settings:
+  - name: trajectory_source
+    display_name: 回放数据
+    type: string
+    required: false
+    sensitivity: public_generic
+  - name: start_time
+    display_name: 回放开始时间
+    type: duration
+    unit: s
+    required: false
+    sensitivity: public_generic
+  dependencies: []
+  constraints: []
+  limitations: []
+  binding: local
+- id: orbital_maneuvering
+  display_name: 轨道机动
+  aliases: []
+  domain: mobility
+  subcategory: space
+  kind: mover
+  description: 执行受速度增量预算和事件时机约束的轨道变更。
+  natural_language:
+    definition: 通过给定参考系下的速度增量改变航天平台轨道。
+    use_when: 在轨转移、相位调整或接近任务需要改变轨道运动状态时。
+    expected_result: 在满足时机、燃料和动力约束时执行轨道变化。
+    boundaries:
+    - 任务调度成功不等于机动完成或已达到目标轨道。
+    - 瞬时与有限时长机动的适用条件不同，有限机动支持范围取决于实现。
+    - 不能假设每种轨道传播实现都支持所有机动。
+    requirement_example: 在允许的时机沿指定轨道参考系施加速度增量，调整在轨相对位置。
+  tactical_uses:
+  - 轨道转移
+  - 交会
+  - 相位调整
+  - 在轨规避
+  keywords:
+  - 轨道
+  - 机动
+  - 变轨
+  - 交会
+  - 霍曼
+  - orbit
+  - maneuver
+  - delta-v
+  - rendezvous
+  - hohmann
+  applicable_platform_classes:
+  - space_vehicle
+  status: partial
+  maturity: draft
+  provides: []
+  accepts:
+  - ir: mobility_action.apply_orbital_delta_velocity
+    display_name: 执行轨道速度增量
+    status: partial
+    parameters:
+    - name: reference_frame
+      type: enumeration
+      values:
+      - inertial
+      - radial_intrack_crosstrack
+      required: true
+    - name: delta_velocity_x
+      type: speed
+      unit: m/s
+      required: true
+    - name: delta_velocity_y
+      type: speed
+      unit: m/s
+      required: true
+    - name: delta_velocity_z
+      type: speed
+      unit: m/s
+      required: true
+    - name: execution_delay
+      type: duration
+      unit: s
+      required: true
+    result:
+      type: command_status
+      values:
+      - accepted
+      - rejected
+      status: unknown
+    side_effects:
+    - 可改变待执行的机动事件；实际执行时可改变轨道状态并消耗可用机动预算或推进剂，调度不证明执行完成。
+    ir_v1: null
+  - ir: mobility_action.execute_orbital_event
+    display_name: 执行轨道事件
+    status: partial
+    ir_v1: null
+    parameters:
+    - name: event_type
+      type: enumeration
+      values:
+      - change_eccentricity
+      - change_inclination
+      - change_raan
+      - change_raan_and_inclination
+      - change_semi_major_axis
+      - circularize
+      - compound
+      - delta_v
+      - drift
+      - hohmann_transfer
+      - intercept
+      - match_velocity
+      - natural_motion_circumnavigation
+      - normal
+      - rendezvous
+      - tangent
+      - target
+      - teardrop
+      - change_attitude
+      - perform_staging
+      - scripted
+      required: true
+    - name: execution_constraint
+      type: string
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 调度轨道事件；执行时改变轨道并消耗速度增量预算。
+  - ir: mobility_action.execute_mission_sequence
+    display_name: 执行轨道任务序列
+    status: partial
+    ir_v1: null
+    parameters:
+    - name: mission_sequence
+      type: string
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 按顺序调度多个轨道事件。
+  settings:
+  - name: delta_velocity_budget
+    display_name: 可用速度增量预算
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_acceleration
+    display_name: 最大机动加速度
+    type: acceleration
+    unit: m/s^2
+    required: false
+    sensitivity: model_characteristic
+  - name: maneuvering_model
+    display_name: 机动模型
+    type: enumeration
+    values:
+    - simple
+    - rocket
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints:
+  - 需要有效轨道初始状态与可用机动模型。
+  - 执行时必须具备足够速度增量预算或推进剂。
+  limitations:
+  - 已确认任务事件执行接口，但事件构造、重载与标准化结果映射仍待核实。
+  - 地球轨道解析模型与数值积分模型的能力边界不同。
+  binding: local
+- id: orbital_attitude_control
+  display_name: 在轨姿态控制
+  aliases: []
+  domain: mobility
+  subcategory: space
+  kind: mover
+  description: 改变航天平台指向目标，为观测或能源姿态提供支持。
+  natural_language:
+    definition: 使在轨平台的指向轴和约束轴朝向指定目标关系。
+    use_when: 任务需要平台持续朝向天底、太阳或其他已知参考目标时。
+    expected_result: 平台按姿态控制约束向指定指向关系转动。
+    boundaries:
+    - 姿态调整不等于轨道改变，也不保证传感器已经探测到目标。
+    - 转向可能瞬时完成，也可能受到角速率限制。
+    requirement_example: 在观测阶段让平台朝向天底，并保持规定的辅助方向约束。
+  tactical_uses:
+  - 对地观测指向
+  - 对日定向
+  keywords:
+  - 姿态
+  - 指向
+  - 天底
+  - 对日
+  - attitude
+  - pointing
+  - nadir
+  - sun
+  applicable_platform_classes:
+  - space_vehicle
+  status: partial
+  maturity: draft
+  provides: []
+  accepts:
+  - ir: mobility_action.set_orbital_orientation
+    display_name: 设置在轨指向关系
+    status: partial
+    parameters:
+    - name: pointing_target
+      type: enumeration
+      values:
+      - nadir
+      - sun
+      - inertial_velocity
+      required: true
+    - name: constraint_direction
+      type: enumeration
+      values:
+      - nadir
+      - sun
+      - inertial_velocity
+      required: true
+    result:
+      type: command_status
+      values:
+      - accepted
+      - rejected
+      status: unknown
+    side_effects:
+    - 请求生效时可改变平台指向目标及后续姿态；转动受所选姿态控制约束。
+    ir_v1: null
+  settings:
+  - name: maximum_yaw_rate
+    display_name: 最大偏航角速率
+    type: angular_speed
+    unit: deg/s
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_pitch_rate
+    display_name: 最大俯仰角速率
+    type: angular_speed
+    unit: deg/s
+    required: false
+    sensitivity: model_characteristic
+  - name: maximum_roll_rate
+    display_name: 最大滚转角速率
+    type: angular_speed
+    unit: deg/s
+    required: false
+    sensitivity: model_characteristic
+  - name: attitude_controller
+    display_name: 姿态控制器
+    type: enumeration
+    values:
+    - instant
+    - rate_limited
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints:
+  - 平台需要在轨姿态控制器。
+  - 指向目标与辅助约束的组合必须是实现支持的有效组合。
+  limitations:
+  - 标准方向组合已确认，但规范参数到具体调用重载及结果的映射仍需验证。
+  binding: local
+- id: orbit_propagation
+  display_name: 轨道传播
+  aliases: []
+  domain: mobility
+  subcategory: space
+  kind: mover
+  description: 按选定的传播模型计算航天平台的轨道运动。
+  natural_language:
+    definition: 以质点、二体、地球扁率摄动、通用摄动或数值积分等模型传播轨道。
+    use_when: 卫星、星座的位置计算与在轨态势。
+    expected_result: 平台按选定模型沿轨道运动。
+    boundaries:
+    - 不同传播模型支持的机动与精度不同。
+    - 初始化可用位置速度、经典轨道根数或两行根数。
+    requirement_example: 侦察卫星按两行根数初始化，并按扁率摄动模型传播。
+  tactical_uses:
+  - 卫星过顶时间计算
+  - 星座态势
+  keywords:
+  - 轨道传播
+  - 卫星
+  - 两行根数
+  - 摄动
+  - propagation
+  - satellite
+  - tle
+  - j2
+  - kepler
+  applicable_platform_classes:
+  - space_vehicle
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: propagator
+    display_name: 传播模型
+    type: enumeration
+    values:
+    - keplerian
+    - j2_perturbation
+    - general_perturbation
+    - numerical_integration
+    required: false
+    sensitivity: model_characteristic
+  - name: initialization
+    display_name: 初始化方式
+    type: enumeration
+    values:
+    - position_velocity
+    - classical_elements
+    - two_line_elements
+    required: false
+    sensitivity: model_characteristic
+  - name: oblate_earth
+    display_name: 考虑地球扁率
+    type: boolean
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 只有配置项；运行时读取轨道状态的接口未在本次资料中。
+  binding: local
+- id: guided_munition_flyout
+  display_name: 制导弹药飞行
+  aliases: []
+  domain: mobility
+  subcategory: munition_flyout
+  kind: mover
+  description: 导弹、制导炸弹等发射后的制导飞行模型。
+  natural_language:
+    definition: 以点质量三自由度方程（或指定的导弹库模型）模拟多级推进与制导飞行，拦截目标航迹。
+    use_when: 导弹、制导炸弹、直线拦截弹的飞行。
+    expected_result: 弹药按推进与制导规律飞向目标。
+    boundaries:
+    - 飞行由武器系统发射触发，行为层通常不直接操纵。
+    - 命中判定与飞行终止由引信或处理器决定，部分移动模型不会自行终止。
+    - 直线拦截模型需要平台上有当前目标航迹。
+    requirement_example: 防空平台发射的导弹按比例导引飞向来袭目标。
+  tactical_uses:
+  - 导弹拦截
+  - 制导打击
+  keywords:
+  - 导弹
+  - 制导
+  - 飞行
+  - 拦截
+  - missile
+  - guided
+  - flyout
+  - intercept
+  applicable_platform_classes:
+  - weapon_platform
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: flyout_model
+    display_name: 飞行模型
+    type: enumeration
+    values:
+    - point_mass_3dof
+    - straight_line_intercept
+    - library_missile_model
+    required: false
+    sensitivity: model_characteristic
+  - name: stage_count
+    display_name: 推进级数
+    type: count
+    unit: count
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 只有配置项；发射与交战见武器类能力。
+  binding: local
+- id: ballistic_munition_flyout
+  display_name: 弹道弹药飞行
+  aliases: []
+  domain: mobility
+  subcategory: munition_flyout
+  kind: mover
+  description: 非制导弹药、炮弹、火箭与战术弹道导弹的弹道飞行模型。
+  natural_language:
+    definition: 以抛物线、一阶阻力、火箭方程或非制导推进模型计算弹道。
+    use_when: 火炮、迫击炮、火箭弹、非制导炸弹、战术弹道导弹的飞行。
+    expected_result: 弹药沿计算的弹道飞行。
+    boundaries:
+    - 部分模型不自行终止，地形撞击需另行判定。
+    - 炮弹模型通常配合火力发射计算与射表使用。
+    - 战术弹道导弹简化模型按地面射程反算发射角，可能只是最佳尝试。
+    requirement_example: 迫击炮弹按射表弹道飞向指定落点。
+  tactical_uses:
+  - 火炮射击
+  - 火箭弹打击
+  keywords:
+  - 弹道
+  - 炮弹
+  - 火箭弹
+  - 非制导
+  - 抛物线
+  - ballistic
+  - artillery
+  - unguided
+  - rocket
+  - tbm
+  applicable_platform_classes:
+  - weapon_platform
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: flyout_model
+    display_name: 飞行模型
+    type: enumeration
+    values:
+    - parabolic
+    - first_order_drag_artillery
+    - unguided_rocket
+    - tactical_ballistic_missile
+    required: false
+    sensitivity: model_characteristic
+  - name: remove_on_impact
+    display_name: 撞击时移除
+    type: boolean
+    required: false
+    sensitivity: public_generic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 只有配置项；发射与交战见武器类能力。
+  binding: local
+- id: towed_asset_recovery
+  display_name: 拖曳资产部署与回收
+  aliases: []
+  domain: mobility
+  subcategory: towed
+  kind: mover
+  description: 拖曳资产按部署几何跟随承载平台，并按设定时机和速度卷回。
+  natural_language:
+    definition: 由承载平台指定一项已部署的拖曳资产，在指定时机以给定速度将该资产卷回。
+    use_when: 拖曳任务结束或平台需要回收已部署资产时。
+    expected_result: 到达卷收时机后按设定速率回收指定资产。
+    boundaries:
+    - 本能力不部署资产，也不保证回收后恢复可重复使用数量。
+    - 承载平台消失可能直接移除资产，而不是完成回收。
+    - 每次请求必须明确指定一项由本承载平台部署的拖曳资产，不隐式选择首项或全部资产。
+    - 拖曳资产以武器方式发射后才进入仿真；承载平台被摧毁时资产被移除。
+    - 可沿承载平台的航迹跟随，或按相对方位、俯仰刚性跟随。
+    requirement_example: 同时部署多项拖曳资产时，只为指定的一项安排卷收，并给定回收时机和正的回收速度。
+  tactical_uses:
+  - 拖曳诱饵
+  - 拖曳声呐
+  keywords:
+  - 拖曳
+  - 诱饵
+  - 卷收
+  - towed
+  - decoy
+  - reel in
+  applicable_platform_classes:
+  - air_vehicle
+  - surface_vessel
+  - subsurface_vehicle
+  status: partial
+  maturity: draft
+  provides: []
+  accepts:
+  - ir: mobility_action.schedule_towed_recovery
+    display_name: 安排拖曳资产卷收
+    status: partial
+    parameters:
+    - name: towed_asset
+      type: platform_reference
+      required: true
+    - name: recovery_start_time
+      type: duration
+      unit: s
+      reference: simulation_start
+      required: true
+    - name: recovery_speed
+      type: speed
+      unit: m/s
+      required: true
+    result:
+      type: command_status
+      values:
+      - accepted
+      - rejected
+      status: unknown
+    side_effects:
+    - 可分别改变指定资产的卷收时机和速率，两项设置不保证原子生效；实际卷收可改变拖曳距离，库存恢复仍取决于独立配置。
+    ir_v1: null
+  settings:
+  - name: tow_length
+    display_name: 期望拖曳长度
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: reel_out_speed
+    display_name: 卷出速度
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: reel_in_speed
+    display_name: 卷入速度
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: follow_lead_trajectory
+    display_name: 沿承载平台航迹跟随
+    type: boolean
+    required: false
+    sensitivity: public_generic
+  - name: azimuth_relative_to_lead
+    display_name: 相对承载平台方位
+    type: angle
+    unit: deg
+    required: false
+    sensitivity: model_characteristic
+  - name: elevation_relative_to_lead
+    display_name: 相对承载平台俯仰
+    type: angle
+    unit: deg
+    required: false
+    sensitivity: model_characteristic
+  - name: restore_quantity
+    display_name: 回收后恢复数量
+    type: boolean
+    required: false
+    sensitivity: public_generic
+  dependencies: []
+  constraints:
+  - 目标引用必须指向仍存在且由发起请求的承载平台部署的拖曳资产。
+  - 每次请求只作用于明确指定的单项资产。
+  - 回收速度必须为正，并同时设定卷收时机。
+  limitations:
+  - 动作需要组合设置时机和速率，两次调用不保证原子完成，标准化结果仍待验证。
+  binding: local
+- id: motion_fidelity_selection
+  display_name: 运动模型保真度选择
+  aliases: []
+  domain: mobility
+  subcategory: fidelity_selection
+  kind: mover
+  description: 为同一平台配置多个运动模型，按保真度选择其一。
+  natural_language:
+    definition: 按保真度数值在多个运动模型之间选择，未匹配时使用默认模型。
+    use_when: 同一想定需要在低保真快速运行与高保真分析之间切换时。
+    expected_result: 平台使用与所选保真度匹配的运动模型。
+    boundaries:
+    - 选择在配置时完成，运行中切换的接口未见。
+    requirement_example: 批量仿真时用低保真运动模型，单次复盘时切换为高保真模型。
+  tactical_uses: []
+  keywords:
+  - 保真度
+  - 多分辨率
+  - fidelity
+  - multiresolution
+  applicable_platform_classes:
+  - air_vehicle
+  - ground_vehicle
+  - surface_vessel
+  - subsurface_vehicle
+  - space_vehicle
+  - weapon_platform
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: models
+    display_name: 候选运动模型
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  - name: fidelity
+    display_name: 保真度
+    type: ratio
+    unit: '1'
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 只有配置项。
+  binding: local

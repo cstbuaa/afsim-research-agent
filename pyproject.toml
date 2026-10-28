@@ -1,0 +1,66 @@
+[project]
+name = "afsim-research-agent"
+version = "0.1.0"
+description = "Controllable research and retrieval foundation for an AFSIM behavior-modeling agent."
+requires-python = ">=3.11,<4.0"
+dependencies = [
+    "deepagents>=0.7.23,<0.8.0",
+    "langchain-ollama>=1.0.0,<2.0.0",
+    "langchain-openai>=1.0.0,<2.0.0",
+    "paper-qa[pymupdf]==2026.8.12",
+    "pydantic>=2.13.0,<3.0.0",
+    "python-dotenv>=1.0.0,<2.0.0",
+    "requests>=2.32.0,<3.0.0",
+    "tavily-python>=0.8.5,<1.0.0",
+    "trafilatura>=2.3.0,<3.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0,<10.0.0",
+    "ruff>=0.15.0,<0.16.0",
+]
+
+[build-system]
+requires = ["setuptools>=83.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"afsim_research_agent.domain" = ["data/*.toml"]
+"afsim_research_agent.ir" = ["catalog/*.toml", "schema/*.json"]
+"afsim_research_agent.crow" = ["catalog/*.toml"]
+"afsim_research_agent.capability" = ["aliases.toml", "groups.toml"]
+"afsim_research_agent.orchestrator.web" = ["static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
+addopts = "-m 'not live'"
+markers = [
+    "live: calls real search, download and model APIs; run with `pytest -m live`",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Inline YAML fixtures read better unwrapped.
+"tests/ir_specs.py" = ["E501"]
+"tests/unit/ir/*.py" = ["E501"]
+"tests/unit/falcon/*.py" = ["E501"]
+"tests/unit/orchestrator/*.py" = ["E501"]
+"tests/falcon_fixtures.py" = ["E501"]
+# Chinese prompt and report text reads better unwrapped.
+"src/afsim_research_agent/falcon/*.py" = ["E501"]
+"src/afsim_research_agent/orchestrator/*.py" = ["E501"]
+"src/afsim_research_agent/crow/capability_annotation.py" = ["E501"]
+"src/afsim_research_agent/crow/redteam.py" = ["E501"]
+"src/afsim_research_agent/crow/selection_report.py" = ["E501"]
+# Template with illustrative engine calls in comments.
+"integrations/**/*.py" = ["E501"]

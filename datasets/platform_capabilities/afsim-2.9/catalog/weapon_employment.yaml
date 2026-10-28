@@ -1,0 +1,1796 @@
+format: PlatformCapabilityCatalogPart
+format_version: 0.3.0
+catalog:
+  id: afsim_2_9_capabilities
+  platform_family: afsim
+  platform_version: '2.9'
+  language: zh-CN
+  classification: public
+  updated_on: '2026-10-16'
+part:
+  domain: weapon_employment
+  display_name: 武器类
+  summary: 平台用什么武器、何时能打、怎么开火、打了以后造成什么毁伤、如何对抗来袭武器。
+  subcategories:
+  - id: engagement_control
+    display_name: 交战控制
+    summary: 选择武器、开火（直射、制导、齐射）、停火、间接火力射击、武器开关。
+  - id: readiness_inventory
+    display_name: 武器状态与弹药
+    summary: 武器是否就绪、剩余弹药、补装与冷却。
+  - id: engagement_assessment
+    display_name: 交战评估
+    summary: 发射前判断是否在包线内、预测拦截时间；发射后观察命中、未命中、终止。
+  - id: damage_effects
+    display_name: 毁伤效果
+    summary: 弹药对目标造成什么毁伤：爆炸半径、概率表、机动/火力/摧毁杀伤、激光能量。
+  - id: countermeasure
+    display_name: 对抗措施
+    summary: 释放箔条等自卫对抗措施，以及对抗措施对来袭武器的削弱。
+  - id: weapon_type
+    display_name: 武器类型
+    summary: 独立飞行弹药、直接作用武器、高能激光、射频干扰器、子对象武器的特性与边界。
+  - id: launch_computation
+    display_name: 发射计算
+    summary: 各类发射计算模型及离线生成发射包线数据的工具。
+conventions:
+  status: capability/provides/accepts 状态：available | partial | unavailable | unknown；partial = 来源有说明但接口参数或运行验证未完成；unknown
+    = 推断存在但来源未给出接口。
+  ir_v1: 对应 IR 1.0 的动作、操作数或函数；null 表示 IR 1.0 无对应项（ir_gap）。
+  kind: weapon = 武器组件提供；effect = 毁伤模型（想定配置）；state = 状态读取；composite = 由其他能力组合；tool = 离线工具。
+  replaces: 记录从 0.2.0 目录迁移或改名的条目。
+capabilities:
+- id: weapon_selection
+  display_name: 武器选择
+  aliases: []
+  domain: weapon_employment
+  subcategory: engagement_control
+  kind: weapon
+  description: 为目标和交战上下文确定具体武器资源，保留资源身份供后续评估或释放使用。
+  natural_language:
+    definition: 为目标和交战上下文确定具体武器资源，保留资源身份供后续评估或释放使用。
+    use_when: 行为需要从本平台多个武器中选择指定资源或比较候选资源时。
+    expected_result: 获得所选武器引用，选择失败或资源不可用时不伪造有效引用。
+    boundaries:
+    - 选择武器不发射，也不代表获得交战许可。
+    - 具名资源选择与基于评分的自动最优选择不同，后者的最终查询尚未确认。
+    requirement_example: 按目标需要选定一个具名武器，再分别检查包线、库存及交战许可。
+  tactical_uses:
+  - 主炮/机枪/反坦克导弹的选择
+  - 按目标类型选弹
+  - 节约高价值弹药
+  keywords:
+  - 选择武器
+  - 选弹
+  - 主炮
+  - 机枪
+  - 导弹
+  - weapon selection
+  - select weapon
+  applicable_platform_classes: &id001
+  - air_vehicle
+  - ground_vehicle
+  - surface_vessel
+  - subsurface_vehicle
+  - space_vehicle
+  - static_node
+  - weapon_platform
+  status: partial
+  maturity: draft
+  provides:
+  - ir: weapon_selection.selected_weapon
+    display_name: 选定武器资源
+    value_type: weapon_reference
+    cardinality: collection
+    key: selection_context_id
+    freshness: dynamic
+    status: partial
+    item_scope: per_selection_context
+    metadata:
+    - target
+    - weapon_owner
+    ir_v1: null
+  accepts: []
+  settings: []
+  dependencies: []
+  constraints:
+  - 选择上下文须明确目标与武器所属平台，不能以武器类型代替具体资源身份。
+  limitations:
+  - 已确认具名资源获取与运行期武器目标配对，未确认通用最优武器选择查询或统一评分接口。
+  source_gaps:
+  - 武器、发射计算机的运行时脚本接口参考（开火、停火、状态与库存读取的方法、参数、返回值）
+  binding: local
+- id: weapon_launch
+  display_name: 武器释放与发射
+  aliases: []
+  domain: weapon_employment
+  subcategory: engagement_control
+  kind: weapon
+  description: 向指定武器资源提交针对目标的通用释放或发射请求。
+  natural_language:
+    definition: 向指定武器资源提交针对目标的通用释放或发射请求。
+    use_when: 行为已决定使用武器，需要提交一轮或多轮释放请求时。
+    expected_result: 对目标和武器保留发射请求，实际释放及后续效果通过独立事件确认。
+    boundaries:
+    - 通用发射不自动承诺直射模型或发射后制导。
+    - 请求排队成功不等于已经离架，也不等于命中或毁伤。
+    - 射击请求可设首发延迟、轮间隔和请求之间的最小间隔；同时进行的请求数有上限（默认 1）。
+    - 没有目标航迹或航迹信息不足时，可按假定距离和高度推算目标位置射击。
+    requirement_example: 向选定武器提交两轮目标发射请求，并单独等待实际释放事件。
+  tactical_uses:
+  - 齐射
+  - 按轮次射击
+  - 对区域盲射
+  keywords:
+  - 开火
+  - 发射
+  - 齐射
+  - 射击
+  - fire
+  - launch
+  - salvo
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  ir_v1:
+  - fire_weapon
+  provides: []
+  accepts:
+  - ir: weapon_action.launch
+    display_name: 提交武器释放请求
+    status: partial
+    parameters:
+    - name: weapon
+      type: weapon_reference
+      required: true
+    - name: target
+      type: track_reference
+      required: true
+    - name: round_count
+      type: count
+      required: true
+      unit: count
+    result:
+      type: command_status
+      values:
+      - accepted
+      - rejected
+      status: unknown
+    side_effects:
+    - 请求可能进入释放调度；实际释放可消耗所选资源的弹药并创建飞行武器，后续效果须独立观察。
+    ir_v1: fire_weapon
+  settings:
+  - name: first_round_delay
+    display_name: 首次释放等待时间
+    type: duration
+    required: false
+    sensitivity: model_characteristic
+    unit: s
+  - name: round_interval
+    display_name: 齐射轮次间隔
+    type: duration
+    required: false
+    sensitivity: model_characteristic
+    unit: s
+  - name: max_concurrent_requests
+    display_name: 并发发射请求上限
+    type: count
+    required: false
+    sensitivity: model_characteristic
+    unit: count
+  - name: reengage_interval
+    display_name: 两次射击请求之间的最小间隔
+    type: duration
+    unit: s
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  - name: assumed_target_range
+    display_name: 无目标航迹时的假定射击距离
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: assumed_target_height
+    display_name: 无目标航迹时的假定目标高度
+    type: distance
+    unit: m
+    default: 1
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - weapon_selection
+  - command_authority
+  constraints:
+  - 目标航迹和武器引用必须有效，轮数为正；资源可用性、库存、并发限制与重装限制必须满足。
+  - 外部武器服务部署须保持分配后的武器身份且确认资源已就绪。
+  limitations:
+  - 提交的齐射请求可延迟执行；通用原生返回到抽象命令状态的完整映射尚未确认。
+  source_gaps:
+  - 武器、发射计算机的运行时脚本接口参考（开火、停火、状态与库存读取的方法、参数、返回值）
+  replaces:
+  - 设置 首次释放等待时间 改用中立名 first_round_delay
+  - 设置 齐射轮次间隔 改用中立名 round_interval
+  - 设置 并发发射请求上限 改用中立名 max_concurrent_requests
+  binding: local
+- id: direct_fire_engagement
+  display_name: 指定目标直接开火
+  aliases: []
+  domain: weapon_employment
+  subcategory: engagement_control
+  kind: weapon
+  description: 使用直接瞄准的武器资源，对指定目标提交带数量的开火请求。
+  natural_language:
+    definition: 使用直接瞄准的武器资源，对指定目标提交带数量的开火请求。
+    use_when: 行为需要以直射弹药或持续照射方式对明确目标开火时。
+    expected_result: 获得指定武器、目标与请求数量关联的接受或拒绝结果，实际射击及效果分别观察。
+    boundaries:
+    - 直接开火描述瞄准运用方式，不以是否创建独立弹药平台区分；请求接受不证明已发射、命中或毁伤。
+    - 通用释放请求不承诺直射运用；本能力不承诺发射后制导，也不覆盖间接火力。
+    - 持续照射的请求数量不等于照射时长或热容量，资源必须明确支持该数量契约。
+    requirement_example: 对指定航迹请求一批直射弹药，使用请求结果决定后续行为，再观察交战事件。
+  tactical_uses:
+  - 主炮直瞄射击
+  - 机枪压制
+  - 对指定目标开火
+  keywords:
+  - 直瞄
+  - 直射
+  - 开火
+  - 主炮
+  - 机枪
+  - direct fire
+  - gun
+  - engage
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  ir_v1:
+  - fire_weapon
+  provides: []
+  accepts:
+  - ir: weapon_action.direct_fire
+    display_name: 对指定目标直接开火
+    status: partial
+    parameters:
+    - name: weapon
+      type: weapon_reference
+      required: true
+    - name: target
+      type: track_reference
+      required: true
+    - name: round_count
+      type: count
+      required: true
+      unit: count
+    result:
+      type: command_status
+      values:
+      - accepted
+      - rejected
+      status: unknown
+    side_effects:
+    - 实际开火可能消耗弹药或照射资源并对目标产生效果；请求数量、接受结果和模型效果须分别确认。
+    ir_v1: fire_weapon
+  settings: []
+  dependencies:
+  - weapon_selection
+  - command_authority
+  constraints:
+  - 武器必须支持指定目标直射运用，目标须可定位且瞄准、遮挡和资源约束满足；请求数量须为正且不超过该资源可用量。
+  limitations:
+  - 弹道飞行、持续照射及冷却由具体武器模型处理；请求数量不保证实际射击数量。
+  - 直接开火重载、任务相关性与原生返回需逐武器确认，不把任务请求接口冒充统一武器方法。
+  source_gaps:
+  - 武器、发射计算机的运行时脚本接口参考（开火、停火、状态与库存读取的方法、参数、返回值）
+  binding: local
+- id: guided_weapon_engagement
+  display_name: 制导武器交战
+  aliases: []
+  domain: weapon_employment
+  subcategory: engagement_control
+  kind: weapon
+  description: 向具体武器提交目标发射请求，并通过发射后的目标信息和制导组件维持交战。
+  natural_language:
+    definition: 向具体武器提交目标发射请求，并通过发射后的目标信息和制导组件维持交战。
+    use_when: 行为使用需要目标航迹、上行更新或终端导引的飞行武器时。
+    expected_result: 发射请求与目标、资源关联，后续依赖的目标更新和制导来源明确。
+    boundaries:
+    - 发射后制导依赖区别于通用释放请求；不保证命中。
+    - 感知目标、预测拦截点和特许真实目标数据必须区分。
+    requirement_example: 向有效三维航迹发射制导武器，在需要时保持外部目标更新并在丢失更新后按滑行策略处理。
+  tactical_uses:
+  - 反坦克导弹攻击
+  - 防空导弹拦截
+  - 制导炸弹投放
+  keywords:
+  - 导弹
+  - 制导
+  - 反坦克导弹
+  - 发射后制导
+  - guided
+  - missile
+  - atgm
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  ir_v1:
+  - fire_weapon
+  provides: []
+  accepts:
+  - ir: weapon_action.guided_engagement
+    display_name: 提交制导武器交战
+    status: partial
+    parameters:
+    - name: weapon
+      type: weapon_reference
+      required: true
+    - name: target
+      type: track_reference
+      required: true
+    - name: round_count
+      type: count
+      required: true
+      unit: count
+    result:
+      type: command_status
+      values:
+      - accepted
+      - rejected
+      status: unknown
+    side_effects:
+    - 实际释放可能消耗弹药并创建依赖目标更新和制导的飞行武器；后续更新资源占用及效果取决于所选实现。
+    ir_v1: fire_weapon
+  settings:
+  - name: external_update_required
+    display_name: 是否必须接收外部目标更新
+    type: boolean
+    required: false
+    sensitivity: model_characteristic
+  - name: update_loss_coast_time
+    display_name: 目标更新丢失后的维持时间
+    type: duration
+    required: false
+    sensitivity: model_characteristic
+    unit: s
+  dependencies:
+  - weapon_launch
+  - target_tracking
+  constraints:
+  - 飞行武器必须配置兼容的制导与目标处理组件；依赖拦截计算时须有有效三维目标航迹。
+  - 外部更新是条件依赖：要求上行时必须配置发送、接收和目标关联链路。
+  limitations:
+  - 制导处理器不能与另一套目标行为控制器无条件并用；目标切换和终端模式按所选实现解释。
+  - 不把比例导航、引信计算或制导积分提升为独立行为能力，也不提供未经确认的运行时重定向动作。
+  source_gaps:
+  - 武器、发射计算机的运行时脚本接口参考（开火、停火、状态与库存读取的方法、参数、返回值）
+  replaces:
+  - 设置 是否必须接收外部目标更新 改用中立名 external_update_required
+  - 设置 目标更新丢失后的维持时间 改用中立名 update_loss_coast_time
+  binding: local
+- id: cease_fire
+  display_name: 停火
+  aliases: []
+  domain: weapon_employment
+  subcategory: engagement_control
+  kind: weapon
+  description: 终止指定武器正在进行的射击或照射。
+  natural_language:
+    definition: 终止指定武器当前的交战：持续照射类武器停止照射，排队中的射击请求不再执行。
+    use_when: 目标已被摧毁、目标丢失、出现友军风险或接到停火命令时。
+    expected_result: 指定武器停止射击，已离架的弹药不受影响。
+    boundaries:
+    - 停火不召回已发射的弹药。
+    - 持续照射武器未设定单次照射时间时，会一直照射到停火或热量耗尽。
+    requirement_example: 目标被判定摧毁后各车停火，转入观察。
+  tactical_uses:
+  - 目标摧毁后停火
+  - 友军进入射界时停火
+  - 执行停火命令
+  keywords:
+  - 停火
+  - 停止射击
+  - cease fire
+  - hold fire
+  - stop firing
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts:
+  - ir: weapon_action.cease_fire
+    display_name: 停止指定武器的射击
+    status: partial
+    ir_v1: null
+    parameters:
+    - name: weapon
+      type: weapon_reference
+      required: true
+    - name: target
+      type: track_reference
+      required: false
+    result:
+      type: command_status
+      values: &id002
+      - accepted
+      - rejected
+      status: unknown
+    side_effects:
+    - 终止该武器当前交战；不影响已离架弹药。
+    note: 来源在激光武器一节点名停火调用；其他武器的停火接口未给出。
+  settings: []
+  dependencies:
+  - weapon_selection
+  constraints: []
+  limitations:
+  - 来源只在激光武器中明确停火调用；对排队中的齐射请求是否同样有效未说明。
+  source_gaps:
+  - 武器、发射计算机的运行时脚本接口参考（开火、停火、状态与库存读取的方法、参数、返回值）
+  binding: local
+- id: weapon_power_control
+  display_name: 武器开关
+  aliases: []
+  domain: weapon_employment
+  subcategory: engagement_control
+  kind: weapon
+  description: 设定武器进入仿真时的开关状态，以及在运行中开启或关闭武器。
+  natural_language:
+    definition: 武器有开、关两种状态；可设定初始状态，运行中开关以组件命令实现。
+    use_when: 需要武器在某一阶段才启用（如干扰器默认关闭、接敌前才打开）时。
+    expected_result: 武器处于指定开关状态；关闭的武器不响应射击请求。
+    boundaries:
+    - 独立飞行弹药类武器默认开启，射频干扰器默认关闭。
+    requirement_example: 干扰器在接近目标区前保持关闭，进入后开启。
+  tactical_uses:
+  - 阶段性启用武器
+  - 干扰器按时开机
+  - 保险状态
+  keywords:
+  - 武器开关
+  - 开机
+  - 关机
+  - 保险
+  - weapon on
+  - weapon off
+  - arm
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides:
+  - ir: weapon_state.power
+    display_name: 武器开关状态
+    value_type: enumeration
+    cardinality: per_weapon
+    key: weapon_id
+    values:
+    - 'on'
+    - 'off'
+    freshness: dynamic
+    status: unknown
+    ir_v1: null
+  accepts:
+  - ir: weapon_action.set_weapon_power
+    display_name: 开启或关闭武器
+    status: unknown
+    ir_v1: null
+    parameters:
+    - name: weapon
+      type: weapon_reference
+      required: true
+    - name: power
+      type: enumeration
+      values:
+      - 'on'
+      - 'off'
+      required: true
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 关闭后武器不响应射击请求。
+    note: IR 1.0 没有武器开关动作（ir_gap）。
+  settings:
+  - name: initial_power
+    display_name: 初始开关状态
+    type: enumeration
+    values:
+    - 'on'
+    - 'off'
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 初始状态来源有说明；运行中开关属于组件公共命令，不在本章。
+  source_gaps:
+  - 平台组件公共命令（3.1.1 节：组件开关、初始状态）
+  - 武器、发射计算机的运行时脚本接口参考（开火、停火、状态与库存读取的方法、参数、返回值）
+  binding: local
+- id: weapon_cueing
+  display_name: 武器指向目标
+  aliases: []
+  domain: weapon_employment
+  subcategory: engagement_control
+  kind: weapon
+  description: 射击请求时自动把可转动的武器指向目标当前位置或预测拦截点。
+  natural_language:
+    definition: 收到射击请求时，支持指向的武器自动转向请求中的目标；可选指向目标当前位置或预测拦截位置。
+    use_when: 炮塔、发射架需要转向目标才能射击时。
+    expected_result: 武器在射击前指向目标，转动受转动范围和转速限制。
+    boundaries:
+    - 只对射击请求生效，不是独立的转动命令。
+    - 转动范围和转速在可动部件命令中定义（不在本章）。
+    requirement_example: 炮塔自动转向排长指示的目标并开火。
+  tactical_uses:
+  - 炮塔转向目标
+  - 提前量射击
+  keywords:
+  - 指向
+  - 炮塔
+  - 转向目标
+  - 提前量
+  - cue
+  - turret
+  - slew
+  - lead
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: auto_cue_on_fire
+    display_name: 射击时自动指向目标
+    type: boolean
+    default: true
+    required: false
+    sensitivity: model_characteristic
+  - name: cue_at_intercept_point
+    display_name: 指向预测拦截点
+    type: boolean
+    default: false
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - weapon_launch
+  constraints: []
+  limitations:
+  - 没有独立的运行中指向命令（来源未给出）。
+  binding: local
+- id: indirect_fire_engagement
+  display_name: 间接火力射击
+  aliases: []
+  domain: weapon_employment
+  subcategory: engagement_control
+  kind: composite
+  description: 不直接瞄准目标，按射表计算弹道和飞行时间，对目标位置实施曲射火力。
+  natural_language:
+    definition: 以直接作用武器配合间接火力发射计算模型：按射程查射表得到弹道最高点和飞行时间，在预计拦截时刻评估毁伤；对固定地面目标常用按落点偏差计算的面杀伤模型。
+    use_when: 迫击炮、榴弹炮对视线外目标射击，或对区域实施火力准备时。
+    expected_result: 弹药按射表的飞行时间到达，毁伤按落点偏差与目标类型的杀伤面积计算。
+    boundaries:
+    - 射表来自外部数据或由现有定义生成。
+    - 对运动目标的效果未说明，适合固定或缓慢目标。
+    requirement_example: 迫击炮班按排长报告的坐标对敌反坦克阵地射击三轮。
+  tactical_uses:
+  - 火力准备
+  - 压制视线外目标
+  - 迫击炮支援
+  keywords:
+  - 间接火力
+  - 曲射
+  - 迫击炮
+  - 榴弹炮
+  - 射表
+  - indirect fire
+  - mortar
+  - artillery
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  ir_v1:
+  - fire_weapon
+  provides: []
+  accepts: []
+  settings: []
+  dependencies:
+  - direct_acting_weapon
+  - launch_envelope_assessment
+  - probability_table_effect
+  - weapon_launch
+  composed_of:
+  - capability: direct_acting_weapon
+    role: 不生成飞行平台的武器
+  - capability: launch_envelope_assessment
+    role: 间接火力射表
+  - capability: probability_table_effect
+    role: 按落点偏差的面杀伤
+  - capability: weapon_launch
+    role: 提交射击请求
+  constraints: []
+  limitations:
+  - 组合方式尚未运行验证。
+  binding: local
+- id: weapon_inventory_management
+  display_name: 武器库存管理
+  aliases: []
+  domain: weapon_employment
+  subcategory: readiness_inventory
+  kind: weapon
+  description: 按具体武器资源监测可用弹药数量并配置该资源的有限补装条件。
+  natural_language:
+    definition: 按具体武器资源监测可用弹药数量并配置该资源的有限补装条件。
+    use_when: 行为需要判断某个弹药资源能否继续承担请求或将耗尽时。
+    expected_result: 每个武器分别保留剩余轮数，补装受该资源自身的储备、阈值和等待时间限制。
+    boundaries:
+    - 本能力限按轮计数的武器，不把干扰功率、激光热容量或平台总数当成弹药量。
+    - 配置自动补装不代表存在通用即时补给动作。
+    - 补装从有限的外部储备中按每次补装量补充，在剩余量降到触发值并发生一次射击后开始。
+    requirement_example: 分别检查两个武器的剩余轮数，避免一个资源耗尽后继续向其提交请求。
+  tactical_uses:
+  - 弹药耗尽前撤出补给
+  - 按剩余弹药分配目标
+  - 补装期间暂停射击
+  keywords:
+  - 弹药
+  - 剩余弹药
+  - 补装
+  - 装填
+  - ammunition
+  - rounds
+  - reload
+  - inventory
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  ir_v1:
+  - weapon_value.quantity_remaining
+  provides:
+  - ir: weapon_inventory.remaining_rounds
+    display_name: 指定武器剩余弹药轮数
+    value_type: count
+    cardinality: per_weapon
+    key: weapon_id
+    freshness: dynamic
+    status: unknown
+    unit: count
+    ir_v1: weapon_value.quantity_remaining
+  accepts: []
+  settings:
+  - name: reload_stock
+    display_name: 该武器有限补装储备
+    type: count
+    required: false
+    sensitivity: model_characteristic
+    unit: count
+  - name: rounds_per_reload
+    display_name: 每次补装轮数
+    type: count
+    required: false
+    sensitivity: model_characteristic
+    unit: count
+  - name: reload_duration
+    display_name: 补装耗时
+    type: duration
+    required: false
+    sensitivity: model_characteristic
+    unit: s
+  - name: hold_fire_while_reloading
+    display_name: 补装期间禁止射击
+    type: boolean
+    required: false
+    sensitivity: model_characteristic
+  - name: initial_rounds
+    display_name: 初始弹药数量
+    type: count
+    unit: count
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  - name: max_rounds
+    display_name: 最大弹药数量
+    type: count
+    unit: count
+    required: false
+    sensitivity: model_characteristic
+  - name: reload_trigger_level
+    display_name: 触发补装的剩余量
+    type: count
+    unit: count
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints:
+  - 必须保留武器身份及所属平台；库存设置只用于支持相应属性的按轮计数资源。
+  limitations:
+  - 已确认可显示具名武器剩余量，脚本读取方法未在所读页确认。
+  - 激光与干扰器不套用该弹药契约；子对象驱动武器不能照搬通用数量及补装设置。
+  source_gaps:
+  - 武器、发射计算机的运行时脚本接口参考（开火、停火、状态与库存读取的方法、参数、返回值）
+  replaces:
+  - 自 0.2.0 资源类（resource_management）迁入武器类
+  - 设置 该武器有限补装储备 改用中立名 reload_stock
+  - 设置 每次补装轮数 改用中立名 rounds_per_reload
+  - 设置 补装耗时 改用中立名 reload_duration
+  - 设置 补装期间禁止射击 改用中立名 hold_fire_while_reloading
+  binding: local
+- id: weapon_readiness
+  display_name: 武器就绪状态
+  aliases: []
+  domain: weapon_employment
+  subcategory: readiness_inventory
+  kind: state
+  description: 判断指定武器当前能否射击：未被毁伤、已开启、不在补装或冷却中、仍有弹药。
+  natural_language:
+    definition: 武器能否立即响应射击请求，取决于开关状态、是否在补装或冷却、弹药是否耗尽、是否遭火力杀伤。
+    use_when: 射击前确认武器可用，或在武器不可用时改由友邻射击时。
+    expected_result: 行为得到每件武器“可用”和“就绪”的判断。
+    boundaries:
+    - 遭火力杀伤后独立飞行弹药类武器不能再发射。
+    - 补装期间是否禁止射击取决于设置。
+    - 激光在发射次数用尽或温度达上限后进入冷却。
+    requirement_example: 主炮补装期间由僚车接替射击。
+  tactical_uses:
+  - 射击前确认可用
+  - 补装/冷却期间交替射击
+  - 火力受损后转移射击任务
+  keywords:
+  - 就绪
+  - 可用
+  - 装填中
+  - 冷却
+  - ready
+  - available
+  - reloading
+  - cooling
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  ir_v1:
+  - weapon_value.available
+  - weapon_value.ready
+  provides:
+  - ir: weapon_state.available
+    display_name: 武器是否可用
+    value_type: boolean
+    cardinality: per_weapon
+    key: weapon_id
+    freshness: dynamic
+    status: unknown
+    ir_v1: weapon_value.available
+  - ir: weapon_state.ready
+    display_name: 武器是否就绪可射击
+    value_type: boolean
+    cardinality: per_weapon
+    key: weapon_id
+    freshness: dynamic
+    status: unknown
+    ir_v1: weapon_value.ready
+    note: 综合开关、补装、冷却、弹药与火力杀伤；来源未给出统一读取方法。
+  accepts: []
+  settings: []
+  dependencies:
+  - weapon_inventory_management
+  - weapon_power_control
+  constraints: []
+  limitations:
+  - 就绪的各组成因素在来源中有说明，但没有统一的读取接口。
+  source_gaps:
+  - 武器、发射计算机的运行时脚本接口参考（开火、停火、状态与库存读取的方法、参数、返回值）
+  binding: local
+- id: launch_envelope_assessment
+  display_name: 发射包线评估
+  aliases: []
+  domain: weapon_employment
+  subcategory: engagement_assessment
+  kind: weapon
+  description: 评估具体武器与目标在当前几何、速度和高度条件下是否处于可接受的发射包线内。
+  natural_language:
+    definition: 评估具体武器与目标在当前几何、速度和高度条件下是否处于可接受的发射包线内。
+    use_when: 行为需要在提交武器请求前筛选可用发射时机时。
+    expected_result: 保留武器、目标及评估时刻对应的包线判定，无法绑定时保持未知。
+    boundaries:
+    - 包线评估不发射，也不是实际命中或毁伤结果。
+    - 包线内仅表明所用模型约束允许，不等于目标无法规避或具备发射许可。
+    - 通用约束包括相对高度、接近/远离速度、斜距、最大飞行时间、最大离轴角；任何一项不满足即不在包线内。
+    requirement_example: 先检查当前武器对目标的发射包线，再决定是否提交请求。
+  tactical_uses:
+  - 射程内才开火
+  - 选择最佳射击时机
+  - 超出射程先机动接近
+  keywords:
+  - 射程
+  - 包线
+  - 可射区
+  - 有效射程
+  - range
+  - envelope
+  - lar
+  - in range
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  ir_v1:
+  - range_to_current_target_lte
+  - track_value.current_target_range
+  provides:
+  - ir: launch_assessment.within_envelope
+    display_name: 当前条件是否在发射包线内
+    value_type: boolean
+    cardinality: collection
+    key: assessment_id
+    freshness: dynamic
+    status: unknown
+    item_scope: per_weapon_target_assessment
+    metadata:
+    - weapon_id
+    - target
+    - assessment_time
+    ir_v1: null
+  accepts: []
+  settings:
+  - name: min_engagement_range
+    display_name: 最小目标斜距
+    type: distance
+    required: false
+    sensitivity: model_characteristic
+    unit: m
+  - name: max_engagement_range
+    display_name: 最大目标斜距
+    type: distance
+    required: false
+    sensitivity: model_characteristic
+    unit: m
+  - name: max_off_boresight
+    display_name: 最大离轴角
+    type: angle
+    required: false
+    sensitivity: model_characteristic
+    unit: rad
+  - name: envelope_model
+    display_name: 发射计算模型
+    type: enumeration
+    values:
+    - generic_constraints
+    - air_to_air_table
+    - air_to_ground_region
+    - unguided_ballistic_table
+    - ballistic_missile_table
+    - orbital_launch
+    - indirect_fire_table
+    - surface_to_air_table
+    - scripted
+    required: false
+    sensitivity: model_characteristic
+  - name: min_relative_altitude
+    display_name: 最小相对高度
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: max_relative_altitude
+    display_name: 最大相对高度
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: closing_speed_limits
+    display_name: 接近速度上下限
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: opening_speed_limits
+    display_name: 远离速度上下限
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: max_flight_time
+    display_name: 最大飞行时间
+    type: duration
+    unit: s
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - weapon_selection
+  constraints:
+  - 必须选择对应武器的发射评估模型及适用数据；多区域模型需要按规定刷新内部状态。
+  limitations:
+  - 包线模型的目标运动假设、表格域和插值规则各不相同；不外推统一精度保证。
+  - 已确认运行期评估功能，当前材料未给出统一包线布尔读取方法。
+  - IR 1.0 只能以“与当前目标距离不超过某值”近似包线判断，不含高度、速度、离轴角约束。
+  source_gaps:
+  - 武器、发射计算机的运行时脚本接口参考（开火、停火、状态与库存读取的方法、参数、返回值）
+  replaces:
+  - 设置 最小目标斜距 改用中立名 min_engagement_range
+  - 设置 最大目标斜距 改用中立名 max_engagement_range
+  - 设置 最大离轴角 改用中立名 max_off_boresight
+  binding: local
+- id: intercept_assessment
+  display_name: 预测拦截评估
+  aliases: []
+  domain: weapon_employment
+  subcategory: engagement_assessment
+  kind: weapon
+  description: 评估指定武器对目标的预测拦截可行性，并保留有效解的预计剩余时间。
+  natural_language:
+    definition: 评估指定武器对目标的预测拦截可行性，并保留有效解的预计剩余时间。
+    use_when: 行为需要比较候选武器拦截时效或判断预测解是否有效时。
+    expected_result: 输出带目标、武器和评估时刻的可行性及有效预测时间，失败和未知不冒充零时间。
+    boundaries:
+    - 预测解不发射、不证明真实拦截或命中。
+    - 预测拦截时间区别于发射包线成员关系和实际交战结果。
+    requirement_example: 在一次发射计算评估中记录候选武器对目标的预测剩余时间，仅比较有效解。
+  tactical_uses:
+  - 比较哪件武器先命中
+  - 分配拦截任务
+  keywords:
+  - 拦截时间
+  - 飞行时间
+  - 预测拦截
+  - intercept
+  - time to intercept
+  - time of flight
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides:
+  - ir: intercept_assessment.feasible
+    display_name: 预测拦截解是否可行
+    value_type: boolean
+    cardinality: collection
+    key: assessment_id
+    freshness: dynamic
+    status: partial
+    item_scope: per_weapon_target_assessment
+    metadata:
+    - weapon_id
+    - target
+    - assessment_time
+    ir_v1: null
+  - ir: intercept_assessment.predicted_time_remaining
+    display_name: 有效解的预计剩余拦截时间
+    value_type: duration
+    cardinality: collection
+    key: assessment_id
+    freshness: dynamic
+    status: partial
+    unit: s
+    item_scope: per_weapon_target_assessment
+    metadata:
+    - weapon_id
+    - target
+    - assessment_time
+    - solution_valid
+    ir_v1: null
+  accepts: []
+  settings: []
+  dependencies:
+  - weapon_selection
+  constraints:
+  - 结果须来自该武器目标对的一次有效计算，目标数据满足所选模型的维度要求。
+  - 无解哨兵值须规范化为不可行；无效解没有可比较的剩余时间，时间必须明确相对评估时刻。
+  limitations:
+  - 只对已配置且可插桩的评估回调部分绑定；不假设存在通用预测结果查询接口。
+  - 不同模型可能使用恒速非机动假设或特许真实目标数据，须保留数据来源。
+  source_gaps:
+  - 武器、发射计算机的运行时脚本接口参考（开火、停火、状态与库存读取的方法、参数、返回值）
+  binding: local
+- id: engagement_result_monitoring
+  display_name: 交战结果监测
+  aliases: []
+  domain: weapon_employment
+  subcategory: engagement_assessment
+  kind: weapon
+  description: 关联任务、武器和目标观察交战事件，并按来源和发生阶段解释结果。
+  natural_language:
+    definition: 关联任务、武器和目标观察交战事件，并按来源和发生阶段解释结果。
+    use_when: 行为需要确认引爆、命中报告、未命中报告或交战终止时。
+    expected_result: 为每次交战保留事件种类、资源、目标和来源，未观测到的结果保持未知。
+    boundaries:
+    - 引爆前通知不证明毁伤，任务完成也可能只表示武器已发射。
+    - 命中报告和仿真真值毁伤不等同于指挥行为已获得完美毁伤确认。
+    requirement_example: 对同一交战分别记录引爆前回调和后续命中或终止报告，再按允许的数据来源解释。
+  tactical_uses:
+  - 命中后转移火力
+  - 未命中再射
+  - 毁伤评估
+  keywords:
+  - 命中
+  - 未命中
+  - 毁伤评估
+  - 战果
+  - hit
+  - miss
+  - kill
+  - bda
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides:
+  - ir: engagement_result.observed_event
+    display_name: 已观测交战阶段事件
+    value_type: enumeration
+    cardinality: collection
+    key: engagement_id
+    freshness: event
+    status: partial
+    item_scope: per_engagement_event
+    values:
+    - detonation_pending
+    - hit_reported
+    - miss_reported
+    - terminated
+    metadata:
+    - task_id
+    - weapon_id
+    - target
+    - source_kind
+    - event_time
+    ir_v1: null
+  accepts: []
+  settings: []
+  dependencies: []
+  constraints:
+  - 事件须关联具体交战及资源、目标身份；一枚弹药和一次多目标齐射不能合并为同一结果。
+  limitations:
+  - 观察者事件需接入适配层且标明特许仿真事件来源，不能默认向行为开放全部真值。
+  - 没有通知不等于未命中；引爆前回调发生在杀伤评估之前。
+  binding: local
+- id: blast_damage_effect
+  display_name: 爆炸半径毁伤
+  aliases: []
+  domain: weapon_employment
+  subcategory: damage_effects
+  kind: effect
+  description: 弹药在爆炸点一定半径内造成毁伤，毁伤随距离按指数规律衰减并累加到目标。
+  natural_language:
+    definition: 目标距爆炸点小于最小半径时受最大毁伤，大于最大半径时无毁伤，其间按指数衰减；毁伤累加到目标，累计达到 1 即被摧毁。可设首次毁伤阈值。
+    use_when: 需要表达爆炸破片、冲击波对周围多个目标（含友军）的影响时。
+    expected_result: 半径内的平台各自获得一份毁伤。
+    boundaries:
+    - 半径内所有平台都可能受影响，包括友军。
+    - 最大半径同时用于排除远处平台以提高效率。
+    requirement_example: 炮弹在敌步兵战车旁 10 米爆炸，造成部分毁伤；两发后摧毁。
+  tactical_uses:
+  - 面杀伤
+  - 友军安全距离
+  - 多发累积毁伤
+  keywords:
+  - 爆炸半径
+  - 杀伤半径
+  - 破片
+  - 累积毁伤
+  - blast
+  - lethal radius
+  - splash
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: max_effect_radius
+    display_name: 最大毁伤半径
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: full_damage_radius
+    display_name: 最大毁伤半径内圈
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: damage_at_outer_radius
+    display_name: 外圈毁伤
+    type: ratio
+    default: 0.0
+    required: false
+    sensitivity: model_characteristic
+  - name: damage_at_inner_radius
+    display_name: 内圈毁伤
+    type: ratio
+    default: 1.0
+    required: false
+    sensitivity: model_characteristic
+  - name: damage_falloff_exponent
+    display_name: 衰减指数
+    type: ratio
+    default: 1.0
+    required: false
+    sensitivity: model_characteristic
+  - name: first_damage_threshold
+    display_name: 首次毁伤阈值
+    type: ratio
+    default: 0.0
+    required: false
+    sensitivity: model_characteristic
+  - name: pk_lookup_table
+    display_name: 按方位/仰角/速度的毁伤概率表
+    type: table
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 毁伤模型在想定配置时确定，行为不能在运行中更换。
+  binding: local
+- id: probability_table_effect
+  display_name: 概率表毁伤
+  aliases: []
+  domain: weapon_employment
+  subcategory: damage_effects
+  kind: effect
+  description: 按脱靶距离、圆概率误差、发射时目标条件、撞击速度/角度或落点偏差查表或计算毁伤概率。
+  natural_language:
+    definition: 按所选方法得到毁伤概率并抽取结果：按脱靶距离分段或插值；按圆概率误差插值；按发射平台与目标类型的发射条件表；按撞击速度和角度；或按落点的纵横偏差与目标杀伤面积（对固定地面目标的间接火力）。
+    use_when: 需要按目标类型区分毁伤效果，或使用已有的毁伤概率数据时。
+    expected_result: 每次交战得到一次按概率抽取的毁伤结果。
+    boundaries:
+    - 可按目标类型分表；找不到匹配类型时用默认表。
+    - 未给出某目标类型的杀伤面积时，视为对该目标无效。
+    - 表只插值不外推。
+    requirement_example: 反坦克导弹对主战坦克按脱靶距离查表，1 米内毁伤概率 0.9。
+  tactical_uses:
+  - 按目标类型区分毁伤
+  - 间接火力面杀伤
+  - 使用已有毁伤数据
+  keywords:
+  - 毁伤概率
+  - 命中概率
+  - 圆概率误差
+  - 杀伤面积
+  - pk
+  - cep
+  - lethality
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: pk_method
+    display_name: 毁伤概率方法
+    type: enumeration
+    values:
+    - miss_distance_table
+    - cep_table
+    - launch_condition_table
+    - impact_condition_table
+    - impact_offset_area
+    required: false
+    sensitivity: model_characteristic
+  - name: pk_by_target_type
+    display_name: 按目标类型的毁伤概率表
+    type: map
+    required: false
+    sensitivity: model_characteristic
+  - name: table_interpolation
+    display_name: 表插值方式
+    type: enumeration
+    values:
+    - stepwise
+    - linear
+    default: stepwise
+    required: false
+    sensitivity: model_characteristic
+  - name: miss_distance_basis
+    display_name: 脱靶距离计算方式
+    type: enumeration
+    values:
+    - slant_3d
+    - horizontal_2d
+    default: slant_3d
+    required: false
+    sensitivity: model_characteristic
+  - name: cep_radius
+    display_name: 圆概率误差
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: lethal_area_by_target_type
+    display_name: 按目标类型的杀伤面积
+    type: map
+    unit: m2
+    required: false
+    sensitivity: model_characteristic
+  - name: fallback_pk
+    display_name: 无匹配表时的毁伤概率
+    type: ratio
+    default: 0.0
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 毁伤模型在想定配置时确定。
+  binding: local
+- id: mobility_firepower_damage
+  display_name: 机动/火力/摧毁分级毁伤
+  aliases: []
+  domain: weapon_employment
+  subcategory: damage_effects
+  kind: effect
+  description: 弹药近炸后按概率给目标造成无毁伤、机动杀伤、火力杀伤、机动加火力杀伤或彻底摧毁；目标的对抗措施可削弱该效果。
+  natural_language:
+    definition: 引信起爆时若脱靶距离小于最大半径，先抽取是否造成毁伤，再按概率分配为机动杀伤（失去机动）、火力杀伤（武器失效）、两者兼有或彻底摧毁；按目标类型可用不同概率表。目标释放的对抗措施（如烟幕、诱饵）满足距离、视角和持续时间条件后，可换用降级表、按系数降低概率或直接使来袭弹药失效。
+    use_when: 需要区分“打瘫”“打哑”“击毁”，或表达烟幕、诱饵对来袭弹药的削弱时。
+    expected_result: 目标获得分级毁伤；机动杀伤的地面目标停止运动，火力杀伤的目标不能再发射独立飞行弹药。
+    boundaries:
+    - 机动杀伤目前只对陆地域的航路运动模型生效。
+    - 火力杀伤并非对所有武器类型都生效。
+    - 多次命中各自独立计算，不保证累积。
+    - 对抗措施只有在同时满足距离、视角、持续时间条件后才生效，且一旦生效就保持。
+    requirement_example: 敌反坦克导弹命中僚车，造成机动杀伤：僚车停在原地但仍可射击，转为固定火力点。
+  tactical_uses:
+  - 打瘫/打哑/击毁的区分
+  - 受损车辆转为固定火力点
+  - 烟幕削弱来袭导弹
+  keywords:
+  - 机动杀伤
+  - 火力杀伤
+  - 摧毁
+  - 打瘫
+  - 烟幕
+  - 诱饵
+  - mobility kill
+  - firepower kill
+  - catastrophic kill
+  - smoke
+  - countermeasure
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: damage_given_hit
+    display_name: 近炸后造成毁伤的概率
+    type: ratio
+    default: 0.5
+    required: false
+    sensitivity: model_characteristic
+  - name: mobility_kill_given_damage
+    display_name: 毁伤中仅机动杀伤的概率
+    type: ratio
+    default: 0.15
+    required: false
+    sensitivity: model_characteristic
+  - name: firepower_kill_given_damage
+    display_name: 毁伤中仅火力杀伤的概率
+    type: ratio
+    default: 0.15
+    required: false
+    sensitivity: model_characteristic
+  - name: catastrophic_kill_given_damage
+    display_name: 毁伤中彻底摧毁的概率
+    type: ratio
+    default: 0.5
+    required: false
+    sensitivity: model_characteristic
+  - name: tables_by_target_type
+    display_name: 按目标类型的概率表
+    type: map
+    required: false
+    sensitivity: model_characteristic
+  - name: countermeasure_vulnerability
+    display_name: 对抗措施削弱规则
+    type: map
+    required: false
+    sensitivity: model_characteristic
+  - name: countermeasure_check_period
+    display_name: 对抗措施评估间隔
+    type: duration
+    unit: s
+    default: 1.0
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints:
+  - 四个概率之和不超过 1（机动加火力杀伤由余量计算）。
+  limitations:
+  - 毁伤模型在想定配置时确定；被毁伤方的分级状态由生存类能力读取。
+  binding: local
+- id: directed_energy_effect
+  display_name: 激光能量毁伤
+  aliases: []
+  domain: weapon_employment
+  subcategory: damage_effects
+  kind: effect
+  description: 按激光在目标上累积的能量或能量密度判定毁伤，可按目标类型、类别或目标上的区域分别设定。
+  natural_language:
+    definition: 照射过程中每个更新间隔按累积能量查表抽取一次毁伤；也可设最小能量或能量密度门槛。
+    use_when: 使用高能激光对无人机、来袭弹药等实施照射毁伤时。
+    expected_result: 累积能量达到门槛后按概率毁伤目标。
+    boundaries:
+    - 需要持续照射，不是瞬时毁伤。
+    - 目标上的区域需配合目标几何网格使用。
+    requirement_example: 激光照射来袭无人机 3 秒，累积能量超过门槛后将其摧毁。
+  tactical_uses:
+  - 反无人机
+  - 反来袭弹药
+  keywords:
+  - 激光
+  - 能量密度
+  - 照射
+  - 高能激光
+  - laser
+  - fluence
+  - dwell
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: pk_by_energy
+    display_name: 能量-毁伤概率表
+    type: table
+    unit: J
+    required: false
+    sensitivity: model_characteristic
+  - name: energy_threshold
+    display_name: 最小能量
+    type: energy
+    unit: J
+    required: false
+    sensitivity: model_characteristic
+  - name: energy_density_threshold
+    display_name: 最小能量密度
+    type: energy_density
+    unit: J/cm2
+    required: false
+    sensitivity: model_characteristic
+  - name: damage_spot_radius
+    display_name: 有效光斑半径
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - high_energy_laser
+  constraints: []
+  limitations:
+  - 毁伤模型在想定配置时确定。
+  binding: local
+- id: chaff_dispensing
+  display_name: 箔条释放
+  aliases: []
+  domain: weapon_employment
+  subcategory: countermeasure
+  kind: weapon
+  description: 由一个或多个弹射器释放箔条包，形成箔条云干扰雷达。
+  natural_language:
+    definition: 弹射器按设定速度和方向释放箔条包，包膨胀、减速、下落，若干包组成的箔条云对雷达产生反射；包落地或超过存在时间后消失。
+    use_when: 自卫干扰来袭雷达制导武器，或铺设干扰走廊时。
+    expected_result: 平台周围形成对雷达有反射的箔条云。
+    boundaries:
+    - 只影响雷达，不影响光电或红外制导。
+    - 每个弹射器有独立的箔条包数量。
+    requirement_example: 被雷达锁定后释放两组箔条并机动脱离。
+  tactical_uses:
+  - 自卫干扰雷达
+  - 铺设干扰走廊
+  keywords:
+  - 箔条
+  - 干扰丝
+  - 雷达对抗
+  - 自卫
+  - chaff
+  - countermeasure
+  - decoy
+  applicable_platform_classes:
+  - air_vehicle
+  - surface_vessel
+  - ground_vehicle
+  status: partial
+  maturity: draft
+  provides: []
+  accepts:
+  - ir: weapon_action.dispense_chaff
+    display_name: 释放箔条
+    status: partial
+    ir_v1: null
+    parameters:
+    - name: dispenser
+      type: weapon_reference
+      required: true
+    - name: parcel_count
+      type: count
+      unit: count
+      required: true
+    - name: ejectors
+      type: list
+      required: false
+    result:
+      type: command_status
+      values: *id002
+      status: unknown
+    side_effects:
+    - 消耗弹射器中的箔条包并生成箔条云。
+    note: 来源点名了投放箔条云的脚本方法，参数未给出。
+  settings:
+  - name: parcels_per_ejector
+    display_name: 每个弹射器的箔条包数
+    type: count
+    unit: count
+    default: 10
+    required: false
+    sensitivity: model_characteristic
+  - name: ejection_speed
+    display_name: 弹射速度
+    type: speed
+    unit: m/s
+    default: 15
+    required: false
+    sensitivity: model_characteristic
+  - name: cloud_expansion_diameter
+    display_name: 膨胀直径
+    type: distance
+    unit: m
+    default: 10
+    required: false
+    sensitivity: model_characteristic
+  - name: parcel_lifetime
+    display_name: 箔条包存在时间
+    type: duration
+    unit: s
+    default: 60
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 对抗措施对来袭武器的削弱另见分级毁伤中的对抗措施规则。
+  source_gaps:
+  - 武器、发射计算机的运行时脚本接口参考（开火、停火、状态与库存读取的方法、参数、返回值）
+  binding: local
+- id: launched_munition
+  display_name: 独立飞行弹药
+  aliases: []
+  domain: weapon_employment
+  subcategory: weapon_type
+  kind: weapon
+  description: 发射后作为独立平台飞行的弹药，如导弹、炸弹、火箭、炮弹。
+  natural_language:
+    definition: 发射时创建一个弹药平台，其飞行由运动类的弹药飞行能力决定；可给出发射附加速度、是否忽略发射平台速度、发射后弹药的指挥关系（用于接收发射平台的目标更新）。
+    use_when: 弹药需要飞行时间、可被拦截或需要发射后制导时。
+    expected_result: 按该类武器的特性交战。
+    boundaries:
+    - 弹药平台在发射时才创建。
+    - 从移动平台或舰艇发射时宜忽略发射平台速度，以免误发。
+    - 发射计算可要求提供抛射角或拦截点。
+    requirement_example: 坦克发射炮射导弹，导弹作为独立平台飞向目标。
+  tactical_uses:
+  - 导弹攻击
+  - 炸弹投放
+  - 炮弹射击
+  keywords:
+  - 导弹
+  - 炸弹
+  - 火箭
+  - 弹药平台
+  - missile
+  - bomb
+  - munition
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: munition_platform_type
+    display_name: 弹药平台类型
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  - name: launch_added_velocity
+    display_name: 发射附加速度
+    type: vector
+    unit: m/s
+    required: false
+    sensitivity: model_characteristic
+  - name: ignore_launcher_velocity
+    display_name: 忽略发射平台速度
+    type: boolean
+    default: false
+    required: false
+    sensitivity: model_characteristic
+  - name: munition_commander
+    display_name: 弹药的指挥者
+    type: enumeration
+    values:
+    - launcher
+    - launcher_commander
+    - self
+    - named_platform
+    default: launcher
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - weapon_launch
+  constraints: []
+  limitations: []
+  binding: local
+- id: direct_acting_weapon
+  display_name: 直接作用武器
+  aliases: []
+  domain: weapon_employment
+  subcategory: weapon_type
+  kind: weapon
+  description: 不生成飞行平台、直接对目标作用的武器；也可配合发射计算模型表示间接火力。
+  natural_language:
+    definition: 射击时不创建弹药平台；有发射计算时在预计拦截时刻评估交战，否则按武器更新间隔评估。
+    use_when: 枪炮直射、或不关心弹道细节的火力时。
+    expected_result: 按该类武器的特性交战。
+    boundaries:
+    - 弹药不可被拦截，也不能被对抗措施诱偏。
+    - 默认弹药量等于最大弹药量。
+    requirement_example: 坦克主炮直瞄射击，命中即时评估。
+  tactical_uses:
+  - 主炮直射
+  - 机枪
+  - 简化火力
+  keywords:
+  - 火炮
+  - 枪
+  - 直接作用
+  - gun
+  - cannon
+  - implicit
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: engagement_update_period
+    display_name: 交战评估间隔
+    type: duration
+    unit: s
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - weapon_launch
+  constraints: []
+  limitations: []
+  binding: local
+- id: high_energy_laser
+  display_name: 高能激光武器
+  aliases: []
+  domain: weapon_employment
+  subcategory: weapon_type
+  kind: weapon
+  description: 持续照射目标、按累积能量毁伤的激光武器；可由独立的光束指向器引导。
+  natural_language:
+    definition: 照射期间按更新间隔累积能量；受发射次数与冷却时间限制，或受热系统的温度上下限限制；带光束指向器的型号只有在指向器锁定目标时才发射，丢失锁定即停止。
+    use_when: 反无人机、反来袭弹药等需要持续照射的近程防御时。
+    expected_result: 按该类武器的特性交战。
+    boundaries:
+    - 不使用弹药数量与补装设置。
+    - 未设单次照射时间时持续照射到停火或过热。
+    - 大气模型对部分波长支持有限。
+    requirement_example: 车载激光照射来袭无人机，过热后冷却 30 秒。
+  tactical_uses:
+  - 反无人机
+  - 近程防御
+  keywords:
+  - 激光武器
+  - 高能激光
+  - 光束指向器
+  - laser weapon
+  - hel
+  - beam director
+  applicable_platform_classes:
+  - ground_vehicle
+  - surface_vessel
+  - air_vehicle
+  - static_node
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: dwell_time
+    display_name: 单次照射时间
+    type: duration
+    unit: s
+    required: false
+    sensitivity: model_characteristic
+  - name: shots_before_cooling
+    display_name: 冷却前可发射次数
+    type: count
+    unit: count
+    required: false
+    sensitivity: model_characteristic
+  - name: cooling_duration
+    display_name: 冷却时间
+    type: duration
+    unit: s
+    default: 30
+    required: false
+    sensitivity: model_characteristic
+  - name: laser_output_power
+    display_name: 输出功率
+    type: power
+    unit: W
+    required: false
+    sensitivity: model_characteristic
+  - name: aperture
+    display_name: 孔径
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: requires_beam_director
+    display_name: 需要光束指向器锁定
+    type: boolean
+    default: false
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - direct_acting_weapon
+  constraints: []
+  limitations: []
+  binding: local
+- id: rf_jammer_device
+  display_name: 射频干扰器
+  aliases: []
+  domain: weapon_employment
+  subcategory: weapon_type
+  kind: weapon
+  description: 对雷达、被动侦收和无线电通信实施射频干扰的设备，可有多个波束和频点，可组成功率组。
+  natural_language:
+    definition: 干扰器由波束（空间）和频点（频率）组成，可定义多种工作模式；可排除指定阵营、空间域或类别；可由被动侦收传感器自动启动和停止干扰分配。干扰的启动与停止见电子战类的射频干扰分配控制。
+    use_when: 需要压制敌雷达或敌通信时。
+    expected_result: 按该类武器的特性交战。
+    boundaries:
+    - 默认初始为关闭。
+    - 发射机参数在发射机命令中定义（不在本章）。
+    requirement_example: 伴随干扰车对敌排级电台网实施压制。
+  tactical_uses:
+  - 压制敌通信
+  - 压制雷达
+  keywords:
+  - 干扰器
+  - 电子干扰
+  - 压制
+  - jammer
+  - jamming
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: max_beams
+    display_name: 最大波束数
+    type: count
+    unit: count
+    default: 1
+    required: false
+    sensitivity: model_characteristic
+  - name: max_spots_per_beam
+    display_name: 每波束最大频点数
+    type: count
+    unit: count
+    default: 1
+    required: false
+    sensitivity: model_characteristic
+  - name: power_sharing
+    display_name: 功率分配方式
+    type: enumeration
+    values:
+    - average
+    - constant
+    required: false
+    sensitivity: model_characteristic
+  - name: excluded_sides
+    display_name: 不干扰的阵营
+    type: list
+    required: false
+    sensitivity: model_characteristic
+  - name: excluded_domains
+    display_name: 不干扰的空间域
+    type: list
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 运行中的干扰分配控制属于电子战类（rf_jamming）。
+  source_gaps:
+  - 发射机公共命令（3.5.5.8 节：频率、功率、带宽）
+  binding: local
+- id: carried_subobject_weapon
+  display_name: 挂载子对象武器
+  aliases: []
+  domain: weapon_employment
+  subcategory: weapon_type
+  kind: weapon
+  description: 高保真飞行平台上的挂载物作为武器发射，发射前计入载机的重量与阻力。
+  natural_language:
+    definition: 按列出的顺序发射挂载子对象，每个子对象发射后成为独立平台。
+    use_when: 需要表达外挂武器对载机性能的影响时。
+    expected_result: 按该类武器的特性交战。
+    boundaries:
+    - 不使用通用的弹药数量、补装和发射附加速度设置。
+    requirement_example: 战斗机挂载四枚导弹，发射后机动性能逐步恢复。
+  tactical_uses:
+  - 外挂武器
+  keywords:
+  - 挂载
+  - 外挂
+  - 子对象
+  - subobject
+  - store
+  applicable_platform_classes:
+  - air_vehicle
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: subobjects
+    display_name: 可发射的子对象列表
+    type: list
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - launched_munition
+  constraints: []
+  limitations: []
+  binding: local
+- id: launch_envelope_generation
+  display_name: 发射包线离线生成
+  aliases: []
+  domain: weapon_employment
+  subcategory: launch_computation
+  kind: tool
+  description: 在多种交战条件下反复试射，离线生成发射计算模型所需的包线和射表数据。
+  natural_language:
+    definition: 离线工具在给定的发射与目标条件矩阵下反复发射武器，记录命中与否和飞行时间，生成空空、空地、无制导弹道、弹道导弹、轨道运载、地空等发射计算数据。
+    use_when: 新武器没有现成包线数据，或武器运动特性改变后需要重新生成时。
+    expected_result: 得到可被发射计算模型加载的数据文件。
+    boundaries:
+    - 离线运行，不在仿真过程中使用。
+    - 武器运动参数改变后须重新生成。
+    requirement_example: 为新反坦克导弹生成射程-飞行时间表。
+  tactical_uses:
+  - 为新武器准备包线数据
+  keywords:
+  - 包线生成
+  - 射表生成
+  - 离线工具
+  - weapon tools
+  - lar generator
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: generator_kind
+    display_name: 生成器类型
+    type: enumeration
+    values:
+    - air_to_air
+    - air_to_ground
+    - unguided_ballistic
+    - ballistic_missile
+    - orbital
+    - surface_to_air
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - launch_envelope_assessment
+  constraints: []
+  limitations:
+  - 离线工具，行为层不调用。
+  binding: local

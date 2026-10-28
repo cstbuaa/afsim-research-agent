@@ -1,0 +1,3126 @@
+format: PlatformCapabilityIndex
+format_version: 0.3.0
+catalog:
+  id: afsim_2_9_capabilities
+  platform_family: afsim
+  platform_version: '2.9'
+  language: zh-CN
+  classification: public
+  updated_on: '2026-10-16'
+usage:
+- 先按领域（运动类、通信类、武器类……）和子类缩小范围，再按 keywords / tactical_uses / ir_v1 匹配，最后只把命中的条目从对应文件读入。
+- split=false 的领域仍在 0.2.0 单文件目录中，尚未按新格式重整。
+domains:
+- id: mobility
+  display_name: 运动类
+  file: catalog/mobility.yaml
+  format_version: 0.3.0
+  split: true
+  subcategories:
+  - id: basic_maneuver
+    display_name: 基本机动命令
+    summary: 运行时下达的定点、航向、速度、高度与停止命令，是战术机动的基本单元。
+  - id: route
+    display_name: 路线与路网
+    summary: 沿预设路线或道路网络行进，以及路线相关的事件与终点行为。
+  - id: own_state
+    display_name: 自身运动状态
+    summary: 平台自身位置、速度、航向、高度的读取，用于到达判定、距离计算和队形保持。
+  - id: following_formation
+    display_name: 跟随与编队
+    summary: 相对领队保持站位、跟随与路线切换、运行时变换队形。
+  - id: domain_profile
+    display_name: 运动域特性
+    summary: 地面、空中、水面、水下、旋翼机等运动域的性能限值、适用命令与边界。
+  - id: high_fidelity_flight
+    display_name: 高保真飞行
+    summary: 基于质量、气动与推进数据的六自由度飞行及其控制开关。
+  - id: trajectory_playback
+    display_name: 轨迹回放
+    summary: 按记录的时空位置数据重放运动。
+  - id: space
+    display_name: 航天运动
+    summary: 轨道传播、轨道机动与在轨姿态控制。
+  - id: munition_flyout
+    display_name: 弹药飞行
+    summary: 导弹、炸弹、炮弹、火箭等被发射后的飞行模型，行为层通常不直接操纵。
+  - id: towed
+    display_name: 拖曳
+    summary: 拖曳资产的部署几何与卷收。
+  - id: fidelity_selection
+    display_name: 保真度选择
+    summary: 按保真度在多个运动模型之间选择。
+  capabilities:
+  - id: point_navigation
+    display_name: 定点机动
+    subcategory: basic_maneuver
+    kind: mover
+    status: available
+    platform_classes: &id001
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    summary: 命令平台离开当前运动目标，向给定的地理位置机动。
+    tactical_uses:
+    - 交替跃进到新掩护位置
+    - 前出侦察
+    - 占领阵地
+    - 机动到集结点
+    - 按计算出的队形站位机动
+    keywords:
+    - 定点
+    - 机动到
+    - 前往
+    - 跃进
+    - 占领位置
+    - go to location
+    - move to position
+    - waypoint-free
+    ir_v1:
+    - bound_to_position
+    - move_to_position
+    - mover_value.at_destination
+    commands:
+    - mobility_action.go_to_location
+    observations:
+    - mobility_state.at_destination
+    file: catalog/mobility.yaml
+  - id: heading_control
+    display_name: 航向控制
+    subcategory: basic_maneuver
+    kind: mover
+    status: available
+    platform_classes: *id001
+    summary: 命令平台把运动方向转到给定的方位角。
+    tactical_uses:
+    - 转向
+    - 按方位行进
+    - 调整观察方向
+    - 规避
+    keywords:
+    - 航向
+    - 转向
+    - 方位
+    - heading
+    - course
+    - turn
+    ir_v1:
+    - set_heading
+    commands:
+    - mobility_action.turn_to_heading
+    observations: []
+    file: catalog/mobility.yaml
+  - id: speed_control
+    display_name: 速度控制
+    subcategory: basic_maneuver
+    kind: mover
+    status: available
+    platform_classes: *id001
+    summary: 命令平台向请求的速度过渡，过渡过程受加速度限值约束。
+    tactical_uses:
+    - 加速通过开阔地
+    - 接近城区减速
+    - 跃进
+    - 停车（速度降为零，见停止运动）
+    keywords:
+    - 速度
+    - 加速
+    - 减速
+    - speed
+    - throttle
+    ir_v1:
+    - set_speed
+    commands:
+    - mobility_action.set_speed
+    observations: []
+    file: catalog/mobility.yaml
+  - id: altitude_control
+    display_name: 高度控制
+    subcategory: basic_maneuver
+    kind: mover
+    status: available
+    platform_classes:
+    - air_vehicle
+    summary: 命令空中平台向请求的高度爬升或下降。
+    tactical_uses:
+    - 改变高度
+    - 低空突防
+    - 爬升
+    keywords:
+    - 高度
+    - 爬升
+    - 下降
+    - altitude
+    - climb
+    - descend
+    ir_v1:
+    - set_altitude
+    commands:
+    - mobility_action.go_to_altitude
+    observations: []
+    file: catalog/mobility.yaml
+  - id: motion_halt
+    display_name: 停止运动
+    subcategory: basic_maneuver
+    kind: composite
+    status: available
+    platform_classes: *id001
+    summary: 通过把速度降为零，或让路线在终点停止，使平台停止运动。
+    tactical_uses:
+    - 停车掩护
+    - 占领阵地
+    - 停车观察
+    - 到达后停止
+    keywords:
+    - 停止
+    - 停车
+    - 就地
+    - halt
+    - stop
+    - hold position
+    ir_v1:
+    - halt
+    - hold_overwatch_position
+    commands: []
+    observations: []
+    file: catalog/mobility.yaml
+  - id: route_navigation
+    display_name: 路线导航
+    subcategory: route
+    kind: mover
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - weapon_platform
+    summary: 依次通过路线中的航点，在位置与速度约束下把平台引导到任务区域。
+    tactical_uses:
+    - 按计划路线行进
+    - 巡逻
+    - 临时机动后返回路线
+    - 到达路线终点后停止
+    keywords:
+    - 路线
+    - 航点
+    - 沿路线
+    - 返回路线
+    - route
+    - waypoint
+    - follow route
+    - return to route
+    ir_v1:
+    - follow_route
+    - mover_value.route_complete
+    commands:
+    - mobility_action.follow_route
+    - mobility_action.resume_route
+    observations:
+    - route_state.waypoint_passed
+    - route_state.end_of_path
+    file: catalog/mobility.yaml
+  - id: road_network_navigation
+    display_name: 路网导航
+    subcategory: route
+    kind: mover
+    status: partial
+    platform_classes:
+    - ground_vehicle
+    summary: 地面平台在配置的道路网络上计算起点、中间点和终点之间的最短路径并沿其行进。
+    tactical_uses:
+    - 沿道路机动
+    - 按道路接近城区
+    - 道路行军
+    keywords:
+    - 道路
+    - 路网
+    - 最短路径
+    - 越野
+    - road
+    - road network
+    - shortest path
+    - off road
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/mobility.yaml
+  - id: own_kinematic_state
+    display_name: 自身运动状态
+    subcategory: own_state
+    kind: state
+    status: available
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - weapon_platform
+    - static_node
+    summary: 平台自身当前的地理位置、速度、航向和高度。
+    tactical_uses:
+    - 到达判定
+    - 计算与敌距离
+    - 保持车距
+    - 区域进入判定
+    - 队形误差计算
+    keywords:
+    - 位置
+    - 速度
+    - 航向
+    - 高度
+    - 坐标
+    - position
+    - location
+    - speed
+    - heading
+    - altitude
+    - own state
+    ir_v1:
+    - self_value.altitude
+    - self_value.heading
+    - self_value.position_x
+    - self_value.position_y
+    - self_value.speed
+    commands: []
+    observations:
+    - platform_state.position
+    - platform_state.speed
+    - platform_state.heading
+    - platform_state.altitude_msl
+    file: catalog/mobility.yaml
+  - id: formation_following
+    display_name: 编队跟随
+    subcategory: following_formation
+    kind: mover
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    summary: 跟随平台相对领队保持配置的偏移位置，并可读取相对领队的位置作为判断依据。
+    tactical_uses:
+    - 僚车跟随长车
+    - 保持队形站位
+    - 编队飞行
+    keywords:
+    - 编队
+    - 跟随
+    - 站位
+    - 偏移
+    - 长车
+    - 长机
+    - formation
+    - follow leader
+    - offset
+    - station keeping
+    ir_v1:
+    - keep_station
+    commands: []
+    observations:
+    - formation_state.relative_forward
+    - formation_state.relative_right
+    - formation_state.relative_down
+    file: catalog/mobility.yaml
+  - id: follower_route_switching
+    display_name: 跟随与路线切换
+    subcategory: following_formation
+    kind: mover
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    summary: 平台可配置为先跟随领队或先沿自身路线；领队消失时可自动切回路线并回到路线上最近的点。
+    tactical_uses:
+    - 长车损失后继续执行任务
+    - 跟随与独立行进切换
+    keywords:
+    - 跟随
+    - 切换
+    - 领队消失
+    - 接替
+    - follow
+    - switch
+    - leader lost
+    ir_v1: []
+    commands:
+    - mobility_action.set_following_mode
+    observations: []
+    file: catalog/mobility.yaml
+  - id: formation_change
+    display_name: 变换队形
+    subcategory: following_formation
+    kind: composite
+    status: available
+    platform_classes:
+    - ground_vehicle
+    - air_vehicle
+    - surface_vessel
+    summary: 根据新的队形计算每个成员相对领队的站位，再以定点机动和速度控制使成员到位并保持。
+    tactical_uses:
+    - 楔形转纵队
+    - 展开
+    - 收拢
+    - 调整车距
+    keywords:
+    - 队形
+    - 变换队形
+    - 楔形
+    - 纵队
+    - 车距
+    - formation change
+    - wedge
+    - column
+    - spacing
+    ir_v1:
+    - assume_formation
+    - follow_route_with_offset
+    - formation_value.in_position
+    - formation_value.slot_error
+    - keep_station
+    commands: []
+    observations: []
+    file: catalog/mobility.yaml
+  - id: ground_navigation
+    display_name: 地面导航
+    subcategory: domain_profile
+    kind: mover
+    status: partial
+    platform_classes:
+    - ground_vehicle
+    summary: 将地面平台沿路线引导到目标区域，并在行驶约束内改变速度。
+    tactical_uses:
+    - 车辆机动
+    - 行军
+    - 接近城区
+    keywords:
+    - 地面
+    - 车辆
+    - 陆地
+    - 坦克
+    - 装甲
+    - ground
+    - vehicle
+    - land
+    - terrain following
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/mobility.yaml
+  - id: air_navigation
+    display_name: 空中导航
+    subcategory: domain_profile
+    kind: mover
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - weapon_platform
+    summary: 使飞行平台在其速度与机动包线内响应速度请求。
+    tactical_uses:
+    - 空中巡逻
+    - 飞向目标区
+    - 编队飞行
+    keywords:
+    - 空中
+    - 飞行
+    - 飞机
+    - 无人机
+    - air
+    - aircraft
+    - uav
+    - flight
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/mobility.yaml
+  - id: surface_navigation
+    display_name: 水面导航
+    subcategory: domain_profile
+    kind: mover
+    status: partial
+    platform_classes:
+    - surface_vessel
+    summary: 使水面平台按任务路线航行，在航行性能限制内调整航速。
+    tactical_uses:
+    - 水面巡逻
+    - 护航
+    - 转移
+    keywords:
+    - 水面
+    - 舰船
+    - 航行
+    - surface
+    - ship
+    - vessel
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/mobility.yaml
+  - id: subsurface_navigation
+    display_name: 水下导航
+    subcategory: domain_profile
+    kind: mover
+    status: partial
+    platform_classes:
+    - subsurface_vehicle
+    summary: 在潜航约束下沿路线运动，并以相对海平面的高度表征深度。
+    tactical_uses:
+    - 水下转移
+    - 水下巡逻
+    keywords:
+    - 水下
+    - 潜航
+    - 潜艇
+    - 深度
+    - subsurface
+    - submarine
+    - depth
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/mobility.yaml
+  - id: rotorcraft_navigation
+    display_name: 旋翼机运动
+    subcategory: domain_profile
+    kind: mover
+    status: partial
+    platform_classes:
+    - air_vehicle
+    summary: 以预定义的运动模式（如悬停、巡航、冲刺）约束速度、爬升率和加速度，低速时可单独设定机身朝向。
+    tactical_uses:
+    - 悬停观察
+    - 低速定点
+    - 模式切换
+    keywords:
+    - 旋翼
+    - 直升机
+    - 悬停
+    - 模式
+    - rotorcraft
+    - helicopter
+    - hover
+    - mode
+    ir_v1: []
+    commands:
+    - mobility_action.set_motion_mode
+    - mobility_action.set_body_heading
+    observations: []
+    file: catalog/mobility.yaml
+  - id: six_dof_flight_control
+    display_name: 六自由度飞行控制
+    subcategory: high_fidelity_flight
+    kind: mover
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - weapon_platform
+    summary: 按三个平移和三个旋转自由度积分运动方程，控制来源可以是手动、合成飞行员、自动驾驶仪或制导系统。
+    tactical_uses:
+    - 高保真空战
+    - 武器释放后控制时序
+    keywords:
+    - 六自由度
+    - 6dof
+    - 气动
+    - 推进
+    - 自动驾驶仪
+    - six dof
+    - autopilot
+    - rigid body
+    - point mass
+    ir_v1: []
+    commands:
+    - mobility_action.set_controls_enabled
+    - mobility_action.set_autopilot_neutral
+    - mobility_action.set_thrust_vectoring_enabled
+    observations: []
+    file: catalog/mobility.yaml
+  - id: trajectory_playback
+    display_name: 轨迹回放
+    subcategory: trajectory_playback
+    kind: mover
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    summary: 从时空位置数据读取每个时刻的位置、速度、航向与姿态，并据此更新平台。
+    tactical_uses:
+    - 目标剧本运动
+    - 航迹回放
+    keywords:
+    - 回放
+    - 航迹
+    - 剧本
+    - playback
+    - tspi
+    - trajectory file
+    ir_v1: []
+    commands:
+    - mobility_action.set_trajectory_source
+    observations: []
+    file: catalog/mobility.yaml
+  - id: orbital_maneuvering
+    display_name: 轨道机动
+    subcategory: space
+    kind: mover
+    status: partial
+    platform_classes:
+    - space_vehicle
+    summary: 通过给定参考系下的速度增量改变航天平台轨道。
+    tactical_uses:
+    - 轨道转移
+    - 交会
+    - 相位调整
+    - 在轨规避
+    keywords:
+    - 轨道
+    - 机动
+    - 变轨
+    - 交会
+    - 霍曼
+    - orbit
+    - maneuver
+    - delta-v
+    - rendezvous
+    - hohmann
+    ir_v1: []
+    commands:
+    - mobility_action.apply_orbital_delta_velocity
+    - mobility_action.execute_orbital_event
+    - mobility_action.execute_mission_sequence
+    observations: []
+    file: catalog/mobility.yaml
+  - id: orbital_attitude_control
+    display_name: 在轨姿态控制
+    subcategory: space
+    kind: mover
+    status: partial
+    platform_classes:
+    - space_vehicle
+    summary: 使在轨平台的指向轴和约束轴朝向指定目标关系。
+    tactical_uses:
+    - 对地观测指向
+    - 对日定向
+    keywords:
+    - 姿态
+    - 指向
+    - 天底
+    - 对日
+    - attitude
+    - pointing
+    - nadir
+    - sun
+    ir_v1: []
+    commands:
+    - mobility_action.set_orbital_orientation
+    observations: []
+    file: catalog/mobility.yaml
+  - id: orbit_propagation
+    display_name: 轨道传播
+    subcategory: space
+    kind: mover
+    status: partial
+    platform_classes:
+    - space_vehicle
+    summary: 以质点、二体、地球扁率摄动、通用摄动或数值积分等模型传播轨道。
+    tactical_uses:
+    - 卫星过顶时间计算
+    - 星座态势
+    keywords:
+    - 轨道传播
+    - 卫星
+    - 两行根数
+    - 摄动
+    - propagation
+    - satellite
+    - tle
+    - j2
+    - kepler
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/mobility.yaml
+  - id: guided_munition_flyout
+    display_name: 制导弹药飞行
+    subcategory: munition_flyout
+    kind: mover
+    status: partial
+    platform_classes:
+    - weapon_platform
+    summary: 以点质量三自由度方程（或指定的导弹库模型）模拟多级推进与制导飞行，拦截目标航迹。
+    tactical_uses:
+    - 导弹拦截
+    - 制导打击
+    keywords:
+    - 导弹
+    - 制导
+    - 飞行
+    - 拦截
+    - missile
+    - guided
+    - flyout
+    - intercept
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/mobility.yaml
+  - id: ballistic_munition_flyout
+    display_name: 弹道弹药飞行
+    subcategory: munition_flyout
+    kind: mover
+    status: partial
+    platform_classes:
+    - weapon_platform
+    summary: 以抛物线、一阶阻力、火箭方程或非制导推进模型计算弹道。
+    tactical_uses:
+    - 火炮射击
+    - 火箭弹打击
+    keywords:
+    - 弹道
+    - 炮弹
+    - 火箭弹
+    - 非制导
+    - 抛物线
+    - ballistic
+    - artillery
+    - unguided
+    - rocket
+    - tbm
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/mobility.yaml
+  - id: towed_asset_recovery
+    display_name: 拖曳资产部署与回收
+    subcategory: towed
+    kind: mover
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    summary: 由承载平台指定一项已部署的拖曳资产，在指定时机以给定速度将该资产卷回。
+    tactical_uses:
+    - 拖曳诱饵
+    - 拖曳声呐
+    keywords:
+    - 拖曳
+    - 诱饵
+    - 卷收
+    - towed
+    - decoy
+    - reel in
+    ir_v1: []
+    commands:
+    - mobility_action.schedule_towed_recovery
+    observations: []
+    file: catalog/mobility.yaml
+  - id: motion_fidelity_selection
+    display_name: 运动模型保真度选择
+    subcategory: fidelity_selection
+    kind: mover
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - weapon_platform
+    summary: 按保真度数值在多个运动模型之间选择，未匹配时使用默认模型。
+    tactical_uses: []
+    keywords:
+    - 保真度
+    - 多分辨率
+    - fidelity
+    - multiresolution
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/mobility.yaml
+- id: sensing
+  display_name: 探测类
+  file: capability_catalog.yaml
+  format_version: 0.2.0
+  split: false
+  capabilities:
+  - id: sensor_control
+    display_name: 传感器控制
+    subcategory: null
+    kind: sensor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 以传感器身份为单位控制设备是否工作。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - sensing_action.set_sensor_power
+    observations:
+    - sensor_state.power
+    file: capability_catalog.yaml
+  - id: sensor_cueing
+    display_name: 传感器指向引导
+    subcategory: null
+    kind: sensor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 根据明确选择的航迹调整单个传感器的观测指向。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - sensing_action.cue_to_track
+    observations: []
+    file: capability_catalog.yaml
+  - id: radar_search
+    display_name: 雷达搜索
+    subcategory: null
+    kind: sensor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 在雷达搜索区域中安排探测机会，输出与目标航迹关联的雷达测量。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - sensing_result.radar_range
+    - sensing_result.radar_range_rate
+    file: capability_catalog.yaml
+  - id: passive_rf_detection
+    display_name: 被动射频探测
+    subcategory: null
+    kind: sensor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 在配置的接收频带内监听发射源，并形成与目标关联的信号报告。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - sensing_result.rf_frequency
+    file: capability_catalog.yaml
+  - id: eo_ir_search
+    display_name: 光电红外成像搜索
+    subcategory: null
+    kind: composite
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 形成观测图像，并把图像中满足条件的对象转为可读取的目标探测报告。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - sensing_result.image_target_detected
+    file: capability_catalog.yaml
+  - id: infrared_search_and_track
+    display_name: 红外搜索与跟踪
+    subcategory: null
+    kind: sensor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 利用目标与背景的红外辐射对比执行搜索和航迹测量更新。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - sensing_result.infrared_bearing
+    file: capability_catalog.yaml
+  - id: acoustic_detection
+    display_name: 声学探测
+    subcategory: null
+    kind: sensor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - static_node
+    summary: 使用声学观测判断目标声源是否满足听觉探测条件。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - sensing_result.audible_target_detected
+    file: capability_catalog.yaml
+  - id: target_detection
+    display_name: 目标探测结果获取
+    subcategory: null
+    kind: composite
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 将一次已报告的目标发现作为行为可使用的探测结果。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - sensing_result.target_detected
+    file: capability_catalog.yaml
+  - id: sensor_coverage_assessment
+    display_name: 传感器覆盖评估
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 在明确的评估时段内汇总传感器与网格资产的交互，比较观测覆盖程度。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - sensing_coverage.total_covered_time
+    - sensing_coverage.mean_revisit_gap
+    file: capability_catalog.yaml
+- id: tracking
+  display_name: 跟踪类
+  file: capability_catalog.yaml
+  format_version: 0.2.0
+  split: false
+  capabilities:
+  - id: target_tracking
+    display_name: 目标持续跟踪
+    subcategory: null
+    kind: composite
+    status: available
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 通过连续测量或后续报告更新同一目标的航迹状态。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - track_state.latitude
+    - track_state.longitude
+    - track_state.location_valid
+    file: capability_catalog.yaml
+  - id: track_management
+    display_name: 航迹管理
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 维护主列表或独立备用列表中的航迹及创建、更新和移除状态。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - track_state.managed_track
+    - track_state.lifecycle_event
+    file: capability_catalog.yaml
+  - id: track_filtering
+    display_name: 航迹滤波
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 按单条航迹处理测量序列，读取滤波后的位置估计。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - track_state.filtered_latitude
+    - track_state.filtered_longitude
+    file: capability_catalog.yaml
+  - id: track_correlation
+    display_name: 航迹关联
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 将测量或原始航迹匹配到同一实体的本地航迹，无法匹配时形成新航迹。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - track_state.correlated_local_track
+    file: capability_catalog.yaml
+  - id: track_fusion
+    display_name: 航迹融合
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 将属于同一实体的多源报告形成统一的本地航迹状态。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - track_state.fusion_contributor_count
+    - track_state.fused_latitude
+    - track_state.fused_longitude
+    file: capability_catalog.yaml
+  - id: track_identification
+    display_name: 航迹识别与分类
+    subcategory: null
+    kind: composite
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 读取观测处理所形成的目标类别和敌我身份信息。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - track_state.reported_type
+    - track_state.affiliation
+    - track_state.image_recognition_stage
+    file: capability_catalog.yaml
+  - id: track_quality_assessment
+    display_name: 航迹质量评估
+    subcategory: null
+    kind: processor
+    status: available
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 分别检查航迹质量和报告时效，判断是否适合当前行为使用。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - track_state.quality
+    - track_state.age
+    file: capability_catalog.yaml
+- id: communication
+  display_name: 通信类
+  file: catalog/communication.yaml
+  format_version: 0.3.0
+  split: true
+  subcategories:
+  - id: messaging
+    display_name: 消息收发
+    summary: 发送、接收、定址、群发消息，以及带确认的报告；行为之间协同的基本手段。
+  - id: reporting
+    display_name: 情报与航迹上报
+    summary: 把已有的目标航迹报告给上级或友邻。
+  - id: link_state
+    display_name: 链路与设备状态
+    summary: 通信是否可用、设备开关与无线电静默、受干扰感知、备用频率切换、通信中断判定。
+  - id: network
+    display_name: 网络组织与路由
+    summary: 谁和谁在同一个网里、网络拓扑（星形、网状、环形等）、随距离变化的动态组网、消息路由。
+  - id: transmission
+    display_name: 传输性能
+    summary: 发送队列、优先级与重传，传播时延与速率，共享信道的竞争与传输模式。
+  - id: device_type
+    display_name: 通信设备类型
+    summary: 有线、无线电、时分数据链、水下、激光等设备的特性与边界。
+  - id: fidelity_selection
+    display_name: 保真度选择
+    summary: 按保真度在多个通信模型之间选择。
+  capabilities:
+  - id: message_exchange
+    display_name: 类型化消息交换
+    subcategory: messaging
+    kind: comm
+    status: partial
+    platform_classes: &id002
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 发送和接收保留类型、消息身份与端点身份的消息。
+    tactical_uses:
+    - 通报队形或阶段转换
+    - 跃进完成通报
+    - 下达或转发命令
+    - 同步状态转换
+    keywords:
+    - 消息
+    - 发送
+    - 接收
+    - 通报
+    - 广播
+    - message
+    - send
+    - receive
+    - notify
+    ir_v1:
+    - message_received
+    - send_message
+    commands:
+    - communication_action.send_message
+    observations:
+    - communication_message.received_type
+    file: catalog/communication.yaml
+  - id: point_to_point_communication
+    display_name: 定址通信
+    subcategory: messaging
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 向明确的单一接收通信接口发送类型化消息。
+    tactical_uses:
+    - 向排长单独报告
+    - 向指定车辆下达命令
+    keywords:
+    - 定址
+    - 单播
+    - 点对点
+    - 指定接收者
+    - unicast
+    - addressed
+    - point to point
+    ir_v1:
+    - send_message
+    commands:
+    - communication_action.send_addressed_message
+    observations:
+    - communication_link.addressed_destination
+    file: catalog/communication.yaml
+  - id: group_messaging
+    display_name: 群组通信
+    subcategory: messaging
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 设备加入一个或多个群组；发往群组地址的消息被投递给群组内所有成员。
+    tactical_uses:
+    - 全排通报
+    - 全连广播
+    - 同时下达阶段转换
+    keywords:
+    - 群组
+    - 组播
+    - 广播
+    - 全排
+    - multicast
+    - group
+    - broadcast
+    ir_v1:
+    - send_message
+    commands:
+    - communication_action.send_group_message
+    - communication_action.join_group
+    - communication_action.leave_group
+    observations: []
+    file: catalog/communication.yaml
+  - id: acknowledged_messaging
+    display_name: 带确认的报告
+    subcategory: messaging
+    kind: composite
+    status: partial
+    platform_classes: *id002
+    summary: 发送一条报告，等待接收方回复确认消息；在规定时间内收到确认即完成，否则视为未送达。
+    tactical_uses:
+    - 接敌报告
+    - 跃进到位报告
+    - 请求火力
+    - 通信不可靠时确保送达
+    keywords:
+    - 确认
+    - 应答
+    - 回执
+    - 超时
+    - 重发
+    - acknowledge
+    - ack
+    - timeout
+    - report
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: track_reporting
+    display_name: 航迹报告传播
+    subcategory: reporting
+    kind: processor
+    status: partial
+    platform_classes: *id002
+    summary: 向指定接收者传播已有航迹报告并保留航迹与报告来源。
+    tactical_uses:
+    - 向排长报告发现敌车辆
+    - 逐级上报敌情
+    - 友邻间共享目标
+    keywords:
+    - 接触报告
+    - 敌情
+    - 航迹
+    - 上报
+    - 目标共享
+    - contact report
+    - track report
+    ir_v1:
+    - report_contact
+    commands:
+    - communication_action.report_contact
+    observations:
+    - track_report.reported_track
+    file: catalog/communication.yaml
+  - id: data_link_communication
+    display_name: 数据链路通信
+    subcategory: link_state
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 表示指定通信接口之间承载数据消息的传输可用性。
+    tactical_uses:
+    - 发送前检查能否通信
+    - 失联后改按预案行动
+    - 选择可用的通信设备
+    keywords:
+    - 链路
+    - 通信可用
+    - 能否通信
+    - 失联
+    - link
+    - available
+    - connectivity
+    ir_v1:
+    - comm_value.available
+    commands: []
+    observations:
+    - communication_link.transport_available
+    file: catalog/communication.yaml
+  - id: comm_device_control
+    display_name: 通信设备开关与无线电静默
+    subcategory: link_state
+    kind: comm
+    status: unknown
+    platform_classes: *id002
+    summary: 按设备开启或关闭通信设备；关闭期间不收不发。辐射方式分为“只在发送时辐射”和“开机即持续辐射”。
+    tactical_uses:
+    - 无线电静默
+    - 隐蔽接近
+    - 接敌后恢复通信
+    - 减少电磁暴露
+    keywords:
+    - 静默
+    - 无线电静默
+    - 开机
+    - 关机
+    - 电磁管制
+    - radio silence
+    - emcon
+    - power
+    ir_v1: []
+    commands:
+    - communication_action.set_comm_power
+    observations:
+    - communication_state.power
+    file: catalog/communication.yaml
+  - id: jamming_perception
+    display_name: 通信干扰感知
+    subcategory: link_state
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 接收到的干扰超过感知阈值时，设备（操作员）感知到受干扰；干扰低于阈值后经过保持时间才解除。
+    tactical_uses:
+    - 受干扰时切换频率
+    - 受干扰时转入预案
+    - 评估通信环境
+    keywords:
+    - 干扰
+    - 压制
+    - 受干扰
+    - jamming
+    - interference
+    - jammed
+    ir_v1: []
+    commands: []
+    observations:
+    - communication_state.jamming_perceived
+    file: catalog/communication.yaml
+  - id: alternate_frequency_selection
+    display_name: 备用频率切换
+    subcategory: link_state
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 设备在预先定义的多个频率之间切换，切换期间有时延。
+    tactical_uses:
+    - 抗干扰换频
+    - 避开被侦听频率
+    keywords:
+    - 换频
+    - 备用频率
+    - 跳频
+    - 频率捷变
+    - frequency
+    - alternate frequency
+    - hop
+    ir_v1: []
+    commands:
+    - communication_action.select_alternate_frequency
+    observations: []
+    file: catalog/communication.yaml
+  - id: comm_loss_detection
+    display_name: 通信中断判定
+    subcategory: link_state
+    kind: composite
+    status: partial
+    platform_classes: *id002
+    summary: 链路不可用，或在规定时间内没有收到对方的任何消息（如周期性状态通报），即判定通信中断。
+    tactical_uses:
+    - 失联后按最后命令行动
+    - 失联自动撤回
+    - 触发通信预案
+    keywords:
+    - 失联
+    - 通信中断
+    - 断联
+    - 心跳
+    - 超时
+    - comm loss
+    - lost link
+    - heartbeat
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: network_membership
+    display_name: 通信网成员与地址
+    subcategory: network
+    kind: network
+    status: partial
+    platform_classes: *id002
+    summary: 设备通过网名或地址加入通信网；也可以直接指定与其他设备（含同平台设备）之间的链接、所用路由器和网关。
+    tactical_uses:
+    - 排内网编组
+    - 上下级网转接
+    - 跨网转发
+    keywords:
+    - 通信网
+    - 网络
+    - 编组
+    - 地址
+    - 转接
+    - 网关
+    - network
+    - net
+    - address
+    - gateway
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: network_topology
+    display_name: 通信网拓扑
+    subcategory: network
+    kind: network
+    status: partial
+    platform_classes: *id002
+    summary: 按拓扑类型自动建立网内链接：星形（只与中心相连，任意两成员最多两跳）、全互联（两两双向）、按通信能力建立的全互联（仅在建网时能互通的成员之间建链，默认）、点对点（恰好两个成员）、环形（与相邻成员双向，至少三个成员）、单向环、或逐条指定的自定义链接。
+    tactical_uses:
+    - 排长为中心的指挥网
+    - 全互联协同网
+    - 点对点专线
+    keywords:
+    - 拓扑
+    - 星形
+    - 网状
+    - 环形
+    - 点对点
+    - 中心
+    - topology
+    - star
+    - mesh
+    - ring
+    - hub
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: ad_hoc_networking
+    display_name: 动态组网
+    subcategory: network
+    kind: network
+    status: partial
+    platform_classes: *id002
+    summary: 每隔一段时间，网内每台设备检查与其他成员能否通信，能通则建链，不能则断链。
+    tactical_uses:
+    - 随距离变化的通信
+    - 遮挡导致失联
+    - 车辆拉开后断联
+    keywords:
+    - 动态组网
+    - 自组网
+    - 断链
+    - 重连
+    - ad hoc
+    - manet
+    - dynamic network
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: network_routing
+    display_name: 通信路由选择
+    subcategory: network
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 依据可用网络知识决定消息的下一跳及是否存在可用转发选择。
+    tactical_uses:
+    - 经排长车转发
+    - 跨网转发
+    - 无路可达时丢弃
+    keywords:
+    - 路由
+    - 转发
+    - 下一跳
+    - 跳数
+    - routing
+    - relay
+    - next hop
+    - hop
+    ir_v1: []
+    commands: []
+    observations:
+    - communication_route.next_hop
+    file: catalog/communication.yaml
+  - id: transmission_queueing
+    display_name: 发送队列、优先级与重传
+    subcategory: transmission
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 设备有若干发送信道；超出的消息进入队列，按先进先出、后进先出或优先级出队；队列满时后到的消息被丢弃，超过保留时间的消息被清除，发送失败可按次数和间隔重传。
+    tactical_uses:
+    - 重要消息优先
+    - 通信拥塞
+    - 过时消息作废
+    - 失败重发
+    keywords:
+    - 队列
+    - 优先级
+    - 拥塞
+    - 重传
+    - 丢弃
+    - queue
+    - priority
+    - retransmit
+    - congestion
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: transmission_performance
+    display_name: 传输时延与速率
+    subcategory: transmission
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 消息送达时间由传播速度、传输速率（消息大小/速率）和附加时延决定；无线设备可按信噪比查表或按误码率要求计算速率。
+    tactical_uses:
+    - 通信延迟
+    - 带宽限制
+    - 远距离速率下降
+    keywords:
+    - 时延
+    - 延迟
+    - 速率
+    - 带宽
+    - 信噪比
+    - 误码率
+    - latency
+    - delay
+    - data rate
+    - snr
+    - ber
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: shared_medium
+    display_name: 共享信道与传输模式
+    subcategory: transmission
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 传输媒介（有线或无线）可被多台设备共享，共享的信道数限制所有设备的并发传输；媒介可定义多种传输模式（不同速率、时延），每次发送时可按消息选择模式。
+    tactical_uses:
+    - 同网争用信道
+    - 按消息选择传输方式
+    keywords:
+    - 共享信道
+    - 信道争用
+    - 传输模式
+    - 媒介
+    - shared channel
+    - medium
+    - mode
+    ir_v1: []
+    commands:
+    - communication_action.select_transmission_mode
+    observations: []
+    file: catalog/communication.yaml
+  - id: wired_comm
+    display_name: 有线（理想）通信
+    subcategory: device_type
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 理想化的通信设备，除公共的队列、时延、速率配置外不施加额外限制。
+    tactical_uses:
+    - 理想通信
+    - 有线连接
+    - 先验证战术逻辑
+    keywords:
+    - 有线
+    - 理想通信
+    - wired
+    - perfect comm
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: radio_comm
+    display_name: 无线电通信
+    subcategory: device_type
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 按发射机、接收机和天线计算信号，能否收到和速率取决于信噪比。
+    tactical_uses:
+    - 车载电台
+    - 视距通信
+    - 受干扰通信
+    keywords:
+    - 无线电
+    - 电台
+    - 视距
+    - radio
+    - line of sight
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: tactical_datalink_terminal
+    display_name: 时分战术数据链终端
+    subcategory: device_type
+    kind: comm
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - surface_vessel
+    - ground_vehicle
+    - static_node
+    summary: 终端按时隙组占用时隙发送，时隙数量决定网络容量；支持多个网络、成对时隙中继和中继中的时隙重用。
+    tactical_uses:
+    - 数据链分发目标
+    - 超视距中继
+    - 网络容量
+    keywords:
+    - 数据链
+    - 时分
+    - 时隙
+    - 中继
+    - datalink
+    - tdma
+    - relay
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: subsurface_comm
+    display_name: 水下通信
+    subcategory: device_type
+    kind: comm
+    status: partial
+    platform_classes:
+    - subsurface_vehicle
+    - surface_vessel
+    - air_vehicle
+    - static_node
+    summary: 甚低频方式忽略地平线和地形限制；默认的光学方式按水下路径长度、入水角度和水衰减限制通信。
+    tactical_uses:
+    - 对潜通信
+    keywords:
+    - 水下通信
+    - 甚低频
+    - 对潜
+    - underwater
+    - vlf
+    - submarine
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: laser_comm
+    display_name: 激光通信
+    subcategory: device_type
+    kind: comm
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - space_vehicle
+    - static_node
+    - surface_vessel
+    summary: 按发射功率、孔径、调制方式、大气与湍流损耗、探测器噪声计算信噪比和速率。
+    tactical_uses:
+    - 高速点对点链路
+    - 抗截获通信
+    keywords:
+    - 激光通信
+    - 光通信
+    - laser
+    - optical
+    - free space optical
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+  - id: comm_fidelity_selection
+    display_name: 通信模型保真度选择
+    subcategory: fidelity_selection
+    kind: comm
+    status: partial
+    platform_classes: *id002
+    summary: 为同一通信设备定义多个模型及各自的保真度区间，初始化时按设定的保真度选用匹配的模型。
+    tactical_uses:
+    - 快速验证与高保真评估切换
+    keywords:
+    - 保真度
+    - 多分辨率
+    - fidelity
+    - multiresolution
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/communication.yaml
+- id: command_and_control
+  display_name: 指挥控制类
+  file: capability_catalog.yaml
+  format_version: 0.2.0
+  split: false
+  capabilities:
+  - id: command_chain_management
+    display_name: 指挥链关系管理
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 按具名指挥链观察本平台的指挥官和层级归属。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - command_chain.commander
+    file: capability_catalog.yaml
+  - id: command_authority
+    display_name: 命令权限判定
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 表示特定行为主体对某类命令及作用对象是否具有执行或发出权限。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - command_permission.authorized
+    file: capability_catalog.yaml
+  - id: situational_awareness
+    display_name: 综合态势感知
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 汇总感知的友方资产、未知目标和群体状态，形成有来源与时效的态势图景。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - awareness_state.perceived_entity
+    file: capability_catalog.yaml
+  - id: threat_evaluation
+    display_name: 威胁评估
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 对感知实体或群体赋予威胁等级并按当前评估规则解释其优先性。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - threat_state.threat_level
+    file: capability_catalog.yaml
+- id: tasking
+  display_name: 任务类
+  file: capability_catalog.yaml
+  format_version: 0.2.0
+  split: false
+  capabilities:
+  - id: task_assignment
+    display_name: 任务分配
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 分配一个有独立身份的任务给指定受让人。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - task_action.assign_task
+    observations:
+    - task_state.assignment_event
+    file: capability_catalog.yaml
+  - id: task_acceptance
+    display_name: 任务接受
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 受让人确认愿意执行已收到的特定任务。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - task_action.accept_task
+    observations:
+    - task_state.acceptance
+    file: capability_catalog.yaml
+  - id: task_rejection
+    display_name: 任务拒绝
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 受让人对特定任务报告无法或拒绝执行。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - task_action.reject_task
+    observations:
+    - task_state.rejection
+    file: capability_catalog.yaml
+  - id: task_cancellation
+    display_name: 任务取消
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 请求终止一个已明确身份的任务，并分别观察发送和收到取消通知。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - task_action.cancel_task
+    observations:
+    - task_state.cancellation_event
+    file: capability_catalog.yaml
+  - id: task_completion
+    display_name: 任务完成通报
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 受让人向请求方报告特定任务已结束，并保留完成通知的角色与方向。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - task_action.report_task_completion
+    observations:
+    - task_state.completion_notification
+    file: capability_catalog.yaml
+  - id: engagement_task_management
+    display_name: 目标交战任务管理
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 对特定目标和受让人管理交战工作请求，并按任务类型解释进度和结束。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - task_action.request_engagement
+    - task_action.cancel_target_engagements
+    observations:
+    - engagement_task.target
+    file: capability_catalog.yaml
+- id: weapon_employment
+  display_name: 武器类
+  file: catalog/weapon_employment.yaml
+  format_version: 0.3.0
+  split: true
+  subcategories:
+  - id: engagement_control
+    display_name: 交战控制
+    summary: 选择武器、开火（直射、制导、齐射）、停火、间接火力射击、武器开关。
+  - id: readiness_inventory
+    display_name: 武器状态与弹药
+    summary: 武器是否就绪、剩余弹药、补装与冷却。
+  - id: engagement_assessment
+    display_name: 交战评估
+    summary: 发射前判断是否在包线内、预测拦截时间；发射后观察命中、未命中、终止。
+  - id: damage_effects
+    display_name: 毁伤效果
+    summary: 弹药对目标造成什么毁伤：爆炸半径、概率表、机动/火力/摧毁杀伤、激光能量。
+  - id: countermeasure
+    display_name: 对抗措施
+    summary: 释放箔条等自卫对抗措施，以及对抗措施对来袭武器的削弱。
+  - id: weapon_type
+    display_name: 武器类型
+    summary: 独立飞行弹药、直接作用武器、高能激光、射频干扰器、子对象武器的特性与边界。
+  - id: launch_computation
+    display_name: 发射计算
+    summary: 各类发射计算模型及离线生成发射包线数据的工具。
+  capabilities:
+  - id: weapon_selection
+    display_name: 武器选择
+    subcategory: engagement_control
+    kind: weapon
+    status: partial
+    platform_classes: &id003
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 为目标和交战上下文确定具体武器资源，保留资源身份供后续评估或释放使用。
+    tactical_uses:
+    - 主炮/机枪/反坦克导弹的选择
+    - 按目标类型选弹
+    - 节约高价值弹药
+    keywords:
+    - 选择武器
+    - 选弹
+    - 主炮
+    - 机枪
+    - 导弹
+    - weapon selection
+    - select weapon
+    ir_v1: []
+    commands: []
+    observations:
+    - weapon_selection.selected_weapon
+    file: catalog/weapon_employment.yaml
+  - id: weapon_launch
+    display_name: 武器释放与发射
+    subcategory: engagement_control
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 向指定武器资源提交针对目标的通用释放或发射请求。
+    tactical_uses:
+    - 齐射
+    - 按轮次射击
+    - 对区域盲射
+    keywords:
+    - 开火
+    - 发射
+    - 齐射
+    - 射击
+    - fire
+    - launch
+    - salvo
+    ir_v1:
+    - fire_weapon
+    commands:
+    - weapon_action.launch
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: direct_fire_engagement
+    display_name: 指定目标直接开火
+    subcategory: engagement_control
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 使用直接瞄准的武器资源，对指定目标提交带数量的开火请求。
+    tactical_uses:
+    - 主炮直瞄射击
+    - 机枪压制
+    - 对指定目标开火
+    keywords:
+    - 直瞄
+    - 直射
+    - 开火
+    - 主炮
+    - 机枪
+    - direct fire
+    - gun
+    - engage
+    ir_v1:
+    - fire_weapon
+    commands:
+    - weapon_action.direct_fire
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: guided_weapon_engagement
+    display_name: 制导武器交战
+    subcategory: engagement_control
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 向具体武器提交目标发射请求，并通过发射后的目标信息和制导组件维持交战。
+    tactical_uses:
+    - 反坦克导弹攻击
+    - 防空导弹拦截
+    - 制导炸弹投放
+    keywords:
+    - 导弹
+    - 制导
+    - 反坦克导弹
+    - 发射后制导
+    - guided
+    - missile
+    - atgm
+    ir_v1:
+    - fire_weapon
+    commands:
+    - weapon_action.guided_engagement
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: cease_fire
+    display_name: 停火
+    subcategory: engagement_control
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 终止指定武器当前的交战：持续照射类武器停止照射，排队中的射击请求不再执行。
+    tactical_uses:
+    - 目标摧毁后停火
+    - 友军进入射界时停火
+    - 执行停火命令
+    keywords:
+    - 停火
+    - 停止射击
+    - cease fire
+    - hold fire
+    - stop firing
+    ir_v1: []
+    commands:
+    - weapon_action.cease_fire
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: weapon_power_control
+    display_name: 武器开关
+    subcategory: engagement_control
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 武器有开、关两种状态；可设定初始状态，运行中开关以组件命令实现。
+    tactical_uses:
+    - 阶段性启用武器
+    - 干扰器按时开机
+    - 保险状态
+    keywords:
+    - 武器开关
+    - 开机
+    - 关机
+    - 保险
+    - weapon on
+    - weapon off
+    - arm
+    ir_v1: []
+    commands:
+    - weapon_action.set_weapon_power
+    observations:
+    - weapon_state.power
+    file: catalog/weapon_employment.yaml
+  - id: weapon_cueing
+    display_name: 武器指向目标
+    subcategory: engagement_control
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 收到射击请求时，支持指向的武器自动转向请求中的目标；可选指向目标当前位置或预测拦截位置。
+    tactical_uses:
+    - 炮塔转向目标
+    - 提前量射击
+    keywords:
+    - 指向
+    - 炮塔
+    - 转向目标
+    - 提前量
+    - cue
+    - turret
+    - slew
+    - lead
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: indirect_fire_engagement
+    display_name: 间接火力射击
+    subcategory: engagement_control
+    kind: composite
+    status: partial
+    platform_classes: *id003
+    summary: 以直接作用武器配合间接火力发射计算模型：按射程查射表得到弹道最高点和飞行时间，在预计拦截时刻评估毁伤；对固定地面目标常用按落点偏差计算的面杀伤模型。
+    tactical_uses:
+    - 火力准备
+    - 压制视线外目标
+    - 迫击炮支援
+    keywords:
+    - 间接火力
+    - 曲射
+    - 迫击炮
+    - 榴弹炮
+    - 射表
+    - indirect fire
+    - mortar
+    - artillery
+    ir_v1:
+    - fire_weapon
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: weapon_inventory_management
+    display_name: 武器库存管理
+    subcategory: readiness_inventory
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 按具体武器资源监测可用弹药数量并配置该资源的有限补装条件。
+    tactical_uses:
+    - 弹药耗尽前撤出补给
+    - 按剩余弹药分配目标
+    - 补装期间暂停射击
+    keywords:
+    - 弹药
+    - 剩余弹药
+    - 补装
+    - 装填
+    - ammunition
+    - rounds
+    - reload
+    - inventory
+    ir_v1:
+    - weapon_value.quantity_remaining
+    commands: []
+    observations:
+    - weapon_inventory.remaining_rounds
+    file: catalog/weapon_employment.yaml
+  - id: weapon_readiness
+    display_name: 武器就绪状态
+    subcategory: readiness_inventory
+    kind: state
+    status: partial
+    platform_classes: *id003
+    summary: 武器能否立即响应射击请求，取决于开关状态、是否在补装或冷却、弹药是否耗尽、是否遭火力杀伤。
+    tactical_uses:
+    - 射击前确认可用
+    - 补装/冷却期间交替射击
+    - 火力受损后转移射击任务
+    keywords:
+    - 就绪
+    - 可用
+    - 装填中
+    - 冷却
+    - ready
+    - available
+    - reloading
+    - cooling
+    ir_v1:
+    - weapon_value.available
+    - weapon_value.ready
+    commands: []
+    observations:
+    - weapon_state.available
+    - weapon_state.ready
+    file: catalog/weapon_employment.yaml
+  - id: launch_envelope_assessment
+    display_name: 发射包线评估
+    subcategory: engagement_assessment
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 评估具体武器与目标在当前几何、速度和高度条件下是否处于可接受的发射包线内。
+    tactical_uses:
+    - 射程内才开火
+    - 选择最佳射击时机
+    - 超出射程先机动接近
+    keywords:
+    - 射程
+    - 包线
+    - 可射区
+    - 有效射程
+    - range
+    - envelope
+    - lar
+    - in range
+    ir_v1:
+    - range_to_current_target_lte
+    - track_value.current_target_range
+    commands: []
+    observations:
+    - launch_assessment.within_envelope
+    file: catalog/weapon_employment.yaml
+  - id: intercept_assessment
+    display_name: 预测拦截评估
+    subcategory: engagement_assessment
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 评估指定武器对目标的预测拦截可行性，并保留有效解的预计剩余时间。
+    tactical_uses:
+    - 比较哪件武器先命中
+    - 分配拦截任务
+    keywords:
+    - 拦截时间
+    - 飞行时间
+    - 预测拦截
+    - intercept
+    - time to intercept
+    - time of flight
+    ir_v1: []
+    commands: []
+    observations:
+    - intercept_assessment.feasible
+    - intercept_assessment.predicted_time_remaining
+    file: catalog/weapon_employment.yaml
+  - id: engagement_result_monitoring
+    display_name: 交战结果监测
+    subcategory: engagement_assessment
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 关联任务、武器和目标观察交战事件，并按来源和发生阶段解释结果。
+    tactical_uses:
+    - 命中后转移火力
+    - 未命中再射
+    - 毁伤评估
+    keywords:
+    - 命中
+    - 未命中
+    - 毁伤评估
+    - 战果
+    - hit
+    - miss
+    - kill
+    - bda
+    ir_v1: []
+    commands: []
+    observations:
+    - engagement_result.observed_event
+    file: catalog/weapon_employment.yaml
+  - id: blast_damage_effect
+    display_name: 爆炸半径毁伤
+    subcategory: damage_effects
+    kind: effect
+    status: partial
+    platform_classes: *id003
+    summary: 目标距爆炸点小于最小半径时受最大毁伤，大于最大半径时无毁伤，其间按指数衰减；毁伤累加到目标，累计达到 1 即被摧毁。可设首次毁伤阈值。
+    tactical_uses:
+    - 面杀伤
+    - 友军安全距离
+    - 多发累积毁伤
+    keywords:
+    - 爆炸半径
+    - 杀伤半径
+    - 破片
+    - 累积毁伤
+    - blast
+    - lethal radius
+    - splash
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: probability_table_effect
+    display_name: 概率表毁伤
+    subcategory: damage_effects
+    kind: effect
+    status: partial
+    platform_classes: *id003
+    summary: 按所选方法得到毁伤概率并抽取结果：按脱靶距离分段或插值；按圆概率误差插值；按发射平台与目标类型的发射条件表；按撞击速度和角度；或按落点的纵横偏差与目标杀伤面积（对固定地面目标的间接火力）。
+    tactical_uses:
+    - 按目标类型区分毁伤
+    - 间接火力面杀伤
+    - 使用已有毁伤数据
+    keywords:
+    - 毁伤概率
+    - 命中概率
+    - 圆概率误差
+    - 杀伤面积
+    - pk
+    - cep
+    - lethality
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: mobility_firepower_damage
+    display_name: 机动/火力/摧毁分级毁伤
+    subcategory: damage_effects
+    kind: effect
+    status: partial
+    platform_classes: *id003
+    summary: 引信起爆时若脱靶距离小于最大半径，先抽取是否造成毁伤，再按概率分配为机动杀伤（失去机动）、火力杀伤（武器失效）、两者兼有或彻底摧毁；按目标类型可用不同概率表。目标释放的对抗措施（如烟幕、诱饵）满足距离、视角和持续时间条件后，可换用降级表、按系数降低概率或直接使来袭弹药失效。
+    tactical_uses:
+    - 打瘫/打哑/击毁的区分
+    - 受损车辆转为固定火力点
+    - 烟幕削弱来袭导弹
+    keywords:
+    - 机动杀伤
+    - 火力杀伤
+    - 摧毁
+    - 打瘫
+    - 烟幕
+    - 诱饵
+    - mobility kill
+    - firepower kill
+    - catastrophic kill
+    - smoke
+    - countermeasure
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: directed_energy_effect
+    display_name: 激光能量毁伤
+    subcategory: damage_effects
+    kind: effect
+    status: partial
+    platform_classes: *id003
+    summary: 照射过程中每个更新间隔按累积能量查表抽取一次毁伤；也可设最小能量或能量密度门槛。
+    tactical_uses:
+    - 反无人机
+    - 反来袭弹药
+    keywords:
+    - 激光
+    - 能量密度
+    - 照射
+    - 高能激光
+    - laser
+    - fluence
+    - dwell
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: chaff_dispensing
+    display_name: 箔条释放
+    subcategory: countermeasure
+    kind: weapon
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - surface_vessel
+    - ground_vehicle
+    summary: 弹射器按设定速度和方向释放箔条包，包膨胀、减速、下落，若干包组成的箔条云对雷达产生反射；包落地或超过存在时间后消失。
+    tactical_uses:
+    - 自卫干扰雷达
+    - 铺设干扰走廊
+    keywords:
+    - 箔条
+    - 干扰丝
+    - 雷达对抗
+    - 自卫
+    - chaff
+    - countermeasure
+    - decoy
+    ir_v1: []
+    commands:
+    - weapon_action.dispense_chaff
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: launched_munition
+    display_name: 独立飞行弹药
+    subcategory: weapon_type
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 发射时创建一个弹药平台，其飞行由运动类的弹药飞行能力决定；可给出发射附加速度、是否忽略发射平台速度、发射后弹药的指挥关系（用于接收发射平台的目标更新）。
+    tactical_uses:
+    - 导弹攻击
+    - 炸弹投放
+    - 炮弹射击
+    keywords:
+    - 导弹
+    - 炸弹
+    - 火箭
+    - 弹药平台
+    - missile
+    - bomb
+    - munition
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: direct_acting_weapon
+    display_name: 直接作用武器
+    subcategory: weapon_type
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 射击时不创建弹药平台；有发射计算时在预计拦截时刻评估交战，否则按武器更新间隔评估。
+    tactical_uses:
+    - 主炮直射
+    - 机枪
+    - 简化火力
+    keywords:
+    - 火炮
+    - 枪
+    - 直接作用
+    - gun
+    - cannon
+    - implicit
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: high_energy_laser
+    display_name: 高能激光武器
+    subcategory: weapon_type
+    kind: weapon
+    status: partial
+    platform_classes:
+    - ground_vehicle
+    - surface_vessel
+    - air_vehicle
+    - static_node
+    summary: 照射期间按更新间隔累积能量；受发射次数与冷却时间限制，或受热系统的温度上下限限制；带光束指向器的型号只有在指向器锁定目标时才发射，丢失锁定即停止。
+    tactical_uses:
+    - 反无人机
+    - 近程防御
+    keywords:
+    - 激光武器
+    - 高能激光
+    - 光束指向器
+    - laser weapon
+    - hel
+    - beam director
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: rf_jammer_device
+    display_name: 射频干扰器
+    subcategory: weapon_type
+    kind: weapon
+    status: partial
+    platform_classes: *id003
+    summary: 干扰器由波束（空间）和频点（频率）组成，可定义多种工作模式；可排除指定阵营、空间域或类别；可由被动侦收传感器自动启动和停止干扰分配。干扰的启动与停止见电子战类的射频干扰分配控制。
+    tactical_uses:
+    - 压制敌通信
+    - 压制雷达
+    keywords:
+    - 干扰器
+    - 电子干扰
+    - 压制
+    - jammer
+    - jamming
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: carried_subobject_weapon
+    display_name: 挂载子对象武器
+    subcategory: weapon_type
+    kind: weapon
+    status: partial
+    platform_classes:
+    - air_vehicle
+    summary: 按列出的顺序发射挂载子对象，每个子对象发射后成为独立平台。
+    tactical_uses:
+    - 外挂武器
+    keywords:
+    - 挂载
+    - 外挂
+    - 子对象
+    - subobject
+    - store
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+  - id: launch_envelope_generation
+    display_name: 发射包线离线生成
+    subcategory: launch_computation
+    kind: tool
+    status: partial
+    platform_classes: *id003
+    summary: 离线工具在给定的发射与目标条件矩阵下反复发射武器，记录命中与否和飞行时间，生成空空、空地、无制导弹道、弹道导弹、轨道运载、地空等发射计算数据。
+    tactical_uses:
+    - 为新武器准备包线数据
+    keywords:
+    - 包线生成
+    - 射表生成
+    - 离线工具
+    - weapon tools
+    - lar generator
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/weapon_employment.yaml
+- id: electronic_warfare
+  display_name: 电子战类
+  file: capability_catalog.yaml
+  format_version: 0.2.0
+  split: false
+  capabilities:
+  - id: electronic_attack
+    display_name: 电子攻击技术运用
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 为指定电子攻击资源和目标交互选择或停用具名攻击技术。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - electronic_action.set_attack_technique
+    observations: []
+    file: capability_catalog.yaml
+  - id: electronic_protection
+    display_name: 电子保护技术运用
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 在指定受保护设备接收端控制具名电子保护技术，以缓解匹配的电子攻击。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - electronic_action.set_protection_technique
+    observations: []
+    file: capability_catalog.yaml
+  - id: rf_jamming
+    display_name: 射频干扰分配控制
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 为具体射频干扰资源、目标和频带启动或停止干扰分配。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - electronic_action.start_jamming
+    - electronic_action.stop_jamming
+    observations: []
+    file: capability_catalog.yaml
+- id: cyber_operations
+  display_name: 网络战类
+  file: capability_catalog.yaml
+  format_version: 0.2.0
+  split: false
+  capabilities:
+  - id: cyber_attack
+    display_name: 网络攻击行动
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 由本平台针对明确受害平台启动具名网络攻击，并保留攻击效果所需的附加参数身份。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - cyber_action.initiate_attack
+    observations:
+    - cyber_attack.observed_event
+    file: capability_catalog.yaml
+  - id: cyber_protection
+    display_name: 网络防护与响应
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 在受害平台按攻击类型判断易受攻击性，并观察检测和恢复响应。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - cyber_protection.vulnerable
+    - cyber_protection.response_event
+    file: capability_catalog.yaml
+- id: resource_management
+  display_name: 资源类
+  file: capability_catalog.yaml
+  format_version: 0.2.0
+  split: false
+  capabilities:
+  - id: fuel_status_monitoring
+    display_name: 燃料状态监测
+    subcategory: null
+    kind: energy
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - weapon_platform
+    summary: 将燃料状态变化与对应资源身份关联，为返航和任务中止决策提供依据。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - resource_state.fuel_threshold_event
+    - resource_state.fuel_remaining_mass
+    file: capability_catalog.yaml
+  - id: propulsion_power_control
+    display_name: 推进动力控制
+    subcategory: null
+    kind: energy
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - weapon_platform
+    summary: 通过启停推进系统改变平台是否产生主动推力。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands:
+    - resource_action.set_propulsion_enabled
+    observations: []
+    file: capability_catalog.yaml
+  - id: resource_allocation
+    display_name: 任务资源分配
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 根据任务需求和可用资产评估配对，选择承担任务的平台、子系统或资源。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - allocation_state.selected_asset
+    file: capability_catalog.yaml
+- id: survivability
+  display_name: 生存类
+  file: capability_catalog.yaml
+  format_version: 0.2.0
+  split: false
+  capabilities:
+  - id: platform_status_monitoring
+    display_name: 平台状态监测
+    subcategory: null
+    kind: processor
+    status: available
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 监测本平台由完好到完全损坏的损伤程度。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - platform_state.damage_fraction
+    file: capability_catalog.yaml
+  - id: component_health_management
+    display_name: 组件健康状态管理
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 以组件身份为单位管理健康判据，区分受损程度与能否执行操作。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - component_state.damage_fraction
+    - component_state.operational
+    file: capability_catalog.yaml
+- id: autonomy
+  display_name: 自主行为类
+  file: capability_catalog.yaml
+  format_version: 0.2.0
+  split: false
+  capabilities:
+  - id: state_machine_execution
+    display_name: 状态机执行
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 一种运行时执行机制，按配置评估当前状态的转移条件，执行进入和退出操作，并记录对应实例的当前状态。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - state_machine.current_state
+    file: capability_catalog.yaml
+  - id: behavior_tree_execution
+    display_name: 基础行为树执行
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 一种运行时执行机制，从树根访问已配置节点，仅在前置条件通过且节点被访问时执行叶行为，以成功或失败解释基础节点评估。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - behavior_tree.node_result
+    file: capability_catalog.yaml
+  - id: advanced_behavior_tree_execution
+    display_name: 高级行为树执行
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 一种运行时执行机制，以运行中、成功、失败三态执行高级行为模型，并按记忆、装饰与并行成功策略组织节点。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - advanced_tree.node_result
+    file: capability_catalog.yaml
+  - id: behavior_selection
+    display_name: 行为选择策略
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 一种运行时选择机制，基础树按首个合格分支选择，高级树可按节点结果依序尝试直到首个成功分支，另支持最高优先级或加权随机策略。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - behavior_selection.selected_behavior
+    file: capability_catalog.yaml
+  - id: agent_task_execution
+    display_name: 智能体已分配任务执行
+    subcategory: null
+    kind: processor
+    status: partial
+    platform_classes:
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 一种运行时执行机制，将已收到的任务或已获授工作项交给本地配置的行为流程，并保留工作与执行实例的关联。
+    tactical_uses: []
+    keywords: []
+    ir_v1: []
+    commands: []
+    observations:
+    - agent_execution.assigned_work
+    - agent_execution.execution_event
+    file: capability_catalog.yaml
+- id: environment
+  display_name: 环境与区域类
+  file: catalog/environment.yaml
+  format_version: 0.3.0
+  split: true
+  subcategories:
+  - id: terrain
+    display_name: 地形
+    summary: 地形类别、到某类地形的距离、坡度、通视。
+  - id: zone
+    display_name: 区域
+    summary: 区域定义与区域内外、距离判断。
+  capabilities:
+  - id: terrain_classification
+    display_name: 地形类别
+    subcategory: terrain
+    kind: environment
+    status: unknown
+    platform_classes: &id004
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 按位置查询地形类别，或查询到最近某类地形的距离；也可读取坡度。
+    tactical_uses:
+    - 依地形变换队形
+    - 接近城区前转换
+    - 避开开阔地
+    keywords:
+    - 地形
+    - 城区
+    - 开阔地
+    - 林地
+    - 坡度
+    - terrain
+    - urban
+    - open
+    - slope
+    ir_v1:
+    - terrain_value.class
+    - terrain_value.distance_to_class
+    - terrain_value.slope
+    commands: []
+    observations:
+    - environment_state.terrain_class
+    - environment_state.distance_to_terrain_class
+    - environment_state.slope
+    file: catalog/environment.yaml
+  - id: line_of_sight
+    display_name: 通视判断
+    subcategory: terrain
+    kind: environment
+    status: unknown
+    platform_classes: *id004
+    summary: 按地形高程判断两点之间是否通视。
+    tactical_uses:
+    - 选择掩护位置
+    - 利用遮蔽
+    keywords:
+    - 通视
+    - 遮蔽
+    - 视线
+    - line of sight
+    - masking
+    ir_v1:
+    - terrain_value.line_of_sight_to_nearest_hostile
+    commands: []
+    observations:
+    - environment_state.line_of_sight_to_nearest_hostile
+    file: catalog/environment.yaml
+  - id: zone_membership
+    display_name: 区域判断
+    subcategory: zone
+    kind: environment
+    status: partial
+    platform_classes: *id004
+    summary: 区域在想定中按名称定义；运行中可判断某位置是否在区域内，以及到区域边界的距离。
+    tactical_uses:
+    - 进入区域触发
+    - 阶段线
+    - 目标区域
+    - 表示地形类别
+    keywords:
+    - 区域
+    - 地域
+    - 阶段线
+    - 集结区
+    - zone
+    - area
+    - phase line
+    - region
+    ir_v1: []
+    commands: []
+    observations:
+    - environment_state.in_zone
+    - environment_state.distance_to_zone
+    file: catalog/environment.yaml
+- id: execution
+  display_name: 执行环境类
+  file: catalog/execution.yaml
+  format_version: 0.3.0
+  split: true
+  subcategories:
+  - id: variables
+    display_name: 行为变量
+    summary: 本平台内的黑板变量读写。
+  - id: timing
+    display_name: 计时
+    summary: 仿真时间、状态持续时间、等待。
+  - id: control
+    display_name: 控制
+    summary: 控制器开关与决策周期。
+  capabilities:
+  - id: behavior_variables
+    display_name: 行为变量
+    subcategory: variables
+    kind: processor
+    status: partial
+    platform_classes: &id005
+    - air_vehicle
+    - ground_vehicle
+    - surface_vessel
+    - subsurface_vehicle
+    - space_vehicle
+    - static_node
+    - weapon_platform
+    summary: 行为模型在本平台内读写的具名变量，跨决策周期保持。
+    tactical_uses:
+    - 记录当前队形
+    - 避免重复报告
+    - 记录跃进进度
+    keywords:
+    - 变量
+    - 黑板
+    - 记忆
+    - 状态记录
+    - blackboard
+    - variable
+    - memory
+    ir_v1:
+    - blackboard
+    - delete_blackboard_value
+    - set_blackboard
+    commands:
+    - execution_action.set_variable
+    - execution_action.delete_variable
+    observations:
+    - execution_state.variable
+    file: catalog/execution.yaml
+  - id: state_timing
+    display_name: 状态计时与仿真时间
+    subcategory: timing
+    kind: processor
+    status: partial
+    platform_classes: *id005
+    summary: 行为模型可读取当前仿真时间和决策周期序号；状态机可读取进入当前状态以来经过的时间。
+    tactical_uses:
+    - 超时处理
+    - 保持一段时间后转换
+    - 定时行动
+    keywords:
+    - 计时
+    - 超时
+    - 持续时间
+    - 仿真时间
+    - timer
+    - timeout
+    - time in state
+    ir_v1:
+    - simulation_value.tick
+    - simulation_value.time
+    - time_in_state_gte
+    commands: []
+    observations:
+    - execution_state.time_in_state
+    - execution_state.simulation_time
+    - execution_state.decision_tick
+    file: catalog/execution.yaml
+  - id: timed_wait
+    display_name: 等待
+    subcategory: timing
+    kind: processor
+    status: unknown
+    platform_classes: *id005
+    summary: 当前行为等待指定时间后成功。
+    tactical_uses:
+    - 停顿观察
+    - 错开时机
+    keywords:
+    - 等待
+    - 停顿
+    - wait
+    - delay
+    ir_v1:
+    - wait
+    commands:
+    - execution_action.wait
+    observations: []
+    file: catalog/execution.yaml
+  - id: controller_activation
+    display_name: 行为控制器开关
+    subcategory: control
+    kind: processor
+    status: unknown
+    platform_classes: *id005
+    summary: 按名称开启或关闭平台上的行为控制器。
+    tactical_uses:
+    - 按阶段启用行为
+    keywords:
+    - 控制器
+    - 处理器
+    - 开关
+    - controller
+    - processor
+    ir_v1:
+    - turn_controller_off
+    - turn_controller_on
+    commands:
+    - execution_action.set_controller_power
+    observations: []
+    file: catalog/execution.yaml
+  - id: decision_cycle
+    display_name: 决策周期
+    subcategory: control
+    kind: processor
+    status: unknown
+    platform_classes: *id005
+    summary: 行为模型按设定的时间间隔执行一次决策。
+    tactical_uses:
+    - 反应时间
+    keywords:
+    - 周期
+    - 更新间隔
+    - update interval
+    - tick
+    ir_v1: []
+    commands: []
+    observations: []
+    file: catalog/execution.yaml

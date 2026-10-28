@@ -1,0 +1,47 @@
+{
+  "ir_version": "1.0",
+  "ir_hash": "sha256:3a1e881cc3b05d393137f936c99aa0dfedd6d2fc234485a0e98386ab6d44f376",
+  "spec_sha256": "sha256:98da1d8a941b2b289061e418704e9d422c5aea2300ad6ef664aab52d43e8f36a",
+  "evidence_package_sha256": null,
+  "catalog_versions": {
+    "actions": "actions-2026.10.1",
+    "coordination": "coordination-2026.10.2",
+    "intents": "intents-2026.10.1",
+    "operands": "operands-2026.10.1"
+  },
+  "normalizer": "normalizer-2026.10.1",
+  "binding_version": "bindings-2026.10.1",
+  "capability_catalog": "sha256:47707da18c2a9b5c4ba49630e9d94c73e25aa61b117d99293118788555c8ffd0",
+  "backends": {
+    "btcpp_xml": {
+      "template_version": "btcpp_xml-2026.10.1",
+      "files": {
+        "platoon_leader.xml": "sha256:f60c086fe177cd2b5320040d3663b6d51a5a13dcb918b7a6bbb6b63ace9627c0",
+        "wingman.xml": "sha256:8c5f6d9e18e46fad919f9ebf8857d25505120da4a8bb4752ed17cd0515957109"
+      }
+    },
+    "mermaid": {
+      "template_version": "mermaid-2026.10.1",
+      "files": {
+        "platoon_leader_coord_bounding__tree.mmd": "sha256:2497d5d4efea91cf13d6c6bd3bd1ba6b279ba9c278d0ffe239a07bb2e1d4c869",
+        "platoon_leader_leader_contact_tree.mmd": "sha256:f7ea61540780e2019a3869837071ebe37f0a8c5837428891d8a3b850ffdc4571",
+        "platoon_leader_leader_open_tree.mmd": "sha256:7881fd96378cc71af41fb4230f74105e6ee37787353062952e520ea1aca5e0c2",
+        "platoon_leader_leader_urban_tree.mmd": "sha256:f7bcd8050cea3400b3d6cf698f691962efb32a08a9c1fa1dea91f0a8f3dd3a47",
+        "platoon_leader_state_machine.mmd": "sha256:766afe7ad594d23fe4a100014fa16e0e54e1a716dc7467b9c137ab17f71aabf2",
+        "wingman_coord_bounding__tree.mmd": "sha256:2497d5d4efea91cf13d6c6bd3bd1ba6b279ba9c278d0ffe239a07bb2e1d4c869",
+        "wingman_state_machine.mmd": "sha256:e220a55f520b543be7de1ad9f9babb161f1d7e85d0d32d9156c61c8bbb2a37aa",
+        "wingman_wingman_contact_tree.mmd": "sha256:3f2b9dc64ffd89dc8b8009f9bb284285c0622859e5ae5704d2d82f3eb6a51956",
+        "wingman_wingman_travel_tree.mmd": "sha256:6b7dbb4353c46409d700f190ebd328605b07f3ff479df8a360ba5943735ec15f"
+      }
+    },
+    "python_sim": {
+      "template_version": "python_sim-2026.10.1",
+      "files": {
+        "roles/__init__.py": "sha256:f7bdb5af122fb055fca84edf179b4662a59ff0f8165457340d9aee9d1617b22d",
+        "roles/platoon_leader.py": "sha256:aa00c576495bc07fde44a01517ef7872dcb3ff5785ec6fcfeab4c5b890477649",
+        "roles/wingman.py": "sha256:663fd7a0338c2c9e94c4625de96286a0f7fdc270aefbee4d884ce13ceaed9654",
+        "run_scenarios.py": "sha256:dad46c30a01d56a81c6b477a5d0591cc009684e40a0ff5f4539e7e4e6af8a9a5"
+      }
+    }
+  }
+}

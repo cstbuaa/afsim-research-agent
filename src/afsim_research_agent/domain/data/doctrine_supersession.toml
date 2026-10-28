@@ -1,0 +1,74 @@
+# Doctrine publication lineage used to (1) search for the current edition when an
+# older designation appears and (2) flag superseded sources in reports.
+#
+# verified = true  -> the supersession was checked against a published index
+# verified = false -> believed correct but not yet checked; review before relying on it
+# Add entries as you confirm them. Designations are normalized as "SERIES N-N.N".
+
+[[publication]]
+designation = "ATP 3-20.15"
+title = "Tank Platoon"
+current = true
+notes = "Revised 2025 (supersedes the Dec 2019 edition)."
+verified = true
+source = "https://www.army.mil/article/289372"
+
+[[publication]]
+designation = "FM 3-20.15"
+title = "Tank Platoon"
+superseded_by = "ATP 3-20.15"
+date = "2007-02-22"
+verified = true
+source = "https://www.globalsecurity.org/military/library/policy/army/atp/index.html"
+
+[[publication]]
+designation = "ATP 3-20.98"
+title = "Reconnaissance / Scout Platoon"
+current = true
+notes = "2013 edition; a revised Scout Platoon edition was reported as pending in 2026."
+verified = true
+source = "https://www.army.mil/article/289372"
+
+[[publication]]
+designation = "FM 7-92"
+title = "The Infantry Reconnaissance Platoon and Squad"
+superseded_by = "ATP 3-20.98"
+verified = true
+source = "https://www.globalsecurity.org/military/library/policy/army/atp/index.html"
+
+[[publication]]
+designation = "FM 3-21.94"
+title = "The Stryker Brigade Combat Team Infantry Battalion Reconnaissance Platoon"
+superseded_by = "ATP 3-20.98"
+verified = true
+source = "https://www.globalsecurity.org/military/library/policy/army/atp/index.html"
+
+[[publication]]
+designation = "FM 3-21.71"
+title = "Mechanized Infantry Platoon and Squad (Bradley)"
+superseded_by = "ATP 3-21.71"
+verified = false
+
+[[publication]]
+designation = "FM 3-21.8"
+title = "The Infantry Rifle Platoon and Squad"
+superseded_by = "ATP 3-21.8"
+verified = false
+
+[[publication]]
+designation = "FM 4-01.45"
+title = "Tactical Convoy Operations (multi-service)"
+superseded_by = "ATP 4-01.45"
+verified = false
+
+[[publication]]
+designation = "FM 3-04.126"
+title = "Attack Reconnaissance Helicopter Operations"
+superseded_by = "ATP 3-04.1"
+verified = false
+
+[[publication]]
+designation = "ADRP 3-90"
+title = "Offense and Defense"
+superseded_by = "ADP 3-90"
+verified = false

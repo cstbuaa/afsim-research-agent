@@ -1,0 +1,1148 @@
+{
+  "status": "passed",
+  "ir_hash": "sha256:3a1e881cc3b05d393137f936c99aa0dfedd6d2fc234485a0e98386ab6d44f376",
+  "counts": {
+    "error": 0,
+    "warning": 1,
+    "info": 1
+  },
+  "diagnostics": [
+    {
+      "severity": "warning",
+      "code": "CAP002",
+      "path": "capability",
+      "message": "3 项平台能力缺口未处理，生成 AFSIM 后端前需处理（见 capability_gaps.yaml）",
+      "source_id": null,
+      "suggestion": null,
+      "evidence_ids": []
+    },
+    {
+      "severity": "info",
+      "code": "SCN001",
+      "path": "scenarios[1].environment",
+      "message": "no terrain given; all terrain is 'open'",
+      "source_id": null,
+      "suggestion": null,
+      "evidence_ids": []
+    }
+  ],
+  "assumptions": [
+    {
+      "id": "assumption_comms",
+      "statement": "排内所有车辆具备可用的语音/数据通信。",
+      "impact": null,
+      "affects": [
+        "coord_leader_follower",
+        "coord_contact_report"
+      ],
+      "requires_confirmation": true,
+      "confirmation": "confirmed",
+      "confirmed_by": "example_reviewer"
+    }
+  ],
+  "l2": {
+    "passed": true,
+    "tests": [
+      {
+        "id": "leader_travels_in_wedge",
+        "role": "platoon_leader",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "travel_open",
+          "next_state": "travel_open",
+          "fired_transition": "open_self",
+          "tree_status": "running",
+          "selected_path": [
+            "leader_open_root",
+            "leader_move_open"
+          ],
+          "issued_actions": [
+            "send_message",
+            "follow_route"
+          ],
+          "sent_messages": [
+            "coord_leader_follower__formation"
+          ],
+          "blackboard": {
+            "mission.current_formation": "wedge"
+          },
+          "issued_action_details": [
+            {
+              "command": "send_message",
+              "behavior": "coord_leader_follower__announce_formation",
+              "node_id": "leader_announce_wedge",
+              "arguments": {
+                "fields": {
+                  "formation": "wedge"
+                },
+                "message": "coord_leader_follower__formation"
+              }
+            },
+            {
+              "command": "follow_route",
+              "behavior": "follow_route_open",
+              "node_id": "leader_move_open",
+              "arguments": {
+                "route": "main_route",
+                "speed": 8.333333333333334
+              }
+            }
+          ],
+          "sent_message_details": [
+            {
+              "message": "coord_leader_follower__formation",
+              "fields": {
+                "formation": "wedge"
+              }
+            }
+          ],
+          "ticked_nodes": [
+            "leader_announce_wedge",
+            "leader_move_open",
+            "leader_open_root",
+            "leader_pick_wedge"
+          ]
+        }
+      },
+      {
+        "id": "leader_switches_to_column_near_urban",
+        "role": "platoon_leader",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "travel_open",
+          "next_state": "travel_urban",
+          "fired_transition": "open_to_urban",
+          "tree_status": "running",
+          "selected_path": [
+            "leader_urban_root",
+            "leader_move_urban"
+          ],
+          "issued_actions": [
+            "send_message",
+            "follow_route"
+          ],
+          "sent_messages": [
+            "coord_leader_follower__transition",
+            "coord_leader_follower__formation"
+          ],
+          "blackboard": {
+            "mission.current_formation": "column"
+          },
+          "issued_action_details": [
+            {
+              "command": "send_message",
+              "behavior": "coord_leader_follower__announce_formation",
+              "node_id": "leader_announce_column",
+              "arguments": {
+                "fields": {
+                  "formation": "column"
+                },
+                "message": "coord_leader_follower__formation"
+              }
+            },
+            {
+              "command": "follow_route",
+              "behavior": "follow_route_urban",
+              "node_id": "leader_move_urban",
+              "arguments": {
+                "route": "main_route",
+                "speed": 4.166666666666667
+              }
+            }
+          ],
+          "sent_message_details": [
+            {
+              "message": "coord_leader_follower__transition",
+              "fields": {
+                "to_state": "travel_urban"
+              }
+            },
+            {
+              "message": "coord_leader_follower__formation",
+              "fields": {
+                "formation": "column"
+              }
+            }
+          ],
+          "ticked_nodes": [
+            "leader_announce_column",
+            "leader_move_urban",
+            "leader_pick_column",
+            "leader_urban_root"
+          ]
+        }
+      },
+      {
+        "id": "leader_returns_to_open",
+        "role": "platoon_leader",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "travel_urban",
+          "next_state": "travel_open",
+          "fired_transition": "urban_to_open",
+          "tree_status": "running",
+          "selected_path": [
+            "leader_open_root",
+            "leader_move_open"
+          ],
+          "issued_actions": [
+            "send_message",
+            "follow_route"
+          ],
+          "sent_messages": [
+            "coord_leader_follower__transition",
+            "coord_leader_follower__formation"
+          ],
+          "blackboard": {
+            "mission.current_formation": "wedge"
+          },
+          "issued_action_details": [
+            {
+              "command": "send_message",
+              "behavior": "coord_leader_follower__announce_formation",
+              "node_id": "leader_announce_wedge",
+              "arguments": {
+                "fields": {
+                  "formation": "wedge"
+                },
+                "message": "coord_leader_follower__formation"
+              }
+            },
+            {
+              "command": "follow_route",
+              "behavior": "follow_route_open",
+              "node_id": "leader_move_open",
+              "arguments": {
+                "route": "main_route",
+                "speed": 8.333333333333334
+              }
+            }
+          ],
+          "sent_message_details": [
+            {
+              "message": "coord_leader_follower__transition",
+              "fields": {
+                "to_state": "travel_open"
+              }
+            },
+            {
+              "message": "coord_leader_follower__formation",
+              "fields": {
+                "formation": "wedge"
+              }
+            }
+          ],
+          "ticked_nodes": [
+            "leader_announce_wedge",
+            "leader_move_open",
+            "leader_open_root",
+            "leader_pick_wedge"
+          ]
+        }
+      },
+      {
+        "id": "leader_contact_preempts_urban_entry",
+        "role": "platoon_leader",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "travel_open",
+          "next_state": "contact",
+          "fired_transition": "open_to_contact",
+          "tree_status": "running",
+          "selected_path": [
+            "leader_contact_root",
+            "leader_bounding",
+            "coord_bounding__root",
+            "coord_bounding__bound_seq",
+            "coord_bounding__bound_node"
+          ],
+          "issued_actions": [
+            "bound_to_position"
+          ],
+          "sent_messages": [
+            "coord_leader_follower__transition"
+          ],
+          "blackboard": {
+            "mission.current_formation": "wedge"
+          },
+          "issued_action_details": [
+            {
+              "command": "bound_to_position",
+              "behavior": "coord_bounding__bound",
+              "node_id": "coord_bounding__bound_node",
+              "arguments": {
+                "distance": 300.0,
+                "stop_short": 800.0,
+                "toward": "nearest_hostile"
+              }
+            }
+          ],
+          "sent_message_details": [
+            {
+              "message": "coord_leader_follower__transition",
+              "fields": {
+                "to_state": "contact"
+              }
+            }
+          ],
+          "ticked_nodes": [
+            "coord_bounding__bound_node",
+            "coord_bounding__bound_seq",
+            "coord_bounding__root",
+            "coord_bounding__turn_check",
+            "leader_ack_seq",
+            "leader_bounding",
+            "leader_contact_root",
+            "leader_report_check"
+          ]
+        }
+      },
+      {
+        "id": "leader_contact_in_urban",
+        "role": "platoon_leader",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "travel_urban",
+          "next_state": "contact",
+          "fired_transition": "urban_to_contact",
+          "tree_status": "running",
+          "selected_path": [
+            "leader_contact_root",
+            "leader_bounding",
+            "coord_bounding__root",
+            "coord_bounding__overwatch_node"
+          ],
+          "issued_actions": [
+            "hold_overwatch_position"
+          ],
+          "sent_messages": [
+            "coord_leader_follower__transition"
+          ],
+          "blackboard": {
+            "mission.current_formation": "wedge"
+          },
+          "issued_action_details": [
+            {
+              "command": "hold_overwatch_position",
+              "behavior": "coord_bounding__overwatch",
+              "node_id": "coord_bounding__overwatch_node",
+              "arguments": {}
+            }
+          ],
+          "sent_message_details": [
+            {
+              "message": "coord_leader_follower__transition",
+              "fields": {
+                "to_state": "contact"
+              }
+            }
+          ],
+          "ticked_nodes": [
+            "coord_bounding__bound_seq",
+            "coord_bounding__overwatch_node",
+            "coord_bounding__root",
+            "coord_bounding__turn_check",
+            "leader_ack_seq",
+            "leader_bounding",
+            "leader_contact_root",
+            "leader_report_check"
+          ]
+        }
+      },
+      {
+        "id": "leader_leaves_contact_after_hold",
+        "role": "platoon_leader",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "contact",
+          "next_state": "travel_open",
+          "fired_transition": "contact_to_open",
+          "tree_status": "running",
+          "selected_path": [
+            "leader_open_root",
+            "leader_move_open"
+          ],
+          "issued_actions": [
+            "send_message",
+            "follow_route"
+          ],
+          "sent_messages": [
+            "coord_leader_follower__transition",
+            "coord_leader_follower__formation"
+          ],
+          "blackboard": {
+            "mission.current_formation": "wedge"
+          },
+          "issued_action_details": [
+            {
+              "command": "send_message",
+              "behavior": "coord_leader_follower__announce_formation",
+              "node_id": "leader_announce_wedge",
+              "arguments": {
+                "fields": {
+                  "formation": "wedge"
+                },
+                "message": "coord_leader_follower__formation"
+              }
+            },
+            {
+              "command": "follow_route",
+              "behavior": "follow_route_open",
+              "node_id": "leader_move_open",
+              "arguments": {
+                "route": "main_route",
+                "speed": 8.333333333333334
+              }
+            }
+          ],
+          "sent_message_details": [
+            {
+              "message": "coord_leader_follower__transition",
+              "fields": {
+                "to_state": "travel_open"
+              }
+            },
+            {
+              "message": "coord_leader_follower__formation",
+              "fields": {
+                "formation": "wedge"
+              }
+            }
+          ],
+          "ticked_nodes": [
+            "leader_announce_wedge",
+            "leader_move_open",
+            "leader_open_root",
+            "leader_pick_wedge"
+          ]
+        }
+      },
+      {
+        "id": "leader_stays_in_contact_during_hold",
+        "role": "platoon_leader",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "contact",
+          "next_state": "contact",
+          "fired_transition": "contact_self",
+          "tree_status": "running",
+          "selected_path": [
+            "leader_contact_root",
+            "leader_bounding",
+            "coord_bounding__root",
+            "coord_bounding__bound_seq",
+            "coord_bounding__bound_node"
+          ],
+          "issued_actions": [
+            "bound_to_position"
+          ],
+          "sent_messages": [],
+          "blackboard": {
+            "mission.current_formation": "wedge"
+          },
+          "issued_action_details": [
+            {
+              "command": "bound_to_position",
+              "behavior": "coord_bounding__bound",
+              "node_id": "coord_bounding__bound_node",
+              "arguments": {
+                "distance": 300.0,
+                "stop_short": 800.0,
+                "toward": "nearest_hostile"
+              }
+            }
+          ],
+          "sent_message_details": [],
+          "ticked_nodes": [
+            "coord_bounding__bound_node",
+            "coord_bounding__bound_seq",
+            "coord_bounding__root",
+            "coord_bounding__turn_check",
+            "leader_ack_seq",
+            "leader_bounding",
+            "leader_contact_root",
+            "leader_report_check"
+          ]
+        }
+      },
+      {
+        "id": "leader_cannot_move_without_mover",
+        "role": "platoon_leader",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "travel_open",
+          "next_state": "travel_open",
+          "fired_transition": "open_self",
+          "tree_status": "failure",
+          "selected_path": [
+            "leader_open_root",
+            "leader_move_open"
+          ],
+          "issued_actions": [
+            "send_message"
+          ],
+          "sent_messages": [
+            "coord_leader_follower__formation"
+          ],
+          "blackboard": {
+            "mission.current_formation": "wedge"
+          },
+          "issued_action_details": [
+            {
+              "command": "send_message",
+              "behavior": "coord_leader_follower__announce_formation",
+              "node_id": "leader_announce_wedge",
+              "arguments": {
+                "fields": {
+                  "formation": "wedge"
+                },
+                "message": "coord_leader_follower__formation"
+              }
+            }
+          ],
+          "sent_message_details": [
+            {
+              "message": "coord_leader_follower__formation",
+              "fields": {
+                "formation": "wedge"
+              }
+            }
+          ],
+          "ticked_nodes": [
+            "leader_announce_wedge",
+            "leader_move_open",
+            "leader_open_root",
+            "leader_pick_wedge"
+          ]
+        }
+      },
+      {
+        "id": "leader_acknowledges_report",
+        "role": "platoon_leader",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "contact",
+          "next_state": "contact",
+          "fired_transition": "contact_self",
+          "tree_status": "success",
+          "selected_path": [
+            "leader_contact_root",
+            "leader_ack_seq",
+            "leader_ack"
+          ],
+          "issued_actions": [
+            "send_message"
+          ],
+          "sent_messages": [
+            "coord_contact_report__ack"
+          ],
+          "blackboard": {
+            "mission.current_formation": "wedge"
+          },
+          "issued_action_details": [
+            {
+              "command": "send_message",
+              "behavior": "coord_contact_report__acknowledge",
+              "node_id": "leader_ack",
+              "arguments": {
+                "message": "coord_contact_report__ack"
+              }
+            }
+          ],
+          "sent_message_details": [
+            {
+              "message": "coord_contact_report__ack",
+              "fields": {}
+            }
+          ],
+          "ticked_nodes": [
+            "leader_ack",
+            "leader_ack_seq",
+            "leader_contact_root",
+            "leader_report_check"
+          ]
+        }
+      },
+      {
+        "id": "wingman_keeps_station",
+        "role": "wingman",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "travel_open",
+          "next_state": "travel_open",
+          "fired_transition": "wing_open_self",
+          "tree_status": "running",
+          "selected_path": [
+            "wingman_travel_root",
+            "wingman_keep_station"
+          ],
+          "issued_actions": [
+            "keep_station"
+          ],
+          "sent_messages": [],
+          "blackboard": {
+            "mission.contact_reported": false
+          },
+          "issued_action_details": [
+            {
+              "command": "keep_station",
+              "behavior": "coord_leader_follower__keep_station",
+              "node_id": "wingman_keep_station",
+              "arguments": {
+                "formation": "wedge",
+                "leader": "platoon_leader"
+              }
+            }
+          ],
+          "sent_message_details": [],
+          "ticked_nodes": [
+            "wingman_clear_report",
+            "wingman_keep_station",
+            "wingman_travel_root"
+          ]
+        }
+      },
+      {
+        "id": "wingman_follows_leader_transition",
+        "role": "wingman",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "travel_open",
+          "next_state": "travel_urban",
+          "fired_transition": "coord_leader_follower__travel_open__to__travel_urban",
+          "tree_status": "running",
+          "selected_path": [
+            "wingman_travel_root",
+            "wingman_keep_station"
+          ],
+          "issued_actions": [
+            "keep_station"
+          ],
+          "sent_messages": [],
+          "blackboard": {
+            "mission.contact_reported": false
+          },
+          "issued_action_details": [
+            {
+              "command": "keep_station",
+              "behavior": "coord_leader_follower__keep_station",
+              "node_id": "wingman_keep_station",
+              "arguments": {
+                "formation": "wedge",
+                "leader": "platoon_leader"
+              }
+            }
+          ],
+          "sent_message_details": [],
+          "ticked_nodes": [
+            "wingman_clear_report",
+            "wingman_keep_station",
+            "wingman_travel_root"
+          ]
+        }
+      },
+      {
+        "id": "wingman_reports_contact",
+        "role": "wingman",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "travel_open",
+          "next_state": "contact",
+          "fired_transition": "wing_open_contact",
+          "tree_status": "success",
+          "selected_path": [
+            "wingman_contact_root",
+            "wingman_report_seq",
+            "wingman_mark_reported"
+          ],
+          "issued_actions": [
+            "report_contact"
+          ],
+          "sent_messages": [
+            "coord_contact_report__report"
+          ],
+          "blackboard": {
+            "mission.contact_reported": true
+          },
+          "issued_action_details": [
+            {
+              "command": "report_contact",
+              "behavior": "coord_contact_report__send_report",
+              "node_id": "wingman_report",
+              "arguments": {
+                "message": "coord_contact_report__report"
+              }
+            }
+          ],
+          "sent_message_details": [
+            {
+              "message": "coord_contact_report__report",
+              "fields": {
+                "contact_range": 1200.0,
+                "contact_count": 1
+              }
+            }
+          ],
+          "ticked_nodes": [
+            "wingman_contact_root",
+            "wingman_mark_reported",
+            "wingman_report",
+            "wingman_report_check",
+            "wingman_report_seq"
+          ]
+        }
+      },
+      {
+        "id": "wingman_urban_contact",
+        "role": "wingman",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "travel_urban",
+          "next_state": "contact",
+          "fired_transition": "wing_urban_contact",
+          "tree_status": "success",
+          "selected_path": [
+            "wingman_contact_root",
+            "wingman_report_seq",
+            "wingman_mark_reported"
+          ],
+          "issued_actions": [
+            "report_contact"
+          ],
+          "sent_messages": [
+            "coord_contact_report__report"
+          ],
+          "blackboard": {
+            "mission.contact_reported": true
+          },
+          "issued_action_details": [
+            {
+              "command": "report_contact",
+              "behavior": "coord_contact_report__send_report",
+              "node_id": "wingman_report",
+              "arguments": {
+                "message": "coord_contact_report__report"
+              }
+            }
+          ],
+          "sent_message_details": [
+            {
+              "message": "coord_contact_report__report",
+              "fields": {
+                "contact_range": 500.0,
+                "contact_count": 0
+              }
+            }
+          ],
+          "ticked_nodes": [
+            "wingman_contact_root",
+            "wingman_mark_reported",
+            "wingman_report",
+            "wingman_report_check",
+            "wingman_report_seq"
+          ]
+        }
+      },
+      {
+        "id": "bounding_stops_at_standoff",
+        "role": "wingman",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "contact",
+          "next_state": "contact",
+          "fired_transition": "wing_contact_self",
+          "tree_status": "running",
+          "selected_path": [
+            "wingman_contact_root",
+            "wingman_bounding",
+            "coord_bounding__root",
+            "coord_bounding__overwatch_node"
+          ],
+          "issued_actions": [
+            "hold_overwatch_position"
+          ],
+          "sent_messages": [],
+          "blackboard": {
+            "mission.contact_reported": true
+          },
+          "issued_action_details": [
+            {
+              "command": "hold_overwatch_position",
+              "behavior": "coord_bounding__overwatch",
+              "node_id": "coord_bounding__overwatch_node",
+              "arguments": {}
+            }
+          ],
+          "sent_message_details": [],
+          "ticked_nodes": [
+            "coord_bounding__bound_seq",
+            "coord_bounding__overwatch_node",
+            "coord_bounding__root",
+            "coord_bounding__turn_check",
+            "wingman_bounding",
+            "wingman_contact_root",
+            "wingman_report_check",
+            "wingman_report_seq"
+          ]
+        }
+      },
+      {
+        "id": "overwatch_member_waits_its_turn",
+        "role": "wingman",
+        "passed": true,
+        "failures": [],
+        "result": {
+          "previous_state": "contact",
+          "next_state": "contact",
+          "fired_transition": "wing_contact_self",
+          "tree_status": "running",
+          "selected_path": [
+            "wingman_contact_root",
+            "wingman_bounding",
+            "coord_bounding__root",
+            "coord_bounding__overwatch_node"
+          ],
+          "issued_actions": [
+            "hold_overwatch_position"
+          ],
+          "sent_messages": [],
+          "blackboard": {
+            "mission.contact_reported": true
+          },
+          "issued_action_details": [
+            {
+              "command": "hold_overwatch_position",
+              "behavior": "coord_bounding__overwatch",
+              "node_id": "coord_bounding__overwatch_node",
+              "arguments": {}
+            }
+          ],
+          "sent_message_details": [],
+          "ticked_nodes": [
+            "coord_bounding__bound_seq",
+            "coord_bounding__overwatch_node",
+            "coord_bounding__root",
+            "coord_bounding__turn_check",
+            "wingman_bounding",
+            "wingman_contact_root",
+            "wingman_report_check",
+            "wingman_report_seq"
+          ]
+        }
+      }
+    ],
+    "transition_coverage": {
+      "platoon_leader": {
+        "covered": [
+          "contact_self",
+          "contact_to_open",
+          "open_self",
+          "open_to_contact",
+          "open_to_urban",
+          "urban_to_contact",
+          "urban_to_open"
+        ],
+        "missing": []
+      },
+      "wingman": {
+        "covered": [
+          "coord_leader_follower__travel_open__to__travel_urban",
+          "wing_contact_self",
+          "wing_open_contact",
+          "wing_open_self",
+          "wing_urban_contact"
+        ],
+        "missing": []
+      }
+    }
+  },
+  "l3": [
+    {
+      "id": "open_to_urban_transition",
+      "passed": true,
+      "duration_s": 480.0,
+      "event_times": {
+        "leader_near_urban": 278.0
+      },
+      "traces_to": [
+        "open_to_urban",
+        "coord_leader_follower",
+        "wedge",
+        "column"
+      ],
+      "messages_sent": {
+        "coord_leader_follower__formation": 97,
+        "coord_leader_follower__transition": 96
+      },
+      "final_states": {
+        "platoon_leader[0]": "travel_urban",
+        "wingman[0]": "travel_urban",
+        "wingman[1]": "travel_urban",
+        "wingman[2]": "travel_urban"
+      },
+      "expectations": [
+        {
+          "id": "e_followers_switch",
+          "observable": "role_state",
+          "passed": true,
+          "measured": 280.0,
+          "threshold": "travel_urban",
+          "satisfied_at": 280.0,
+          "detail": "first true at 280.0s, deadline 308s"
+        },
+        {
+          "id": "e_wedge_kept",
+          "observable": "formation_error_rms",
+          "passed": true,
+          "measured": 7.963,
+          "threshold": 30.0,
+          "satisfied_at": 0.0,
+          "detail": "mean over [0, 150]s"
+        },
+        {
+          "id": "e_column_kept",
+          "observable": "formation_error_rms",
+          "passed": true,
+          "measured": 9.001,
+          "threshold": 30.0,
+          "satisfied_at": 280.0,
+          "detail": "mean over [280, 400]s"
+        },
+        {
+          "id": "e_no_collisions",
+          "observable": "min_interval",
+          "passed": true,
+          "measured": 45.833,
+          "threshold": 10.0,
+          "satisfied_at": 0.0,
+          "detail": "min over [0, 481]s"
+        }
+      ]
+    },
+    {
+      "id": "contact_bounding_overwatch",
+      "passed": true,
+      "duration_s": 600.0,
+      "event_times": {
+        "hostile_appears": 60.0
+      },
+      "traces_to": [
+        "open_to_contact",
+        "coord_bounding",
+        "coord_contact_report"
+      ],
+      "messages_sent": {
+        "coord_bounding__bound_complete": 8,
+        "coord_contact_report__ack": 1,
+        "coord_contact_report__report": 3,
+        "coord_leader_follower__formation": 121,
+        "coord_leader_follower__transition": 120
+      },
+      "final_states": {
+        "platoon_leader[0]": "contact",
+        "wingman[0]": "contact",
+        "wingman[1]": "contact",
+        "wingman[2]": "contact"
+      },
+      "expectations": [
+        {
+          "id": "e_leader_contact",
+          "observable": "role_state",
+          "passed": true,
+          "measured": 139.0,
+          "threshold": "contact",
+          "satisfied_at": 139.0,
+          "detail": "first true at 139.0s, deadline 180s"
+        },
+        {
+          "id": "e_wingmen_contact",
+          "observable": "role_state",
+          "passed": true,
+          "measured": 140.0,
+          "threshold": "contact",
+          "satisfied_at": 140.0,
+          "detail": "first true at 140.0s, deadline 210s"
+        },
+        {
+          "id": "e_report_sent",
+          "observable": "messages_sent",
+          "passed": true,
+          "measured": 3,
+          "threshold": 1,
+          "satisfied_at": 0.0,
+          "detail": "count"
+        },
+        {
+          "id": "e_report_not_repeated",
+          "observable": "messages_sent",
+          "passed": true,
+          "measured": 3,
+          "threshold": 3,
+          "satisfied_at": 0.0,
+          "detail": "count"
+        },
+        {
+          "id": "e_bounds_alternate",
+          "observable": "messages_sent",
+          "passed": true,
+          "measured": 8,
+          "threshold": 4,
+          "satisfied_at": 0.0,
+          "detail": "count"
+        },
+        {
+          "id": "e_wingmen_bound",
+          "observable": "actions_issued",
+          "passed": true,
+          "measured": 7,
+          "threshold": 2,
+          "satisfied_at": 0.0,
+          "detail": "count"
+        },
+        {
+          "id": "e_standoff_kept",
+          "observable": "hostile_range_min",
+          "passed": true,
+          "measured": 795.258,
+          "threshold": 775.0,
+          "satisfied_at": 0.0,
+          "detail": "min over [0, 601]s"
+        }
+      ]
+    },
+    {
+      "id": "partial_comm_loss_transition",
+      "passed": true,
+      "duration_s": 480.0,
+      "event_times": {
+        "lossy_net": 0.0,
+        "leader_near_urban": 278.0
+      },
+      "traces_to": [
+        "open_to_urban",
+        "coord_leader_follower",
+        "column"
+      ],
+      "messages_sent": {
+        "coord_leader_follower__formation": 97,
+        "coord_leader_follower__transition": 96
+      },
+      "final_states": {
+        "platoon_leader[0]": "travel_urban",
+        "wingman[0]": "travel_urban",
+        "wingman[1]": "travel_urban",
+        "wingman[2]": "travel_urban"
+      },
+      "expectations": [
+        {
+          "id": "e_followers_switch_lossy",
+          "observable": "role_state",
+          "passed": true,
+          "measured": 290.0,
+          "threshold": "travel_urban",
+          "satisfied_at": 290.0,
+          "detail": "first true at 290.0s, deadline 323s"
+        },
+        {
+          "id": "e_column_kept_lossy",
+          "observable": "formation_error_rms",
+          "passed": true,
+          "measured": 4.807,
+          "threshold": 30.0,
+          "satisfied_at": 290.0,
+          "detail": "mean over [290, 410]s"
+        }
+      ]
+    },
+    {
+      "id": "comm_loss_during_transition",
+      "passed": true,
+      "duration_s": 360.0,
+      "event_times": {
+        "jam": 0.0
+      },
+      "traces_to": [
+        "open_to_urban",
+        "coord_leader_follower"
+      ],
+      "messages_sent": {
+        "coord_leader_follower__formation": 73,
+        "coord_leader_follower__transition": 72
+      },
+      "final_states": {
+        "platoon_leader[0]": "travel_urban",
+        "wingman[0]": "travel_open",
+        "wingman[1]": "travel_open",
+        "wingman[2]": "travel_open"
+      },
+      "expectations": [
+        {
+          "id": "e_leader_switches",
+          "observable": "role_state",
+          "passed": true,
+          "measured": 279.0,
+          "threshold": "travel_urban",
+          "satisfied_at": 279.0,
+          "detail": "first true at 279.0s, deadline 360s"
+        },
+        {
+          "id": "e_wingmen_stay",
+          "observable": "role_state",
+          "passed": true,
+          "measured": null,
+          "threshold": "travel_open",
+          "satisfied_at": 0.0,
+          "detail": "held for the whole window"
+        },
+        {
+          "id": "e_transition_attempted",
+          "observable": "messages_sent",
+          "passed": true,
+          "measured": 72,
+          "threshold": 1,
+          "satisfied_at": 0.0,
+          "detail": "count"
+        },
+        {
+          "id": "e_spacing_safe",
+          "observable": "min_interval",
+          "passed": true,
+          "measured": 135.657,
+          "threshold": 10.0,
+          "satisfied_at": 0.0,
+          "detail": "min over [0, 361]s"
+        }
+      ]
+    }
+  ],
+  "l3_faithful": null,
+  "reference_values": [],
+  "capability": {
+    "level": "needs_confirmation",
+    "catalog_version": "sha256:47707da18c2a9b5c4ba49630e9d94c73e25aa61b117d99293118788555c8ffd0",
+    "gaps": 3,
+    "simplified": 5,
+    "granularity": "coarse",
+    "refine": [],
+    "unresolved": [
+      "cap-gap-b0dcee2305",
+      "cap-gap-4935405097",
+      "cap-gap-d6c37285a4"
+    ],
+    "afsim_ready": false
+  }
+}

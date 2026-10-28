@@ -1,0 +1,434 @@
+"""The orchestrator stages exposed as LangChain tools for the deep agent.
+
+``TOOL_SPECS`` is the single list of tools: name, stage function, argument schema,
+description shown to the model, and flags (calls a model / needs human approval / extension).
+``build_tools`` turns it into ``StructuredTool`` objects bound to one workspace.
+
+Tool results are ``StageResult.render()`` JSON; artifacts are workspace paths that the
+agent can open with the built-in ``read_file`` tool.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import concurrent.futures
+import inspect
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from afsim_research_agent.orchestrator import stages as st
+from afsim_research_agent.orchestrator.extensions import ExtensionRegistry
+from afsim_research_agent.orchestrator.workspace import Workspace
+
+PKG = "模型包目录，工作区相对路径，如 /runs/crow-research/<运行>/models/<model_id>"
+
+
+# ============================================================================ argument schemas
+class NoArgs(BaseModel):
+    pass
+
+
+class CrowResearchArgs(BaseModel):
+    requirement: str = Field(description="用户的自然语言战术需求原文")
+    run_dir: str | None = Field(None, description="输出目录（runs/ 下、尚不存在）；缺省自动命名")
+    max_sources: int | None = Field(None, ge=1, le=60, description="最多采用的来源数")
+    gap_rounds: int | None = Field(None, ge=0, le=3, description="证据不足时追加检索轮数")
+
+
+class CrowProposeArgs(BaseModel):
+    run_dir: str = Field(description="crow_research 的运行目录")
+    out_dir: str | None = Field(
+        None, description="战术输出目录（尚不存在）；缺省在运行目录下自动命名"
+    )
+    redteam: bool = Field(True, description="是否进行红队评审与回应")
+
+
+class SelectTacticArgs(BaseModel):
+    tactics_dir: str = Field(description="crow_propose 输出的战术目录")
+    choices: list[str] = Field(
+        description="选中的候选，如 ['tc_01'] 或 ['tc_01:开阔地机动,队形转换']"
+    )
+    rejected: list[str] = Field(default_factory=list, description="明确否决的候选")
+    note: str = Field("", description="用户的补充说明")
+    by: str = Field(description="做出选择的人")
+
+
+class FalconDraftArgs(BaseModel):
+    run_dir: str = Field(description="Crow 运行目录（含 research_result.json）")
+    model_id: str = Field(
+        pattern=r"^[a-z][a-z0-9_]{0,63}$", description="模型包名，小写字母数字下划线"
+    )
+    tactics_dir: str | None = Field(None, description="含 tactic_selection.yaml 的战术目录")
+    requirement: str = Field("", description="需求原文（未选战术时必填）")
+    platforms: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="平台提示，如 [{role_hint: platoon_leader, capability_class: ground_vehicle, count: 1}]",
+    )
+    terrain_classes: list[str] = Field(
+        default_factory=list, description="地形类别，如 ['open','urban']"
+    )
+    user_parameters: dict[str, Any] = Field(
+        default_factory=dict,
+        description="用户原话给出的数值，如 {column_spacing: {value: 50, unit: m}}",
+    )
+    with_l3: bool = Field(False, description="生成时是否要求二维想定也通过")
+
+
+class PackageArgs(BaseModel):
+    package: str = Field(description=PKG)
+
+
+class CheckArgs(PackageArgs):
+    with_l3: bool = Field(False, description="是否同时运行二维想定（L3）")
+
+
+class FixArgs(PackageArgs):
+    out_dir: str | None = Field(None, description="修正后的新目录；缺省 <模型包>_fix")
+    max_steps: int = Field(30, ge=1, le=60)
+    with_l3: bool = Field(False, description="L3 想定也必须通过")
+    properties: bool = Field(True, description="生成并检查需求属性")
+
+
+class PropertiesArgs(PackageArgs):
+    force: bool = Field(False, description="覆盖已有的需求属性文件")
+
+
+class DeferArgs(PackageArgs):
+    test_ids: list[str] = Field(description="要暂缓的单步测试 ID")
+    reason: str = Field(description="暂缓原因（写进战术稿和 decisions.yaml）")
+    decision: str = Field("", description="用户的原话或所选选项")
+
+
+class ConfirmArgs(PackageArgs):
+    by: str = Field(description="确认人")
+
+
+class BuildArgs(PackageArgs):
+    backends: list[str] = Field(default_factory=list, description="后端子集；缺省全部")
+    draft: bool = Field(False, description="草稿模式（未确认项不阻塞）")
+    skip_l3: bool = Field(False)
+
+
+class SimulateArgs(PackageArgs):
+    scenario: str | None = Field(None, description="只跑某个想定 id")
+
+
+class AskHumanArgs(BaseModel):
+    question: str = Field(description="要用户决定的问题，写清背景和影响")
+    options: list[str] = Field(
+        default_factory=list, description="2–4 个可选答案（用户也可自由回答）"
+    )
+    directory: str | None = Field(None, description="把回答记入该目录的 decisions.yaml（runs/ 下）")
+
+
+class ListActionsArgs(BaseModel):
+    platform_class: str | None = Field(None, description="平台类别，如 ground_vehicle")
+
+
+class FindTacticsArgs(BaseModel):
+    query: str = Field(description="需求或战术描述")
+    limit: int = Field(5, ge=1, le=20)
+
+
+class CompilePlanArgs(BaseModel):
+    plan: str = Field(description="按 plan_format 给出的格式写的高层描述全文")
+    out_dir: str = Field(description="输出目录（runs/ 下、尚不存在）")
+
+
+class PlatformExportArgs(PackageArgs):
+    out_dir: str = Field(description="导出目录（runs/ 下、尚不存在）")
+    backend: str = Field("afsim", description="平台后端名")
+    run: bool = Field(True, description="导出后是否在平台上运行")
+
+
+class PluginArgs(PackageArgs):
+    gap_id: str = Field(description="capability_gaps.yaml 中的缺口 id")
+    out_dir: str = Field(description="插件草稿目录（runs/ 下、尚不存在）")
+
+
+# ============================================================================ specs
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    stage: Callable[..., Any]
+    args: type[BaseModel]
+    description: str
+    group: str  # crow | falcon | ir | human | extension | meta
+    uses_model: bool = False
+    needs_approval: bool = False  # paused by HumanInTheLoopMiddleware before running
+
+
+TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec(
+        "overview",
+        st.overview,
+        NoArgs,
+        "查看流程顺序、扩展能力接入情况和最近的运行目录。开始时先调用一次。",
+        "meta",
+    ),
+    ToolSpec(
+        "crow_research",
+        st.crow_research,
+        CrowResearchArgs,
+        "C1–C3：任务画像、研究规划、互联网检索、证据整理和 Falcon 输入门槛。耗时数分钟到半小时。",
+        "crow",
+        uses_model=True,
+    ),
+    ToolSpec(
+        "crow_propose",
+        st.crow_propose,
+        CrowProposeArgs,
+        "C4–C5：提出候选战术、标注平台可行性、红队评审与回应。之后把候选交给用户选择。",
+        "crow",
+        uses_model=True,
+    ),
+    ToolSpec(
+        "select_tactic",
+        st.select_tactic,
+        SelectTacticArgs,
+        "记录用户选定的战术（tactic_selection.yaml）。只能记录用户明确说出的选择；调用前会暂停等用户批准。",
+        "human",
+        needs_approval=True,
+    ),
+    ToolSpec(
+        "falcon_draft",
+        st.falcon_draft,
+        FalconDraftArgs,
+        "按需求和选定战术生成战术稿与模型包（tactic_sheet.md → behavior_spec.yaml）。",
+        "falcon",
+        uses_model=True,
+    ),
+    ToolSpec(
+        "falcon_check",
+        st.falcon_check,
+        CheckArgs,
+        "不改动模型包，运行校验、单步测试、探针、需求属性（可选 L3），列出问题。",
+        "falcon",
+    ),
+    ToolSpec(
+        "falcon_compile",
+        st.falcon_compile,
+        PackageArgs,
+        "把 tactic_sheet.md 重新编译为 behavior_spec.yaml（不调用模型）。",
+        "falcon",
+    ),
+    ToolSpec(
+        "falcon_fix",
+        st.falcon_fix,
+        FixArgs,
+        "自检纠错循环：在模型包副本上逐步修正战术稿，直到检查通过、需要人决定或用完步数。",
+        "falcon",
+        uses_model=True,
+    ),
+    ToolSpec(
+        "falcon_properties",
+        st.falcon_properties,
+        PropertiesArgs,
+        "不看战术稿，根据需求条款独立写出需求属性，并检查当前战术稿。",
+        "falcon",
+        uses_model=True,
+    ),
+    ToolSpec(
+        "defer_tests",
+        st.defer_tests,
+        DeferArgs,
+        "按用户决定把某些单步测试标为暂缓（不参加检查、保留在稿件中），让其余部分能编译和仿真。"
+        "只在用户明确同意暂缓时使用；调用前会暂停等用户批准。",
+        "human",
+        needs_approval=True,
+    ),
+    ToolSpec(
+        "confirmation_status",
+        st.confirmation_status,
+        PackageArgs,
+        "查看人工确认清单进度和阻塞正式构建的项。",
+        "human",
+    ),
+    ToolSpec(
+        "apply_confirmations",
+        st.apply_confirmations,
+        ConfirmArgs,
+        "把用户在 confirmations.yaml 中的决定写回模型。调用前会暂停等用户批准。",
+        "human",
+        needs_approval=True,
+    ),
+    ToolSpec(
+        "ir_build",
+        st.ir_build,
+        BuildArgs,
+        "规范化、测试并生成后端产物（Mermaid、BT.CPP XML、二维仿真），并做平台能力核对。",
+        "ir",
+    ),
+    ToolSpec(
+        "simulate",
+        st.simulate,
+        SimulateArgs,
+        "在二维仿真中运行模型包的想定，返回每个想定通过与否和未通过的期望。",
+        "ir",
+    ),
+    ToolSpec(
+        "capability_gaps", st.capability_gaps, PackageArgs, "列出模型包的平台能力缺口。", "ir"
+    ),
+    ToolSpec(
+        "list_actions",
+        st.list_actions,
+        ListActionsArgs,
+        "【扩展：动作集】列出平台无关的原子动作。未接入时返回 not_configured。",
+        "extension",
+    ),
+    ToolSpec(
+        "find_tactics",
+        st.find_tactics,
+        FindTacticsArgs,
+        "【扩展：战术集】按需求检索战术模板。未接入时返回 not_configured。",
+        "extension",
+    ),
+    ToolSpec(
+        "plan_format",
+        st.plan_format,
+        NoArgs,
+        "【扩展：行为树生成器】查看高层描述的写法。写 compile_plan 的输入前先调用。",
+        "extension",
+    ),
+    ToolSpec(
+        "compile_plan",
+        st.compile_plan,
+        CompilePlanArgs,
+        "【扩展：行为树生成器】把高层描述确定性地编译为行为树。不要自己直接写行为树 XML。",
+        "extension",
+    ),
+    ToolSpec(
+        "platform_export",
+        st.platform_export,
+        PlatformExportArgs,
+        "【扩展：仿真平台】把模型包映射到 AFSIM 等平台并运行，返回报错。调用前会暂停等用户批准。",
+        "extension",
+        needs_approval=True,
+    ),
+    ToolSpec(
+        "draft_capability_plugin",
+        st.draft_capability_plugin,
+        PluginArgs,
+        "【扩展：能力插件】为某个能力缺口起草并验证平台插件。调用前会暂停等用户批准。",
+        "extension",
+        needs_approval=True,
+    ),
+)
+
+ASK_HUMAN_DESCRIPTION = (
+    "向用户提问并等待回答。遇到战术意图问题（如受损时继续跃进还是撤出）、需求矛盾、"
+    "或纠错循环反复不收敛时使用，不要靠删改测试绕开。回答会记入 decisions.yaml。"
+)
+
+
+def approval_tools() -> list[str]:
+    return [s.name for s in TOOL_SPECS if s.needs_approval]
+
+
+# ============================================================================ building
+def build_tools(
+    workspace: Workspace,
+    registry: ExtensionRegistry | None = None,
+    *,
+    falcon_model_factory: Callable[[], Any] | None = None,
+    stage_kwargs: dict[str, dict[str, Any]] | None = None,
+    include: set[str] | None = None,
+) -> list[Any]:
+    """StructuredTools bound to ``workspace``.
+
+    ``falcon_model_factory`` injects the model for stages that call one (tests use a
+    scripted model); ``stage_kwargs`` passes extra keyword arguments per tool name
+    (e.g. a fake Crow pipeline).
+    """
+    from langchain_core.tools import StructuredTool
+
+    tools = []
+    for spec in TOOL_SPECS:
+        if include is not None and spec.name not in include:
+            continue
+        tools.append(
+            StructuredTool.from_function(
+                func=_sync_runner(spec, workspace, registry, falcon_model_factory, stage_kwargs),
+                coroutine=_async_runner(
+                    spec, workspace, registry, falcon_model_factory, stage_kwargs
+                ),
+                name=spec.name,
+                description=spec.description,
+                args_schema=spec.args,
+            )
+        )
+    if include is None or "ask_human" in include:
+        tools.append(_ask_human_tool(workspace))
+    return tools
+
+
+def _call_kwargs(spec, workspace, registry, factory, stage_kwargs, args: dict[str, Any]):
+    params = inspect.signature(spec.stage).parameters
+    kwargs = {k: v for k, v in args.items() if k in params}
+    if "registry" in params and registry is not None:
+        kwargs["registry"] = registry
+    if spec.uses_model and factory is not None and "model" in params:
+        kwargs["model"] = factory()
+    kwargs.update((stage_kwargs or {}).get(spec.name, {}))
+    return kwargs
+
+
+def _sync_runner(spec, workspace, registry, factory, stage_kwargs):
+    def run(**args: Any) -> str:
+        kwargs = _call_kwargs(spec, workspace, registry, factory, stage_kwargs, args)
+        out = spec.stage(workspace, **kwargs)
+        if inspect.isawaitable(out):
+            out = _run_coroutine(out)
+        return out.render()
+
+    run.__name__ = spec.name
+    return run
+
+
+def _async_runner(spec, workspace, registry, factory, stage_kwargs):
+    async def run(**args: Any) -> str:
+        kwargs = _call_kwargs(spec, workspace, registry, factory, stage_kwargs, args)
+        if asyncio.iscoroutinefunction(spec.stage):
+            out = await spec.stage(workspace, **kwargs)
+        else:  # deterministic stages may be slow (L3): keep the event loop free
+            out = await asyncio.to_thread(spec.stage, workspace, **kwargs)
+        return out.render()
+
+    run.__name__ = spec.name
+    return run
+
+
+def _run_coroutine(coro):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+def _ask_human_tool(workspace: Workspace):
+    from langchain_core.tools import StructuredTool
+
+    def ask_human(
+        question: str, options: list[str] | None = None, directory: str | None = None
+    ) -> str:
+        from langgraph.types import interrupt
+
+        answer = interrupt(
+            {"type": "ask_human", "question": question, "options": list(options or [])}
+        )
+        text = answer if isinstance(answer, str) else str(answer.get("answer", answer))
+        if directory:
+            st.record_decision(workspace, directory, question, text, options=options)
+        return f"用户回答：{text}"
+
+    return StructuredTool.from_function(
+        func=ask_human,
+        name="ask_human",
+        description=ASK_HUMAN_DESCRIPTION,
+        args_schema=AskHumanArgs,
+    )

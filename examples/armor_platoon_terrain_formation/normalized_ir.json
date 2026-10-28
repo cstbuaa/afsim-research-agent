@@ -1,0 +1,3477 @@
+{
+  "ir_version": "1.0",
+  "draft": false,
+  "normalizer": "normalizer-2026.10.1",
+  "catalog_versions": {
+    "actions": "actions-2026.10.1",
+    "coordination": "coordination-2026.10.2",
+    "intents": "intents-2026.10.1",
+    "operands": "operands-2026.10.1"
+  },
+  "model": {
+    "id": "armor_platoon_terrain_formation",
+    "display_name": "装甲排地形自适应编队（示例）",
+    "version": "0.1.0",
+    "description": "装甲排沿路线机动，开阔地用楔形、接近城区转纵队；接敌时报告并转入交替跃进。",
+    "intent": "formation_transition",
+    "authoring_mode": "user_authored",
+    "domain_concepts": [
+      "unit.tank_platoon",
+      "formation.wedge",
+      "formation.column",
+      "movement.techniques",
+      "terrain.urban"
+    ]
+  },
+  "provenance": {
+    "requirements": [
+      {
+        "source_id": "user_req_001",
+        "kind": "user_input",
+        "locator": "conversation",
+        "summary": "研究装甲车在不同地形下的编队方式，并在接敌时转换。"
+      }
+    ],
+    "evidence_package": null,
+    "references": []
+  },
+  "assumptions": [
+    {
+      "id": "assumption_comms",
+      "statement": "排内所有车辆具备可用的语音/数据通信。",
+      "impact": null,
+      "affects": [
+        "coord_leader_follower",
+        "coord_contact_report"
+      ],
+      "requires_confirmation": true,
+      "confirmation": "confirmed",
+      "confirmed_by": "example_reviewer"
+    }
+  ],
+  "execution": {
+    "architecture": "state_machine_with_behavior_trees",
+    "controller_name": "tactical_controller",
+    "update_interval_s": 1.0,
+    "deterministic": true,
+    "random_seed_parameter": null,
+    "debug": {
+      "behavior_tree_trace": true,
+      "state_transitions": true,
+      "script_writes": false
+    }
+  },
+  "parameters": {
+    "bound_distance": {
+      "type": "distance",
+      "value": 300.0,
+      "unit": "m",
+      "original": {
+        "value": 300,
+        "unit": "m"
+      },
+      "description": "每次跃进距离（示例值）",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      }
+    },
+    "column_interval": {
+      "type": "distance",
+      "value": 50.0,
+      "unit": "m",
+      "original": {
+        "value": 50,
+        "unit": "m"
+      },
+      "description": "纵队车间距（示例值）",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "minimum": 10.0,
+      "maximum": 300.0
+    },
+    "contact_hold_time": {
+      "type": "time",
+      "value": 120.0,
+      "unit": "s",
+      "original": {
+        "value": 2,
+        "unit": "min"
+      },
+      "description": "失去接触后保持接敌状态的时间（示例值）",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      }
+    },
+    "contact_range": {
+      "type": "distance",
+      "value": 1500.0,
+      "unit": "m",
+      "original": {
+        "value": 1.5,
+        "unit": "km"
+      },
+      "description": "视为接敌的距离（示例值）",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      }
+    },
+    "standoff_distance": {
+      "type": "distance",
+      "value": 800.0,
+      "unit": "m",
+      "original": {
+        "value": 800,
+        "unit": "m"
+      },
+      "description": "交替跃进停止推进的对敌距离（示例值）",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      }
+    },
+    "station_tolerance": {
+      "type": "distance",
+      "value": 30.0,
+      "unit": "m",
+      "original": {
+        "value": 30,
+        "unit": "m"
+      },
+      "description": "站位容差（示例值）",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      }
+    },
+    "travel_speed_open": {
+      "type": "speed",
+      "value": 8.333333333333334,
+      "unit": "m/s",
+      "original": {
+        "value": 30,
+        "unit": "km/h"
+      },
+      "description": "开阔地行进速度（示例值）",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      }
+    },
+    "travel_speed_urban": {
+      "type": "speed",
+      "value": 4.166666666666667,
+      "unit": "m/s",
+      "original": {
+        "value": 15,
+        "unit": "km/h"
+      },
+      "description": "城区行进速度（示例值）",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      }
+    },
+    "urban_transition_distance": {
+      "type": "distance",
+      "value": 200.0,
+      "unit": "m",
+      "original": {
+        "value": 200,
+        "unit": "m"
+      },
+      "description": "距城区多远开始转纵队（示例值）",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      }
+    },
+    "wedge_depth": {
+      "type": "distance",
+      "value": 100.0,
+      "unit": "m",
+      "original": {
+        "value": 100,
+        "unit": "m"
+      },
+      "description": "楔形纵深间隔（示例值）",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "minimum": 25.0,
+      "maximum": 500.0
+    },
+    "wedge_half_width": {
+      "type": "distance",
+      "value": 100.0,
+      "unit": "m",
+      "original": {
+        "value": 100,
+        "unit": "m"
+      },
+      "description": "楔形横向半宽（示例值）",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "minimum": 25.0,
+      "maximum": 500.0
+    }
+  },
+  "resources": [
+    {
+      "id": "comm_control",
+      "policy": "exclusive"
+    },
+    {
+      "id": "movement_control",
+      "policy": "exclusive"
+    },
+    {
+      "id": "sensor_control",
+      "policy": "exclusive"
+    },
+    {
+      "id": "weapon_control",
+      "policy": "exclusive"
+    }
+  ],
+  "roles": [
+    {
+      "id": "platoon_leader",
+      "description": "排长车",
+      "count": 1,
+      "capability_class": "ground_vehicle",
+      "command": {
+        "superior": null,
+        "subordinates": [
+          "wingman"
+        ]
+      },
+      "dependencies": {
+        "mover": {
+          "required": true,
+          "capability": "route_following_ground"
+        },
+        "energy": null,
+        "sensors": [
+          {
+            "id": "vehicle_sight",
+            "capability": "visual_search",
+            "required": true
+          }
+        ],
+        "comms": [
+          {
+            "id": "platoon_net",
+            "capability": "voice_data",
+            "required": true
+          }
+        ],
+        "weapons": [],
+        "processors": []
+      },
+      "blackboards": [
+        {
+          "id": "mission",
+          "scope": "platform",
+          "variables": [
+            {
+              "name": "current_formation",
+              "type": "string",
+              "default": "wedge"
+            }
+          ]
+        }
+      ],
+      "root_tree": null,
+      "state_machine": {
+        "id": "leader_mission",
+        "initial_state": "travel_open",
+        "states": [
+          {
+            "id": "travel_open",
+            "description": "",
+            "tree": "leader_open_tree",
+            "terminal": false,
+            "transitions": [
+              {
+                "transition_id": "open_to_contact",
+                "to": "contact",
+                "priority": 100,
+                "when": {
+                  "op": "condition_ref",
+                  "id": "in_contact"
+                },
+                "fallback": false,
+                "synchronize_with": "coord_leader_follower",
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                }
+              },
+              {
+                "transition_id": "open_to_urban",
+                "to": "travel_urban",
+                "priority": 80,
+                "when": {
+                  "op": "condition_ref",
+                  "id": "entering_urban"
+                },
+                "fallback": false,
+                "synchronize_with": "coord_leader_follower",
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                }
+              },
+              {
+                "transition_id": "open_self",
+                "to": "travel_open",
+                "priority": 0,
+                "when": {
+                  "op": "literal",
+                  "value": true
+                },
+                "fallback": true,
+                "synchronize_with": null,
+                "basis": null
+              }
+            ]
+          },
+          {
+            "id": "travel_urban",
+            "description": "",
+            "tree": "leader_urban_tree",
+            "terminal": false,
+            "transitions": [
+              {
+                "transition_id": "urban_to_contact",
+                "to": "contact",
+                "priority": 100,
+                "when": {
+                  "op": "condition_ref",
+                  "id": "in_contact"
+                },
+                "fallback": false,
+                "synchronize_with": "coord_leader_follower",
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                }
+              },
+              {
+                "transition_id": "urban_to_open",
+                "to": "travel_open",
+                "priority": 80,
+                "when": {
+                  "op": "condition_ref",
+                  "id": "leaving_urban"
+                },
+                "fallback": false,
+                "synchronize_with": "coord_leader_follower",
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                }
+              },
+              {
+                "transition_id": "urban_self",
+                "to": "travel_urban",
+                "priority": 0,
+                "when": {
+                  "op": "literal",
+                  "value": true
+                },
+                "fallback": true,
+                "synchronize_with": null,
+                "basis": null
+              }
+            ]
+          },
+          {
+            "id": "contact",
+            "description": "",
+            "tree": "leader_contact_tree",
+            "terminal": false,
+            "transitions": [
+              {
+                "transition_id": "contact_to_open",
+                "to": "travel_open",
+                "priority": 50,
+                "when": {
+                  "op": "condition_ref",
+                  "id": "contact_cleared"
+                },
+                "fallback": false,
+                "synchronize_with": "coord_leader_follower",
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                }
+              },
+              {
+                "transition_id": "contact_self",
+                "to": "contact",
+                "priority": 0,
+                "when": {
+                  "op": "literal",
+                  "value": true
+                },
+                "fallback": true,
+                "synchronize_with": null,
+                "basis": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "wingman",
+      "description": "僚车（3 辆）",
+      "count": 3,
+      "capability_class": "ground_vehicle",
+      "command": {
+        "superior": "platoon_leader",
+        "subordinates": []
+      },
+      "dependencies": {
+        "mover": {
+          "required": true,
+          "capability": "route_following_ground"
+        },
+        "energy": null,
+        "sensors": [
+          {
+            "id": "vehicle_sight",
+            "capability": "visual_search",
+            "required": true
+          }
+        ],
+        "comms": [
+          {
+            "id": "platoon_net",
+            "capability": "voice_data",
+            "required": true
+          }
+        ],
+        "weapons": [],
+        "processors": []
+      },
+      "blackboards": [
+        {
+          "id": "mission",
+          "scope": "platform",
+          "variables": [
+            {
+              "name": "contact_reported",
+              "type": "bool",
+              "default": false
+            }
+          ]
+        }
+      ],
+      "root_tree": null,
+      "state_machine": {
+        "id": "wingman_mission",
+        "initial_state": "travel_open",
+        "states": [
+          {
+            "id": "travel_open",
+            "description": "",
+            "tree": "wingman_travel_tree",
+            "terminal": false,
+            "transitions": [
+              {
+                "transition_id": "wing_open_contact",
+                "to": "contact",
+                "priority": 100,
+                "when": {
+                  "op": "condition_ref",
+                  "id": "in_contact"
+                },
+                "fallback": false,
+                "synchronize_with": null,
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                }
+              },
+              {
+                "transition_id": "coord_leader_follower__travel_open__to__contact",
+                "to": "contact",
+                "priority": 90,
+                "when": {
+                  "op": "all",
+                  "args": [
+                    {
+                      "op": "operand",
+                      "operand": {
+                        "kind": "function",
+                        "name": "message_received",
+                        "arguments": {
+                          "message": {
+                            "kind": "id",
+                            "value": "coord_leader_follower__transition"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "op": "compare",
+                      "operator": "eq",
+                      "left": {
+                        "kind": "message_value",
+                        "message": "coord_leader_follower__transition",
+                        "field": "to_state"
+                      },
+                      "right": {
+                        "kind": "literal",
+                        "value": "contact"
+                      }
+                    }
+                  ]
+                },
+                "fallback": false,
+                "synchronize_with": null,
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                },
+                "generated_from": "coord_leader_follower"
+              },
+              {
+                "transition_id": "coord_leader_follower__travel_open__to__travel_urban",
+                "to": "travel_urban",
+                "priority": 90,
+                "when": {
+                  "op": "all",
+                  "args": [
+                    {
+                      "op": "operand",
+                      "operand": {
+                        "kind": "function",
+                        "name": "message_received",
+                        "arguments": {
+                          "message": {
+                            "kind": "id",
+                            "value": "coord_leader_follower__transition"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "op": "compare",
+                      "operator": "eq",
+                      "left": {
+                        "kind": "message_value",
+                        "message": "coord_leader_follower__transition",
+                        "field": "to_state"
+                      },
+                      "right": {
+                        "kind": "literal",
+                        "value": "travel_urban"
+                      }
+                    }
+                  ]
+                },
+                "fallback": false,
+                "synchronize_with": null,
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                },
+                "generated_from": "coord_leader_follower"
+              },
+              {
+                "transition_id": "wing_open_self",
+                "to": "travel_open",
+                "priority": 0,
+                "when": {
+                  "op": "literal",
+                  "value": true
+                },
+                "fallback": true,
+                "synchronize_with": null,
+                "basis": null
+              }
+            ]
+          },
+          {
+            "id": "travel_urban",
+            "description": "",
+            "tree": "wingman_travel_tree",
+            "terminal": false,
+            "transitions": [
+              {
+                "transition_id": "wing_urban_contact",
+                "to": "contact",
+                "priority": 100,
+                "when": {
+                  "op": "condition_ref",
+                  "id": "in_contact"
+                },
+                "fallback": false,
+                "synchronize_with": null,
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                }
+              },
+              {
+                "transition_id": "coord_leader_follower__travel_urban__to__contact",
+                "to": "contact",
+                "priority": 90,
+                "when": {
+                  "op": "all",
+                  "args": [
+                    {
+                      "op": "operand",
+                      "operand": {
+                        "kind": "function",
+                        "name": "message_received",
+                        "arguments": {
+                          "message": {
+                            "kind": "id",
+                            "value": "coord_leader_follower__transition"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "op": "compare",
+                      "operator": "eq",
+                      "left": {
+                        "kind": "message_value",
+                        "message": "coord_leader_follower__transition",
+                        "field": "to_state"
+                      },
+                      "right": {
+                        "kind": "literal",
+                        "value": "contact"
+                      }
+                    }
+                  ]
+                },
+                "fallback": false,
+                "synchronize_with": null,
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                },
+                "generated_from": "coord_leader_follower"
+              },
+              {
+                "transition_id": "coord_leader_follower__travel_urban__to__travel_open",
+                "to": "travel_open",
+                "priority": 90,
+                "when": {
+                  "op": "all",
+                  "args": [
+                    {
+                      "op": "operand",
+                      "operand": {
+                        "kind": "function",
+                        "name": "message_received",
+                        "arguments": {
+                          "message": {
+                            "kind": "id",
+                            "value": "coord_leader_follower__transition"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "op": "compare",
+                      "operator": "eq",
+                      "left": {
+                        "kind": "message_value",
+                        "message": "coord_leader_follower__transition",
+                        "field": "to_state"
+                      },
+                      "right": {
+                        "kind": "literal",
+                        "value": "travel_open"
+                      }
+                    }
+                  ]
+                },
+                "fallback": false,
+                "synchronize_with": null,
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                },
+                "generated_from": "coord_leader_follower"
+              },
+              {
+                "transition_id": "wing_urban_self",
+                "to": "travel_urban",
+                "priority": 0,
+                "when": {
+                  "op": "literal",
+                  "value": true
+                },
+                "fallback": true,
+                "synchronize_with": null,
+                "basis": null
+              }
+            ]
+          },
+          {
+            "id": "contact",
+            "description": "",
+            "tree": "wingman_contact_tree",
+            "terminal": false,
+            "transitions": [
+              {
+                "transition_id": "coord_leader_follower__contact__to__travel_urban",
+                "to": "travel_urban",
+                "priority": 90,
+                "when": {
+                  "op": "all",
+                  "args": [
+                    {
+                      "op": "operand",
+                      "operand": {
+                        "kind": "function",
+                        "name": "message_received",
+                        "arguments": {
+                          "message": {
+                            "kind": "id",
+                            "value": "coord_leader_follower__transition"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "op": "compare",
+                      "operator": "eq",
+                      "left": {
+                        "kind": "message_value",
+                        "message": "coord_leader_follower__transition",
+                        "field": "to_state"
+                      },
+                      "right": {
+                        "kind": "literal",
+                        "value": "travel_urban"
+                      }
+                    }
+                  ]
+                },
+                "fallback": false,
+                "synchronize_with": null,
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                },
+                "generated_from": "coord_leader_follower"
+              },
+              {
+                "transition_id": "coord_leader_follower__contact__to__travel_open",
+                "to": "travel_open",
+                "priority": 90,
+                "when": {
+                  "op": "all",
+                  "args": [
+                    {
+                      "op": "operand",
+                      "operand": {
+                        "kind": "function",
+                        "name": "message_received",
+                        "arguments": {
+                          "message": {
+                            "kind": "id",
+                            "value": "coord_leader_follower__transition"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "op": "compare",
+                      "operator": "eq",
+                      "left": {
+                        "kind": "message_value",
+                        "message": "coord_leader_follower__transition",
+                        "field": "to_state"
+                      },
+                      "right": {
+                        "kind": "literal",
+                        "value": "travel_open"
+                      }
+                    }
+                  ]
+                },
+                "fallback": false,
+                "synchronize_with": null,
+                "basis": {
+                  "status": "user_specified",
+                  "evidence": [],
+                  "assumptions": [],
+                  "rationale": null,
+                  "confirmation": "confirmed",
+                  "confirmed_by": null
+                },
+                "generated_from": "coord_leader_follower"
+              },
+              {
+                "transition_id": "wing_contact_self",
+                "to": "contact",
+                "priority": 0,
+                "when": {
+                  "op": "literal",
+                  "value": true
+                },
+                "fallback": true,
+                "synchronize_with": null,
+                "basis": null
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "formations": [
+    {
+      "id": "column",
+      "description": "纵队：依次跟随长车",
+      "reference": "leader",
+      "slots": [
+        {
+          "role": "wingman",
+          "instance": 0,
+          "forward": {
+            "parameter_ref": "column_interval",
+            "scale": -1.0,
+            "value_m": -50.0
+          },
+          "right": {
+            "parameter_ref": null,
+            "scale": 1.0,
+            "value_m": 0.0
+          }
+        },
+        {
+          "role": "wingman",
+          "instance": 1,
+          "forward": {
+            "parameter_ref": "column_interval",
+            "scale": -2.0,
+            "value_m": -100.0
+          },
+          "right": {
+            "parameter_ref": null,
+            "scale": 1.0,
+            "value_m": 0.0
+          }
+        },
+        {
+          "role": "wingman",
+          "instance": 2,
+          "forward": {
+            "parameter_ref": "column_interval",
+            "scale": -3.0,
+            "value_m": -150.0
+          },
+          "right": {
+            "parameter_ref": null,
+            "scale": 1.0,
+            "value_m": 0.0
+          }
+        }
+      ],
+      "tolerance": {
+        "parameter_ref": "station_tolerance",
+        "scale": 1.0,
+        "value_m": 30.0
+      },
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      }
+    },
+    {
+      "id": "wedge",
+      "description": "楔形：两翼在长车后侧，第三车居中殿后",
+      "reference": "leader",
+      "slots": [
+        {
+          "role": "wingman",
+          "instance": 0,
+          "forward": {
+            "parameter_ref": "wedge_depth",
+            "scale": -1.0,
+            "value_m": -100.0
+          },
+          "right": {
+            "parameter_ref": "wedge_half_width",
+            "scale": -1.0,
+            "value_m": -100.0
+          }
+        },
+        {
+          "role": "wingman",
+          "instance": 1,
+          "forward": {
+            "parameter_ref": "wedge_depth",
+            "scale": -1.0,
+            "value_m": -100.0
+          },
+          "right": {
+            "parameter_ref": "wedge_half_width",
+            "scale": 1.0,
+            "value_m": 100.0
+          }
+        },
+        {
+          "role": "wingman",
+          "instance": 2,
+          "forward": {
+            "parameter_ref": "wedge_depth",
+            "scale": -2.0,
+            "value_m": -200.0
+          },
+          "right": {
+            "parameter_ref": null,
+            "scale": 1.0,
+            "value_m": 0.0
+          }
+        }
+      ],
+      "tolerance": {
+        "parameter_ref": "station_tolerance",
+        "scale": 1.0,
+        "value_m": 30.0
+      },
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      }
+    }
+  ],
+  "coordination": [
+    {
+      "id": "coord_bounding",
+      "pattern": "bounding_overwatch",
+      "description": "",
+      "groups": {
+        "bounding": [
+          "platoon_leader",
+          "wingman[2]"
+        ],
+        "overwatch": [
+          "wingman[0]",
+          "wingman[1]"
+        ]
+      },
+      "bound_distance": {
+        "parameter_ref": "bound_distance",
+        "scale": 1.0,
+        "value_m": 300.0
+      },
+      "active_when": {
+        "op": "condition_ref",
+        "id": "in_contact"
+      },
+      "standoff_distance": {
+        "parameter_ref": "standoff_distance",
+        "scale": 1.0,
+        "value_m": 800.0
+      },
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "standoff_margin_m": 10.0,
+      "members": {
+        "bounding": [
+          {
+            "role": "platoon_leader",
+            "instance": null
+          },
+          {
+            "role": "wingman",
+            "instance": 2
+          }
+        ],
+        "overwatch": [
+          {
+            "role": "wingman",
+            "instance": 0
+          },
+          {
+            "role": "wingman",
+            "instance": 1
+          }
+        ]
+      },
+      "generated": [
+        "coord_bounding__active",
+        "coord_bounding__announce_bound",
+        "coord_bounding__bound",
+        "coord_bounding__bound_complete",
+        "coord_bounding__my_turn",
+        "coord_bounding__overwatch",
+        "coord_bounding__standoff_reached",
+        "coord_bounding__tree"
+      ]
+    },
+    {
+      "id": "coord_contact_report",
+      "pattern": "report_and_wait",
+      "description": "",
+      "reporter": "wingman",
+      "receiver": "platoon_leader",
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "ack_timeout_s": 30.0,
+      "members": {
+        "receiver": [
+          {
+            "role": "platoon_leader",
+            "instance": null
+          }
+        ],
+        "reporter": [
+          {
+            "role": "wingman",
+            "instance": null
+          }
+        ]
+      },
+      "generated": [
+        "coord_contact_report__ack",
+        "coord_contact_report__ack_received",
+        "coord_contact_report__acknowledge",
+        "coord_contact_report__await_ack",
+        "coord_contact_report__report",
+        "coord_contact_report__report_received",
+        "coord_contact_report__send_report"
+      ]
+    },
+    {
+      "id": "coord_leader_follower",
+      "pattern": "leader_follower",
+      "description": "",
+      "leader": "platoon_leader",
+      "followers": "wingman",
+      "formation_ref": {
+        "kind": "blackboard",
+        "board": "mission",
+        "var": "current_formation"
+      },
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "resync_interval_s": 5.0,
+      "members": {
+        "followers": [
+          {
+            "role": "wingman",
+            "instance": null
+          }
+        ],
+        "leader": [
+          {
+            "role": "platoon_leader",
+            "instance": null
+          }
+        ]
+      },
+      "generated": [
+        "coord_leader_follower__announce_formation",
+        "coord_leader_follower__contact__to__travel_open",
+        "coord_leader_follower__contact__to__travel_urban",
+        "coord_leader_follower__formation",
+        "coord_leader_follower__formation_known",
+        "coord_leader_follower__keep_station",
+        "coord_leader_follower__transition",
+        "coord_leader_follower__travel_open__to__contact",
+        "coord_leader_follower__travel_open__to__travel_urban",
+        "coord_leader_follower__travel_urban__to__contact",
+        "coord_leader_follower__travel_urban__to__travel_open"
+      ]
+    }
+  ],
+  "messages": [
+    {
+      "id": "coord_bounding__bound_complete",
+      "description": "coord_bounding: a member finished its bound",
+      "from": [
+        "platoon_leader",
+        "wingman"
+      ],
+      "to": [
+        "platoon_leader",
+        "wingman"
+      ],
+      "fields": [],
+      "latency_s": 0.0,
+      "reliability": 1.0,
+      "generated_from": "coord_bounding"
+    },
+    {
+      "id": "coord_contact_report__ack",
+      "description": "coord_contact_report: acknowledgement",
+      "from": [
+        "platoon_leader"
+      ],
+      "to": [
+        "wingman"
+      ],
+      "fields": [],
+      "latency_s": 0.0,
+      "reliability": 1.0,
+      "generated_from": "coord_contact_report"
+    },
+    {
+      "id": "coord_contact_report__report",
+      "description": "coord_contact_report: contact report",
+      "from": [
+        "wingman"
+      ],
+      "to": [
+        "platoon_leader"
+      ],
+      "fields": [
+        {
+          "name": "contact_range",
+          "type": "double",
+          "default": 0.0
+        },
+        {
+          "name": "contact_count",
+          "type": "int",
+          "default": 0
+        }
+      ],
+      "latency_s": 0.0,
+      "reliability": 1.0,
+      "generated_from": "coord_contact_report"
+    },
+    {
+      "id": "coord_leader_follower__formation",
+      "description": "coord_leader_follower: leader announces the active formation",
+      "from": [
+        "platoon_leader"
+      ],
+      "to": [
+        "wingman"
+      ],
+      "fields": [
+        {
+          "name": "formation",
+          "type": "string",
+          "default": "wedge"
+        }
+      ],
+      "latency_s": 0.0,
+      "reliability": 1.0,
+      "generated_from": "coord_leader_follower"
+    },
+    {
+      "id": "coord_leader_follower__transition",
+      "description": "coord_leader_follower: leader announces a synchronized state transition",
+      "from": [
+        "platoon_leader"
+      ],
+      "to": [
+        "wingman"
+      ],
+      "fields": [
+        {
+          "name": "to_state",
+          "type": "string",
+          "default": ""
+        }
+      ],
+      "latency_s": 0.0,
+      "reliability": 1.0,
+      "generated_from": "coord_leader_follower"
+    }
+  ],
+  "conditions": [
+    {
+      "id": "contact_cleared",
+      "description": "接敌解除并保持一段时间。",
+      "expression": {
+        "op": "all",
+        "args": [
+          {
+            "op": "not",
+            "arg": {
+              "op": "condition_ref",
+              "id": "in_contact"
+            }
+          },
+          {
+            "op": "operand",
+            "operand": {
+              "kind": "function",
+              "name": "time_in_state_gte",
+              "arguments": {
+                "duration": {
+                  "kind": "parameter",
+                  "name": "contact_hold_time"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "contact_not_yet_reported",
+      "description": "本次接敌尚未报告。",
+      "expression": {
+        "op": "not",
+        "arg": {
+          "op": "operand",
+          "operand": {
+            "kind": "blackboard",
+            "board": "mission",
+            "var": "contact_reported"
+          }
+        }
+      }
+    },
+    {
+      "id": "coord_bounding__active",
+      "description": "coord_bounding: pattern active",
+      "expression": {
+        "op": "condition_ref",
+        "id": "in_contact"
+      },
+      "generated_from": "coord_bounding"
+    },
+    {
+      "id": "coord_bounding__my_turn",
+      "description": "coord_bounding: this instance should bound now",
+      "expression": {
+        "op": "all",
+        "args": [
+          {
+            "op": "operand",
+            "operand": {
+              "kind": "function",
+              "name": "bounding_turn",
+              "arguments": {
+                "coordination": {
+                  "kind": "id",
+                  "value": "coord_bounding"
+                }
+              }
+            }
+          },
+          {
+            "op": "not",
+            "arg": {
+              "op": "condition_ref",
+              "id": "coord_bounding__standoff_reached"
+            }
+          }
+        ]
+      },
+      "generated_from": "coord_bounding"
+    },
+    {
+      "id": "coord_bounding__standoff_reached",
+      "description": "coord_bounding: nearest hostile within the standoff distance (stop advancing)",
+      "expression": {
+        "op": "operand",
+        "operand": {
+          "kind": "function",
+          "name": "standoff_reached",
+          "arguments": {
+            "coordination": {
+              "kind": "id",
+              "value": "coord_bounding"
+            }
+          }
+        }
+      },
+      "generated_from": "coord_bounding"
+    },
+    {
+      "id": "coord_contact_report__ack_received",
+      "description": "",
+      "expression": {
+        "op": "operand",
+        "operand": {
+          "kind": "function",
+          "name": "message_received",
+          "arguments": {
+            "message": {
+              "kind": "id",
+              "value": "coord_contact_report__ack"
+            }
+          }
+        }
+      },
+      "generated_from": "coord_contact_report"
+    },
+    {
+      "id": "coord_contact_report__report_received",
+      "description": "",
+      "expression": {
+        "op": "operand",
+        "operand": {
+          "kind": "function",
+          "name": "message_received",
+          "arguments": {
+            "message": {
+              "kind": "id",
+              "value": "coord_contact_report__report"
+            }
+          }
+        }
+      },
+      "generated_from": "coord_contact_report"
+    },
+    {
+      "id": "coord_leader_follower__formation_known",
+      "description": "coord_leader_follower: a formation announcement arrived this tick",
+      "expression": {
+        "op": "operand",
+        "operand": {
+          "kind": "function",
+          "name": "message_received",
+          "arguments": {
+            "message": {
+              "kind": "id",
+              "value": "coord_leader_follower__formation"
+            }
+          }
+        }
+      },
+      "generated_from": "coord_leader_follower"
+    },
+    {
+      "id": "entering_urban",
+      "description": "前方城区地形已在转换距离内。",
+      "expression": {
+        "op": "compare",
+        "operator": "lte",
+        "left": {
+          "kind": "property",
+          "source": "terrain_value",
+          "property": "distance_to_class",
+          "argument": "urban"
+        },
+        "right": {
+          "kind": "parameter",
+          "name": "urban_transition_distance"
+        }
+      }
+    },
+    {
+      "id": "in_contact",
+      "description": "最近敌方目标进入接敌距离。",
+      "expression": {
+        "op": "compare",
+        "operator": "lte",
+        "left": {
+          "kind": "property",
+          "source": "track_value",
+          "property": "nearest_hostile_range"
+        },
+        "right": {
+          "kind": "parameter",
+          "name": "contact_range"
+        }
+      }
+    },
+    {
+      "id": "leaving_urban",
+      "description": "已离开城区且转换距离内不再有城区。",
+      "expression": {
+        "op": "all",
+        "args": [
+          {
+            "op": "not",
+            "arg": {
+              "op": "condition_ref",
+              "id": "entering_urban"
+            }
+          },
+          {
+            "op": "compare",
+            "operator": "ne",
+            "left": {
+              "kind": "property",
+              "source": "terrain_value",
+              "property": "class"
+            },
+            "right": {
+              "kind": "literal",
+              "value": "urban"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "mover_ok",
+      "description": "机动部件可用。",
+      "expression": {
+        "op": "operand",
+        "operand": {
+          "kind": "property",
+          "source": "mover_value",
+          "property": "available"
+        }
+      }
+    }
+  ],
+  "behaviors": [
+    {
+      "id": "clear_contact_reported",
+      "description": "恢复行进时清除接敌报告标记。",
+      "kind": "action",
+      "memory": [],
+      "precondition": null,
+      "claims": [],
+      "actions": [
+        {
+          "command": "set_blackboard",
+          "category": "control",
+          "external": false,
+          "arguments": {
+            "key": {
+              "kind": "blackboard_key",
+              "board": "mission",
+              "var": "contact_reported"
+            },
+            "value": {
+              "kind": "literal",
+              "value": false
+            }
+          },
+          "issue_policy": "every_tick",
+          "allow_every_tick": false,
+          "resources": []
+        }
+      ],
+      "success": {
+        "op": "literal",
+        "value": true
+      },
+      "failure": null,
+      "timeout": null,
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": null
+    },
+    {
+      "id": "coord_bounding__announce_bound",
+      "description": "coord_bounding: tell the team this bound is complete",
+      "kind": "action",
+      "memory": [],
+      "precondition": null,
+      "claims": [
+        "comm_control"
+      ],
+      "actions": [
+        {
+          "command": "send_message",
+          "category": "comms",
+          "external": true,
+          "arguments": {
+            "message": {
+              "kind": "id",
+              "value": "coord_bounding__bound_complete"
+            }
+          },
+          "issue_policy": "once_per_activation",
+          "allow_every_tick": false,
+          "resources": [
+            "comm_control"
+          ]
+        }
+      ],
+      "success": {
+        "op": "literal",
+        "value": true
+      },
+      "failure": null,
+      "timeout": null,
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": null,
+      "generated_from": "coord_bounding"
+    },
+    {
+      "id": "coord_bounding__bound",
+      "description": "coord_bounding: bound forward while the other group overwatches",
+      "kind": "action",
+      "memory": [],
+      "precondition": {
+        "op": "condition_ref",
+        "id": "coord_bounding__my_turn"
+      },
+      "claims": [
+        "movement_control"
+      ],
+      "actions": [
+        {
+          "command": "bound_to_position",
+          "category": "formation",
+          "external": true,
+          "arguments": {
+            "distance": {
+              "kind": "parameter",
+              "name": "bound_distance"
+            },
+            "stop_short": {
+              "kind": "parameter",
+              "name": "standoff_distance"
+            },
+            "toward": {
+              "kind": "id",
+              "value": "nearest_hostile"
+            }
+          },
+          "issue_policy": "once_per_activation",
+          "allow_every_tick": false,
+          "resources": [
+            "movement_control"
+          ]
+        }
+      ],
+      "success": {
+        "op": "operand",
+        "operand": {
+          "kind": "property",
+          "source": "mover_value",
+          "property": "at_destination"
+        }
+      },
+      "failure": {
+        "op": "condition_ref",
+        "id": "coord_bounding__standoff_reached"
+      },
+      "timeout": null,
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "generated_from": "coord_bounding"
+    },
+    {
+      "id": "coord_bounding__overwatch",
+      "description": "coord_bounding: hold an overwatch position",
+      "kind": "action",
+      "memory": [],
+      "precondition": null,
+      "claims": [
+        "movement_control"
+      ],
+      "actions": [
+        {
+          "command": "hold_overwatch_position",
+          "category": "formation",
+          "external": true,
+          "arguments": {},
+          "issue_policy": "once_per_activation",
+          "allow_every_tick": false,
+          "resources": [
+            "movement_control"
+          ]
+        }
+      ],
+      "success": null,
+      "failure": null,
+      "timeout": null,
+      "continuous": true,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "generated_from": "coord_bounding"
+    },
+    {
+      "id": "coord_contact_report__acknowledge",
+      "description": "coord_contact_report: acknowledge a received report",
+      "kind": "action",
+      "memory": [],
+      "precondition": {
+        "op": "condition_ref",
+        "id": "coord_contact_report__report_received"
+      },
+      "claims": [
+        "comm_control"
+      ],
+      "actions": [
+        {
+          "command": "send_message",
+          "category": "comms",
+          "external": true,
+          "arguments": {
+            "message": {
+              "kind": "id",
+              "value": "coord_contact_report__ack"
+            }
+          },
+          "issue_policy": "once_per_activation",
+          "allow_every_tick": false,
+          "resources": [
+            "comm_control"
+          ]
+        }
+      ],
+      "success": {
+        "op": "literal",
+        "value": true
+      },
+      "failure": null,
+      "timeout": null,
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": null,
+      "generated_from": "coord_contact_report"
+    },
+    {
+      "id": "coord_contact_report__await_ack",
+      "description": "coord_contact_report: wait for acknowledgement",
+      "kind": "action",
+      "memory": [],
+      "precondition": null,
+      "claims": [],
+      "actions": [],
+      "success": {
+        "op": "condition_ref",
+        "id": "coord_contact_report__ack_received"
+      },
+      "failure": null,
+      "timeout": {
+        "seconds": 30.0,
+        "result": "failure"
+      },
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "generated_from": "coord_contact_report"
+    },
+    {
+      "id": "coord_contact_report__send_report",
+      "description": "coord_contact_report: send the contact report",
+      "kind": "action",
+      "memory": [],
+      "precondition": null,
+      "claims": [
+        "comm_control"
+      ],
+      "actions": [
+        {
+          "command": "report_contact",
+          "category": "comms",
+          "external": true,
+          "arguments": {
+            "message": {
+              "kind": "id",
+              "value": "coord_contact_report__report"
+            }
+          },
+          "issue_policy": "once_per_activation",
+          "allow_every_tick": false,
+          "resources": [
+            "comm_control"
+          ]
+        }
+      ],
+      "success": {
+        "op": "literal",
+        "value": true
+      },
+      "failure": null,
+      "timeout": null,
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "generated_from": "coord_contact_report"
+    },
+    {
+      "id": "coord_leader_follower__announce_formation",
+      "description": "coord_leader_follower: send the leader's current formation to followers",
+      "kind": "action",
+      "memory": [],
+      "precondition": null,
+      "claims": [
+        "comm_control"
+      ],
+      "actions": [
+        {
+          "command": "send_message",
+          "category": "comms",
+          "external": true,
+          "arguments": {
+            "fields": {
+              "kind": "fields",
+              "values": {
+                "formation": {
+                  "kind": "blackboard",
+                  "board": "mission",
+                  "var": "current_formation"
+                }
+              }
+            },
+            "message": {
+              "kind": "id",
+              "value": "coord_leader_follower__formation"
+            }
+          },
+          "issue_policy": "once_per_activation",
+          "allow_every_tick": false,
+          "resources": [
+            "comm_control"
+          ]
+        }
+      ],
+      "success": {
+        "op": "literal",
+        "value": true
+      },
+      "failure": null,
+      "timeout": null,
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "generated_from": "coord_leader_follower"
+    },
+    {
+      "id": "coord_leader_follower__keep_station",
+      "description": "coord_leader_follower: keep station on the leader in the announced formation",
+      "kind": "action",
+      "memory": [],
+      "precondition": null,
+      "claims": [
+        "movement_control"
+      ],
+      "actions": [
+        {
+          "command": "keep_station",
+          "category": "formation",
+          "external": true,
+          "arguments": {
+            "formation": {
+              "kind": "message_value",
+              "message": "coord_leader_follower__formation",
+              "field": "formation"
+            },
+            "leader": {
+              "kind": "id",
+              "value": "platoon_leader"
+            }
+          },
+          "issue_policy": "every_tick",
+          "allow_every_tick": false,
+          "resources": [
+            "movement_control"
+          ]
+        }
+      ],
+      "success": null,
+      "failure": null,
+      "timeout": null,
+      "continuous": true,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": {
+        "status": "user_specified",
+        "evidence": [],
+        "assumptions": [],
+        "rationale": null,
+        "confirmation": "confirmed",
+        "confirmed_by": null
+      },
+      "generated_from": "coord_leader_follower"
+    },
+    {
+      "id": "follow_route_open",
+      "description": "以开阔地速度沿主路线行进。",
+      "kind": "action",
+      "memory": [],
+      "precondition": {
+        "op": "condition_ref",
+        "id": "mover_ok"
+      },
+      "claims": [
+        "movement_control"
+      ],
+      "actions": [
+        {
+          "command": "follow_route",
+          "category": "movement",
+          "external": true,
+          "arguments": {
+            "route": {
+              "kind": "id",
+              "value": "main_route"
+            },
+            "speed": {
+              "kind": "parameter",
+              "name": "travel_speed_open"
+            }
+          },
+          "issue_policy": "once_per_activation",
+          "allow_every_tick": false,
+          "resources": [
+            "movement_control"
+          ]
+        }
+      ],
+      "success": {
+        "op": "operand",
+        "operand": {
+          "kind": "property",
+          "source": "mover_value",
+          "property": "route_complete"
+        }
+      },
+      "failure": {
+        "op": "not",
+        "arg": {
+          "op": "condition_ref",
+          "id": "mover_ok"
+        }
+      },
+      "timeout": null,
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": null
+    },
+    {
+      "id": "follow_route_urban",
+      "description": "以城区速度沿主路线行进。",
+      "kind": "action",
+      "memory": [],
+      "precondition": {
+        "op": "condition_ref",
+        "id": "mover_ok"
+      },
+      "claims": [
+        "movement_control"
+      ],
+      "actions": [
+        {
+          "command": "follow_route",
+          "category": "movement",
+          "external": true,
+          "arguments": {
+            "route": {
+              "kind": "id",
+              "value": "main_route"
+            },
+            "speed": {
+              "kind": "parameter",
+              "name": "travel_speed_urban"
+            }
+          },
+          "issue_policy": "once_per_activation",
+          "allow_every_tick": false,
+          "resources": [
+            "movement_control"
+          ]
+        }
+      ],
+      "success": {
+        "op": "operand",
+        "operand": {
+          "kind": "property",
+          "source": "mover_value",
+          "property": "route_complete"
+        }
+      },
+      "failure": {
+        "op": "not",
+        "arg": {
+          "op": "condition_ref",
+          "id": "mover_ok"
+        }
+      },
+      "timeout": null,
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": null
+    },
+    {
+      "id": "mark_contact_reported",
+      "description": "记录本次接敌已报告，避免重复报告。",
+      "kind": "action",
+      "memory": [],
+      "precondition": null,
+      "claims": [],
+      "actions": [
+        {
+          "command": "set_blackboard",
+          "category": "control",
+          "external": false,
+          "arguments": {
+            "key": {
+              "kind": "blackboard_key",
+              "board": "mission",
+              "var": "contact_reported"
+            },
+            "value": {
+              "kind": "literal",
+              "value": true
+            }
+          },
+          "issue_policy": "every_tick",
+          "allow_every_tick": false,
+          "resources": []
+        }
+      ],
+      "success": {
+        "op": "literal",
+        "value": true
+      },
+      "failure": null,
+      "timeout": null,
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": null
+    },
+    {
+      "id": "set_formation_column",
+      "description": "选择纵队队形。",
+      "kind": "action",
+      "memory": [],
+      "precondition": null,
+      "claims": [],
+      "actions": [
+        {
+          "command": "set_blackboard",
+          "category": "control",
+          "external": false,
+          "arguments": {
+            "key": {
+              "kind": "blackboard_key",
+              "board": "mission",
+              "var": "current_formation"
+            },
+            "value": {
+              "kind": "literal",
+              "value": "column"
+            }
+          },
+          "issue_policy": "every_tick",
+          "allow_every_tick": false,
+          "resources": []
+        }
+      ],
+      "success": {
+        "op": "literal",
+        "value": true
+      },
+      "failure": null,
+      "timeout": null,
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": null
+    },
+    {
+      "id": "set_formation_wedge",
+      "description": "选择楔形队形。",
+      "kind": "action",
+      "memory": [],
+      "precondition": null,
+      "claims": [],
+      "actions": [
+        {
+          "command": "set_blackboard",
+          "category": "control",
+          "external": false,
+          "arguments": {
+            "key": {
+              "kind": "blackboard_key",
+              "board": "mission",
+              "var": "current_formation"
+            },
+            "value": {
+              "kind": "literal",
+              "value": "wedge"
+            }
+          },
+          "issue_policy": "every_tick",
+          "allow_every_tick": false,
+          "resources": []
+        }
+      ],
+      "success": {
+        "op": "literal",
+        "value": true
+      },
+      "failure": null,
+      "timeout": null,
+      "continuous": false,
+      "messages": {
+        "running": null,
+        "success": null,
+        "failure": null
+      },
+      "basis": null
+    }
+  ],
+  "trees": [
+    {
+      "id": "coord_bounding__tree",
+      "description": "coord_bounding: bounding overwatch",
+      "root": {
+        "node_id": "coord_bounding__root",
+        "type": "selector",
+        "children": [
+          {
+            "node_id": "coord_bounding__bound_seq",
+            "type": "sequence",
+            "children": [
+              {
+                "node_id": "coord_bounding__turn_check",
+                "type": "condition",
+                "condition": "coord_bounding__my_turn"
+              },
+              {
+                "node_id": "coord_bounding__bound_node",
+                "type": "behavior",
+                "behavior": "coord_bounding__bound"
+              },
+              {
+                "node_id": "coord_bounding__announce_node",
+                "type": "behavior",
+                "behavior": "coord_bounding__announce_bound"
+              }
+            ]
+          },
+          {
+            "node_id": "coord_bounding__overwatch_node",
+            "type": "behavior",
+            "behavior": "coord_bounding__overwatch"
+          }
+        ]
+      },
+      "generated_from": "coord_bounding"
+    },
+    {
+      "id": "leader_contact_tree",
+      "description": "",
+      "root": {
+        "node_id": "leader_contact_root",
+        "type": "selector",
+        "children": [
+          {
+            "node_id": "leader_ack_seq",
+            "type": "sequence",
+            "children": [
+              {
+                "node_id": "leader_report_check",
+                "type": "condition",
+                "condition": "coord_contact_report__report_received"
+              },
+              {
+                "node_id": "leader_ack",
+                "type": "behavior",
+                "behavior": "coord_contact_report__acknowledge"
+              }
+            ]
+          },
+          {
+            "node_id": "leader_bounding",
+            "type": "subtree",
+            "tree": "coord_bounding__tree"
+          }
+        ]
+      }
+    },
+    {
+      "id": "leader_open_tree",
+      "description": "",
+      "root": {
+        "node_id": "leader_open_root",
+        "type": "sequence_with_memory",
+        "children": [
+          {
+            "node_id": "leader_pick_wedge",
+            "type": "behavior",
+            "behavior": "set_formation_wedge"
+          },
+          {
+            "node_id": "leader_announce_wedge",
+            "type": "behavior",
+            "behavior": "coord_leader_follower__announce_formation"
+          },
+          {
+            "node_id": "leader_move_open",
+            "type": "behavior",
+            "behavior": "follow_route_open"
+          }
+        ]
+      }
+    },
+    {
+      "id": "leader_urban_tree",
+      "description": "",
+      "root": {
+        "node_id": "leader_urban_root",
+        "type": "sequence_with_memory",
+        "children": [
+          {
+            "node_id": "leader_pick_column",
+            "type": "behavior",
+            "behavior": "set_formation_column"
+          },
+          {
+            "node_id": "leader_announce_column",
+            "type": "behavior",
+            "behavior": "coord_leader_follower__announce_formation"
+          },
+          {
+            "node_id": "leader_move_urban",
+            "type": "behavior",
+            "behavior": "follow_route_urban"
+          }
+        ]
+      }
+    },
+    {
+      "id": "wingman_contact_tree",
+      "description": "",
+      "root": {
+        "node_id": "wingman_contact_root",
+        "type": "selector",
+        "children": [
+          {
+            "node_id": "wingman_report_seq",
+            "type": "sequence",
+            "children": [
+              {
+                "node_id": "wingman_report_check",
+                "type": "condition",
+                "condition": "contact_not_yet_reported"
+              },
+              {
+                "node_id": "wingman_report",
+                "type": "behavior",
+                "behavior": "coord_contact_report__send_report"
+              },
+              {
+                "node_id": "wingman_mark_reported",
+                "type": "behavior",
+                "behavior": "mark_contact_reported"
+              }
+            ]
+          },
+          {
+            "node_id": "wingman_bounding",
+            "type": "subtree",
+            "tree": "coord_bounding__tree"
+          }
+        ]
+      }
+    },
+    {
+      "id": "wingman_travel_tree",
+      "description": "",
+      "root": {
+        "node_id": "wingman_travel_root",
+        "type": "sequence_with_memory",
+        "children": [
+          {
+            "node_id": "wingman_clear_report",
+            "type": "behavior",
+            "behavior": "clear_contact_reported"
+          },
+          {
+            "node_id": "wingman_keep_station",
+            "type": "behavior",
+            "behavior": "coord_leader_follower__keep_station"
+          }
+        ]
+      }
+    }
+  ],
+  "tests": [
+    {
+      "id": "leader_travels_in_wedge",
+      "description": "",
+      "category": "nominal",
+      "given": {
+        "role": "platoon_leader",
+        "instance": 0,
+        "state": "travel_open",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {},
+        "tracks": {},
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {},
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "travel_open",
+        "fired_transition": "open_self",
+        "tree_status": null,
+        "selected_path": [
+          "leader_open_root",
+          "leader_move_open"
+        ],
+        "issued_actions": [
+          "send_message",
+          "follow_route"
+        ],
+        "sent_messages": [
+          "coord_leader_follower__formation"
+        ],
+        "blackboard": {
+          "mission.current_formation": "wedge"
+        }
+      }
+    },
+    {
+      "id": "leader_switches_to_column_near_urban",
+      "description": "",
+      "category": "nominal",
+      "given": {
+        "role": "platoon_leader",
+        "instance": 0,
+        "state": "travel_open",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {
+          "distance_to_class.urban": {
+            "value": 150,
+            "unit": "m"
+          }
+        },
+        "tracks": {},
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {},
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "travel_urban",
+        "fired_transition": "open_to_urban",
+        "tree_status": null,
+        "selected_path": null,
+        "issued_actions": null,
+        "sent_messages": [
+          "coord_leader_follower__transition",
+          "coord_leader_follower__formation"
+        ],
+        "blackboard": {
+          "mission.current_formation": "column"
+        }
+      }
+    },
+    {
+      "id": "leader_returns_to_open",
+      "description": "",
+      "category": "nominal",
+      "given": {
+        "role": "platoon_leader",
+        "instance": 0,
+        "state": "travel_urban",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {
+          "class": "open"
+        },
+        "tracks": {},
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {},
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "travel_open",
+        "fired_transition": "urban_to_open",
+        "tree_status": null,
+        "selected_path": null,
+        "issued_actions": null,
+        "sent_messages": null,
+        "blackboard": null
+      }
+    },
+    {
+      "id": "leader_contact_preempts_urban_entry",
+      "description": "",
+      "category": "priority_transition",
+      "given": {
+        "role": "platoon_leader",
+        "instance": 0,
+        "state": "travel_open",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {
+          "distance_to_class.urban": {
+            "value": 150,
+            "unit": "m"
+          }
+        },
+        "tracks": {
+          "nearest_hostile_range": {
+            "value": 1,
+            "unit": "km"
+          }
+        },
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {},
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "contact",
+        "fired_transition": "open_to_contact",
+        "tree_status": null,
+        "selected_path": [
+          "leader_contact_root",
+          "leader_bounding",
+          "coord_bounding__root",
+          "coord_bounding__bound_seq",
+          "coord_bounding__bound_node"
+        ],
+        "issued_actions": [
+          "bound_to_position"
+        ],
+        "sent_messages": null,
+        "blackboard": null
+      }
+    },
+    {
+      "id": "leader_contact_in_urban",
+      "description": "",
+      "category": "priority_transition",
+      "given": {
+        "role": "platoon_leader",
+        "instance": 0,
+        "state": "travel_urban",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {
+          "class": "urban",
+          "distance_to_class.urban": 0
+        },
+        "tracks": {
+          "nearest_hostile_range": {
+            "value": 800,
+            "unit": "m"
+          }
+        },
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {},
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "contact",
+        "fired_transition": "urban_to_contact",
+        "tree_status": null,
+        "selected_path": null,
+        "issued_actions": null,
+        "sent_messages": null,
+        "blackboard": null
+      }
+    },
+    {
+      "id": "leader_leaves_contact_after_hold",
+      "description": "",
+      "category": "timeout_or_loss",
+      "given": {
+        "role": "platoon_leader",
+        "instance": 0,
+        "state": "contact",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {},
+        "tracks": {},
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {
+          "state": {
+            "value": 3,
+            "unit": "min"
+          }
+        },
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "travel_open",
+        "fired_transition": "contact_to_open",
+        "tree_status": null,
+        "selected_path": null,
+        "issued_actions": null,
+        "sent_messages": null,
+        "blackboard": null
+      }
+    },
+    {
+      "id": "leader_stays_in_contact_during_hold",
+      "description": "",
+      "category": "timeout_or_loss",
+      "given": {
+        "role": "platoon_leader",
+        "instance": 0,
+        "state": "contact",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {},
+        "tracks": {},
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {
+          "state": {
+            "value": 30,
+            "unit": "sec"
+          }
+        },
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "contact",
+        "fired_transition": "contact_self",
+        "tree_status": null,
+        "selected_path": null,
+        "issued_actions": null,
+        "sent_messages": null,
+        "blackboard": null
+      }
+    },
+    {
+      "id": "leader_cannot_move_without_mover",
+      "description": "",
+      "category": "resource_unavailable",
+      "given": {
+        "role": "platoon_leader",
+        "instance": 0,
+        "state": "travel_open",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {
+          "mover.available": false
+        },
+        "terrain": {},
+        "tracks": {},
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {},
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "travel_open",
+        "fired_transition": null,
+        "tree_status": "failure",
+        "selected_path": [
+          "leader_open_root",
+          "leader_move_open"
+        ],
+        "issued_actions": null,
+        "sent_messages": null,
+        "blackboard": null
+      }
+    },
+    {
+      "id": "leader_acknowledges_report",
+      "description": "",
+      "category": "nominal",
+      "given": {
+        "role": "platoon_leader",
+        "instance": 0,
+        "state": "contact",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {},
+        "tracks": {
+          "nearest_hostile_range": {
+            "value": 1,
+            "unit": "km"
+          }
+        },
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [
+          {
+            "message": "coord_contact_report__report",
+            "fields": {
+              "contact_range": 1000.0,
+              "contact_count": 1
+            }
+          }
+        ],
+        "elapsed": {
+          "state": {
+            "value": 10,
+            "unit": "sec"
+          }
+        },
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "contact",
+        "fired_transition": null,
+        "tree_status": null,
+        "selected_path": [
+          "leader_contact_root",
+          "leader_ack_seq",
+          "leader_ack"
+        ],
+        "issued_actions": null,
+        "sent_messages": [
+          "coord_contact_report__ack"
+        ],
+        "blackboard": null
+      }
+    },
+    {
+      "id": "wingman_keeps_station",
+      "description": "",
+      "category": "nominal",
+      "given": {
+        "role": "wingman",
+        "instance": 0,
+        "state": "travel_open",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {},
+        "tracks": {},
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [
+          {
+            "message": "coord_leader_follower__formation",
+            "fields": {
+              "formation": "wedge"
+            }
+          }
+        ],
+        "elapsed": {},
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "travel_open",
+        "fired_transition": null,
+        "tree_status": null,
+        "selected_path": [
+          "wingman_travel_root",
+          "wingman_keep_station"
+        ],
+        "issued_actions": [
+          "keep_station"
+        ],
+        "sent_messages": null,
+        "blackboard": null
+      }
+    },
+    {
+      "id": "wingman_follows_leader_transition",
+      "description": "",
+      "category": "nominal",
+      "given": {
+        "role": "wingman",
+        "instance": 1,
+        "state": "travel_open",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {},
+        "tracks": {},
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [
+          {
+            "message": "coord_leader_follower__transition",
+            "fields": {
+              "to_state": "travel_urban"
+            }
+          }
+        ],
+        "elapsed": {},
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "travel_urban",
+        "fired_transition": "coord_leader_follower__travel_open__to__travel_urban",
+        "tree_status": null,
+        "selected_path": null,
+        "issued_actions": null,
+        "sent_messages": null,
+        "blackboard": null
+      }
+    },
+    {
+      "id": "wingman_reports_contact",
+      "description": "",
+      "category": "priority_transition",
+      "given": {
+        "role": "wingman",
+        "instance": 0,
+        "state": "travel_open",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {},
+        "tracks": {
+          "nearest_hostile_range": {
+            "value": 1.2,
+            "unit": "km"
+          },
+          "hostile_count": 1
+        },
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {},
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "contact",
+        "fired_transition": "wing_open_contact",
+        "tree_status": null,
+        "selected_path": [
+          "wingman_contact_root",
+          "wingman_report_seq",
+          "wingman_mark_reported"
+        ],
+        "issued_actions": [
+          "report_contact"
+        ],
+        "sent_messages": [
+          "coord_contact_report__report"
+        ],
+        "blackboard": {
+          "mission.contact_reported": true
+        }
+      }
+    },
+    {
+      "id": "wingman_urban_contact",
+      "description": "",
+      "category": "priority_transition",
+      "given": {
+        "role": "wingman",
+        "instance": 2,
+        "state": "travel_urban",
+        "parameters": {},
+        "blackboard": {},
+        "platform": {},
+        "components": {},
+        "terrain": {},
+        "tracks": {
+          "nearest_hostile_range": {
+            "value": 500,
+            "unit": "m"
+          }
+        },
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {},
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "contact",
+        "fired_transition": "wing_urban_contact",
+        "tree_status": null,
+        "selected_path": null,
+        "issued_actions": null,
+        "sent_messages": null,
+        "blackboard": null
+      }
+    },
+    {
+      "id": "bounding_stops_at_standoff",
+      "description": "",
+      "category": "precondition_failure",
+      "given": {
+        "role": "wingman",
+        "instance": 2,
+        "state": "contact",
+        "parameters": {},
+        "blackboard": {
+          "mission.contact_reported": true
+        },
+        "platform": {},
+        "components": {},
+        "terrain": {},
+        "tracks": {
+          "nearest_hostile_range": {
+            "value": 805,
+            "unit": "m"
+          }
+        },
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {},
+        "coordination": {}
+      },
+      "expect": {
+        "next_state": "contact",
+        "fired_transition": null,
+        "tree_status": null,
+        "selected_path": [
+          "wingman_contact_root",
+          "wingman_bounding",
+          "coord_bounding__root",
+          "coord_bounding__overwatch_node"
+        ],
+        "issued_actions": [
+          "hold_overwatch_position"
+        ],
+        "sent_messages": null,
+        "blackboard": null
+      }
+    },
+    {
+      "id": "overwatch_member_waits_its_turn",
+      "description": "",
+      "category": "precondition_failure",
+      "given": {
+        "role": "wingman",
+        "instance": 2,
+        "state": "contact",
+        "parameters": {},
+        "blackboard": {
+          "mission.contact_reported": true
+        },
+        "platform": {},
+        "components": {},
+        "terrain": {},
+        "tracks": {
+          "nearest_hostile_range": {
+            "value": 1,
+            "unit": "km"
+          }
+        },
+        "formation": {},
+        "team": {},
+        "simulation": {},
+        "messages": [],
+        "elapsed": {},
+        "coordination": {
+          "coord_bounding": {
+            "phase": 1
+          }
+        }
+      },
+      "expect": {
+        "next_state": "contact",
+        "fired_transition": null,
+        "tree_status": null,
+        "selected_path": [
+          "wingman_contact_root",
+          "wingman_bounding",
+          "coord_bounding__root",
+          "coord_bounding__overwatch_node"
+        ],
+        "issued_actions": [
+          "hold_overwatch_position"
+        ],
+        "sent_messages": null,
+        "blackboard": null
+      }
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "open_to_urban_transition",
+      "description": "开阔地行进约 2 km 后接近城区，期望全排转为纵队并保持站位。",
+      "environment": {
+        "terrain": {
+          "default_class": "open",
+          "regions": [
+            {
+              "class": "urban",
+              "x_min": 2500,
+              "x_max": 4000,
+              "y_min": -1500,
+              "y_max": 1500
+            }
+          ]
+        },
+        "routes": {
+          "main_route": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              5000.0,
+              0.0
+            ]
+          ]
+        },
+        "waypoints": {},
+        "duration": {
+          "value": 8.0,
+          "unit": "min"
+        },
+        "random_seed": 42
+      },
+      "initial": {
+        "platoon_leader": {
+          "position": [
+            0,
+            0
+          ],
+          "heading_deg": 90,
+          "state": "travel_open"
+        },
+        "wingman": {
+          "formation": "wedge",
+          "state": "travel_open"
+        }
+      },
+      "events": [
+        {
+          "id": "leader_near_urban",
+          "type": "marker",
+          "when": {
+            "role": "platoon_leader",
+            "x_gte": 2300
+          },
+          "loss": 1.0
+        }
+      ],
+      "expect": [
+        {
+          "id": "e_followers_switch",
+          "observable": "role_state",
+          "role": "wingman",
+          "equals": "travel_urban",
+          "within": {
+            "after_event": "leader_near_urban",
+            "value": 30.0,
+            "unit": "sec"
+          }
+        },
+        {
+          "id": "e_wedge_kept",
+          "observable": "formation_error_rms",
+          "formation": "wedge",
+          "lte": {
+            "parameter_ref": "station_tolerance"
+          },
+          "during": {
+            "from": "start",
+            "duration": {
+              "value": 150.0,
+              "unit": "sec"
+            }
+          }
+        },
+        {
+          "id": "e_column_kept",
+          "observable": "formation_error_rms",
+          "formation": "column",
+          "lte": {
+            "parameter_ref": "station_tolerance"
+          },
+          "during": {
+            "from": "e_followers_switch",
+            "duration": {
+              "value": 120.0,
+              "unit": "sec"
+            }
+          }
+        },
+        {
+          "id": "e_no_collisions",
+          "observable": "min_interval",
+          "role": "wingman",
+          "gte": {
+            "value": 10,
+            "unit": "m"
+          }
+        }
+      ],
+      "traces_to": [
+        "open_to_urban",
+        "coord_leader_follower",
+        "wedge",
+        "column"
+      ]
+    },
+    {
+      "id": "contact_bounding_overwatch",
+      "description": "开阔地遭遇敌方，期望报告接敌、全排转入接敌状态并交替跃进。",
+      "environment": {
+        "routes": {
+          "main_route": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              6000.0,
+              0.0
+            ]
+          ]
+        },
+        "waypoints": {},
+        "duration": {
+          "value": 10.0,
+          "unit": "min"
+        },
+        "random_seed": 7
+      },
+      "initial": {
+        "platoon_leader": {
+          "position": [
+            0,
+            0
+          ],
+          "heading_deg": 90,
+          "state": "travel_open"
+        },
+        "wingman": {
+          "formation": "wedge",
+          "state": "travel_open"
+        }
+      },
+      "events": [
+        {
+          "id": "hostile_appears",
+          "type": "spawn_hostile",
+          "at": {
+            "value": 60.0,
+            "unit": "sec"
+          },
+          "position": [
+            2600.0,
+            300.0
+          ],
+          "loss": 1.0
+        }
+      ],
+      "expect": [
+        {
+          "id": "e_leader_contact",
+          "observable": "role_state",
+          "role": "platoon_leader",
+          "equals": "contact",
+          "within": {
+            "after_event": "hostile_appears",
+            "value": 120.0,
+            "unit": "sec"
+          }
+        },
+        {
+          "id": "e_wingmen_contact",
+          "observable": "role_state",
+          "role": "wingman",
+          "equals": "contact",
+          "within": {
+            "after_event": "hostile_appears",
+            "value": 150.0,
+            "unit": "sec"
+          }
+        },
+        {
+          "id": "e_report_sent",
+          "observable": "messages_sent",
+          "message": "coord_contact_report__report",
+          "gte": 1
+        },
+        {
+          "id": "e_report_not_repeated",
+          "observable": "messages_sent",
+          "message": "coord_contact_report__report",
+          "lte": 3
+        },
+        {
+          "id": "e_bounds_alternate",
+          "observable": "messages_sent",
+          "message": "coord_bounding__bound_complete",
+          "gte": 4
+        },
+        {
+          "id": "e_wingmen_bound",
+          "observable": "actions_issued",
+          "role": "wingman",
+          "command": "bound_to_position",
+          "gte": 2
+        },
+        {
+          "id": "e_standoff_kept",
+          "observable": "hostile_range_min",
+          "gte": {
+            "value": 775,
+            "unit": "m"
+          }
+        }
+      ],
+      "traces_to": [
+        "open_to_contact",
+        "coord_bounding",
+        "coord_contact_report"
+      ]
+    },
+    {
+      "id": "partial_comm_loss_transition",
+      "description": "通信丢包 50% 时长车转纵队，依靠周期性重发，僚车仍应在进入城区前完成同步。",
+      "environment": {
+        "terrain": {
+          "default_class": "open",
+          "regions": [
+            {
+              "class": "urban",
+              "x_min": 2500,
+              "x_max": 4000,
+              "y_min": -1500,
+              "y_max": 1500
+            }
+          ]
+        },
+        "routes": {
+          "main_route": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              5000.0,
+              0.0
+            ]
+          ]
+        },
+        "waypoints": {},
+        "duration": {
+          "value": 8.0,
+          "unit": "min"
+        },
+        "random_seed": 11
+      },
+      "initial": {
+        "platoon_leader": {
+          "position": [
+            0,
+            0
+          ],
+          "heading_deg": 90,
+          "state": "travel_open"
+        },
+        "wingman": {
+          "formation": "wedge",
+          "state": "travel_open"
+        }
+      },
+      "events": [
+        {
+          "id": "lossy_net",
+          "type": "comm_degradation",
+          "at": {
+            "value": 0.0,
+            "unit": "sec"
+          },
+          "duration": {
+            "value": 8.0,
+            "unit": "min"
+          },
+          "loss": 0.5
+        },
+        {
+          "id": "leader_near_urban",
+          "type": "marker",
+          "when": {
+            "role": "platoon_leader",
+            "x_gte": 2300
+          },
+          "loss": 1.0
+        }
+      ],
+      "expect": [
+        {
+          "id": "e_followers_switch_lossy",
+          "observable": "role_state",
+          "role": "wingman",
+          "equals": "travel_urban",
+          "within": {
+            "after_event": "leader_near_urban",
+            "value": 45.0,
+            "unit": "sec"
+          }
+        },
+        {
+          "id": "e_column_kept_lossy",
+          "observable": "formation_error_rms",
+          "formation": "column",
+          "lte": {
+            "parameter_ref": "station_tolerance"
+          },
+          "during": {
+            "from": "e_followers_switch_lossy",
+            "duration": {
+              "value": 120.0,
+              "unit": "sec"
+            }
+          }
+        }
+      ],
+      "traces_to": [
+        "open_to_urban",
+        "coord_leader_follower",
+        "column"
+      ]
+    },
+    {
+      "id": "comm_loss_during_transition",
+      "description": "通信完全中断时长车转纵队，僚车收不到同步消息，应保持原状态与安全间距。",
+      "environment": {
+        "terrain": {
+          "default_class": "open",
+          "regions": [
+            {
+              "class": "urban",
+              "x_min": 2500,
+              "x_max": 4000,
+              "y_min": -1500,
+              "y_max": 1500
+            }
+          ]
+        },
+        "routes": {
+          "main_route": [
+            [
+              0.0,
+              0.0
+            ],
+            [
+              5000.0,
+              0.0
+            ]
+          ]
+        },
+        "waypoints": {},
+        "duration": {
+          "value": 6.0,
+          "unit": "min"
+        },
+        "random_seed": 3
+      },
+      "initial": {
+        "platoon_leader": {
+          "position": [
+            0,
+            0
+          ],
+          "heading_deg": 90,
+          "state": "travel_open"
+        },
+        "wingman": {
+          "formation": "wedge",
+          "state": "travel_open"
+        }
+      },
+      "events": [
+        {
+          "id": "jam",
+          "type": "comm_degradation",
+          "at": {
+            "value": 0.0,
+            "unit": "sec"
+          },
+          "duration": {
+            "value": 6.0,
+            "unit": "min"
+          },
+          "loss": 1.0
+        }
+      ],
+      "expect": [
+        {
+          "id": "e_leader_switches",
+          "observable": "role_state",
+          "role": "platoon_leader",
+          "equals": "travel_urban",
+          "within": {
+            "after_event": "jam",
+            "value": 6.0,
+            "unit": "min"
+          }
+        },
+        {
+          "id": "e_wingmen_stay",
+          "observable": "role_state",
+          "role": "wingman",
+          "equals": "travel_open",
+          "during": {
+            "from": "start",
+            "duration": {
+              "value": 6.0,
+              "unit": "min"
+            }
+          }
+        },
+        {
+          "id": "e_transition_attempted",
+          "observable": "messages_sent",
+          "message": "coord_leader_follower__transition",
+          "gte": 1
+        },
+        {
+          "id": "e_spacing_safe",
+          "observable": "min_interval",
+          "role": "wingman",
+          "gte": {
+            "value": 10,
+            "unit": "m"
+          }
+        }
+      ],
+      "traces_to": [
+        "open_to_urban",
+        "coord_leader_follower"
+      ]
+    }
+  ],
+  "ir_hash": "sha256:3a1e881cc3b05d393137f936c99aa0dfedd6d2fc234485a0e98386ab6d44f376"
+}

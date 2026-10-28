@@ -1,0 +1,106 @@
+# Operand properties and condition functions (design §13).
+# Each property has a type and a default used by L2 tests when no value is given.
+# "inf" defaults mean "nothing there" (no hostile, no terrain of that class nearby).
+
+[meta]
+version = "operands-2026.10.1"
+terrain_classes = ["open", "urban", "forest", "rough", "water", "road"]
+
+[operand.self_value]
+aliases = ["platform_value"]
+component = ""
+properties.position_x = { type = "distance", default = 0.0 }
+properties.position_y = { type = "distance", default = 0.0 }
+properties.speed = { type = "speed", default = 0.0 }
+properties.heading = { type = "angle", default = 0.0 }
+properties.altitude = { type = "altitude", default = 0.0 }
+properties.fuel_remaining = { type = "ratio", default = 1.0 }
+properties.fuel_reserve = { type = "ratio", default = 0.0 }
+properties.instance_index = { type = "int", default = 0 }
+properties.alive = { type = "bool", default = true }
+properties.damaged = { type = "bool", default = false }
+
+[operand.mover_value]
+component = "mover"
+properties.available = { type = "bool", default = true }
+properties.at_destination = { type = "bool", default = false }
+properties.route_complete = { type = "bool", default = false }
+properties.moving = { type = "bool", default = false }
+
+[operand.sensor_value]
+component = "sensor"
+properties.available = { type = "bool", default = true }
+properties.on = { type = "bool", default = false }
+properties.track_count = { type = "int", default = 0 }
+
+[operand.weapon_value]
+component = "weapon"
+properties.available = { type = "bool", default = true }
+properties.ready = { type = "bool", default = true }
+properties.quantity_remaining = { type = "int", default = 0 }
+
+[operand.comm_value]
+component = "comm"
+properties.available = { type = "bool", default = true }
+
+[operand.track_value]
+component = ""
+properties.nearest_hostile_range = { type = "distance", default = "inf" }
+properties.hostile_count = { type = "int", default = 0 }
+properties.current_target_range = { type = "distance", default = "inf" }
+properties.current_target_valid = { type = "bool", default = false }
+properties.current_target_id = { type = "string", default = "" }
+
+[operand.terrain_value]
+component = ""
+properties.class = { type = "string", default = "open", vocabulary = "terrain_classes" }
+properties.distance_to_class = { type = "distance", default = "inf", argument = "class" }
+properties.slope = { type = "angle", default = 0.0 }
+properties.line_of_sight_to_nearest_hostile = { type = "bool", default = false }
+
+[operand.formation_value]
+component = ""
+properties.current_id = { type = "string", default = "" }
+properties.slot_error = { type = "distance", default = 0.0 }
+properties.in_position = { type = "bool", default = true }
+properties.leader_distance = { type = "distance", default = 0.0 }
+
+[operand.team_value]
+component = ""
+properties.nearest_friend_distance = { type = "distance", default = "inf" }
+properties.formation_error_rms = { type = "distance", default = 0.0 }
+properties.members_alive = { type = "int", default = 1 }
+properties.members_in_position = { type = "int", default = 0 }
+
+[operand.simulation_value]
+component = ""
+properties.time = { type = "time", default = 0.0 }
+properties.tick = { type = "int", default = 0 }
+
+[function.message_received]
+returns = "bool"
+arguments = { message = "message" }
+
+[function.range_to_current_target_lte]
+returns = "bool"
+arguments = { range = "distance" }
+
+[function.time_in_state_gte]
+returns = "bool"
+arguments = { duration = "time" }
+
+[function.formation_is]
+returns = "bool"
+arguments = { formation = "formation" }
+
+[function.bounding_turn]
+returns = "bool"
+arguments = { coordination = "coordination" }
+
+[function.standoff_reached]
+returns = "bool"
+arguments = { coordination = "coordination" }
+
+[function.in_group]
+returns = "bool"
+arguments = { coordination = "coordination", group = "string" }

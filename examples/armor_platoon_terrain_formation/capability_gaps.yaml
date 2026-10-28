@@ -1,0 +1,378 @@
+format: CapabilityGaps
+format_version: 0.2.0
+phase: ir_check
+check_version: ir-capability-check-2026.10.1
+catalog_id: afsim_2_9_capabilities
+catalog_version: sha256:47707da18c2a9b5c4ba49630e9d94c73e25aa61b117d99293118788555c8ffd0
+aliases_version: capability-aliases-2026.10.1
+ir_hash: sha256:3a1e881cc3b05d393137f936c99aa0dfedd6d2fc234485a0e98386ab6d44f376
+granularity:
+  granularity: coarse
+  refine: []
+level: needs_confirmation
+counts:
+  ready: 4
+  composable: 1
+  partial: 8
+  simplified: 5
+  confirm: 3
+unresolved:
+- cap-gap-b0dcee2305
+- cap-gap-4935405097
+- cap-gap-d6c37285a4
+gaps:
+- id: cap-gap-b0dcee2305
+  contract: route_navigation:route_state.end_of_path
+  display_name: 路线导航 · 走完路线
+  gap_type: confirm
+  blocking: true
+  elements:
+  - mover_value.route_complete
+  used_at:
+  - behavior:follow_route_open
+  - behavior:follow_route_urban
+  roles:
+  - platoon_leader
+  tree_nodes:
+  - leader_move_open
+  - leader_move_urban
+  acceptance:
+  - L2:leader_travels_in_wedge
+  - L2:leader_cannot_move_without_mover
+  - L3:open_to_urban_transition
+  - L3:contact_bounding_overwatch
+  - L3:partial_comm_loss_transition
+  - L3:comm_loss_during_transition
+  alternatives: []
+  source: ir_check
+  crow_candidates: []
+  new_in_ir: false
+  decision: null
+  decision_note: null
+  status: open
+- id: cap-gap-4935405097
+  contract: terrain_classification:environment_state.terrain_class
+  display_name: 地形类别 · 当前地形类别
+  gap_type: confirm
+  blocking: true
+  elements:
+  - terrain_value.class
+  used_at:
+  - condition:leaving_urban
+  roles:
+  - platoon_leader
+  tree_nodes:
+  - platoon_leader_transitions
+  acceptance:
+  - L3:open_to_urban_transition
+  - L3:contact_bounding_overwatch
+  - L3:partial_comm_loss_transition
+  - L3:comm_loss_during_transition
+  alternatives: []
+  source: ir_check
+  crow_candidates: []
+  new_in_ir: false
+  decision: null
+  decision_note: null
+  status: open
+- id: cap-gap-d6c37285a4
+  contract: terrain_classification:environment_state.distance_to_terrain_class
+  display_name: 地形类别 · 到某类地形的距离
+  gap_type: confirm
+  blocking: true
+  elements:
+  - terrain_value.distance_to_class
+  used_at:
+  - condition:entering_urban
+  roles:
+  - platoon_leader
+  tree_nodes:
+  - platoon_leader_transitions
+  acceptance:
+  - L3:open_to_urban_transition
+  - L3:contact_bounding_overwatch
+  - L3:partial_comm_loss_transition
+  - L3:comm_loss_during_transition
+  alternatives: []
+  source: ir_check
+  crow_candidates: []
+  new_in_ir: false
+  decision: null
+  decision_note: null
+  status: open
+simplified:
+- element: report_contact
+  group: comms
+  group_name: 通信报告
+  simplification: 理想通信：消息即时送达、不丢失
+  roles:
+  - wingman
+- element: send_message
+  group: comms
+  group_name: 通信报告
+  simplification: 理想通信：消息即时送达、不丢失
+  roles:
+  - platoon_leader
+  - wingman
+- element: standoff_reached
+  group: sensing
+  group_name: 观察发现
+  simplification: 理想观察：探测范围内的目标直接可见，敌我属性取仿真真值
+  roles:
+  - platoon_leader
+  - wingman
+- element: time_in_state_gte
+  group: control
+  group_name: 任务控制
+  simplification: 由行为模型运行时提供（状态机、计时、黑板变量）
+  roles:
+  - platoon_leader
+- element: track_value.nearest_hostile_range
+  group: sensing
+  group_name: 观察发现
+  simplification: 理想观察：探测范围内的目标直接可见，敌我属性取仿真真值
+  roles:
+  - platoon_leader
+  - wingman
+crow_estimate: []
+crow_source: null
+elements:
+- name: blackboard
+  kind: blackboard
+  conclusion: partial
+  label: 部分可用
+  refs:
+  - behavior_variables:execution_state.variable
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: ''
+- name: bound_to_position
+  kind: action
+  conclusion: ready
+  label: 可实现
+  refs:
+  - point_navigation
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: ''
+- name: bounding_turn
+  kind: function
+  conclusion: partial
+  label: 部分可用
+  refs:
+  - message_exchange:communication_message.received_type
+  - behavior_variables:execution_state.variable
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: 跃进轮次由收到的跃进完成消息推算
+- name: dependency:route_following_ground
+  kind: dependency
+  conclusion: partial
+  label: 部分可用
+  refs:
+  - route_navigation
+  - ground_navigation
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: ''
+- name: dependency:visual_search
+  kind: dependency
+  conclusion: partial
+  label: 部分可用
+  refs:
+  - eo_ir_search
+  - target_detection
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: ''
+- name: dependency:voice_data
+  kind: dependency
+  conclusion: partial
+  label: 部分可用
+  refs:
+  - message_exchange
+  - radio_comm
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: ''
+- name: follow_route
+  kind: action
+  conclusion: ready
+  label: 可实现
+  refs:
+  - route_navigation:mobility_action.follow_route
+  roles:
+  - platoon_leader
+  gaps: []
+  note: ''
+- name: hold_overwatch_position
+  kind: action
+  conclusion: composable
+  label: 可组合实现
+  refs:
+  - motion_halt
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: ''
+- name: keep_station
+  kind: action
+  conclusion: partial
+  label: 部分可用
+  refs:
+  - own_kinematic_state:platform_state.position
+  - point_navigation:mobility_action.go_to_location
+  - speed_control:mobility_action.set_speed
+  - target_detection
+  - target_tracking:track_state.latitude
+  - track_identification:track_state.reported_type
+  roles:
+  - wingman
+  gaps: []
+  note: 保持站位需要领车位置：领车广播（发送+接收）、友方航迹，或由运动组件固定偏移跟随（不支持运行中换队形）；另有 2 种替代写法
+- name: message_received
+  kind: function
+  conclusion: partial
+  label: 部分可用
+  refs:
+  - message_exchange:communication_message.received_type
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: ''
+- name: mover_value.at_destination
+  kind: operand
+  conclusion: ready
+  label: 可实现
+  refs:
+  - point_navigation:mobility_state.at_destination
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: ''
+- name: mover_value.available
+  kind: operand
+  conclusion: ready
+  label: 可实现
+  refs:
+  - platform_status_monitoring:platform_state.damage_fraction
+  roles:
+  - platoon_leader
+  gaps: []
+  note: 运动部件可用：组件可操作状态，或以平台损伤程度近似；另有 1 种替代写法
+- name: mover_value.route_complete
+  kind: operand
+  conclusion: confirm
+  label: 需确认
+  refs:
+  - route_navigation:route_state.end_of_path
+  roles:
+  - platoon_leader
+  gaps:
+  - cap-gap-b0dcee2305
+  note: ''
+- name: report_contact
+  kind: action
+  conclusion: simplified
+  label: 简化处理
+  refs:
+  - track_reporting:communication_action.report_contact
+  roles:
+  - wingman
+  gaps: []
+  note: 通信报告：理想通信：消息即时送达、不丢失
+- name: send_message
+  kind: action
+  conclusion: simplified
+  label: 简化处理
+  refs:
+  - message_exchange:communication_action.send_message
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: 通信报告：理想通信：消息即时送达、不丢失；另有 2 种替代写法
+- name: set_blackboard
+  kind: action
+  conclusion: partial
+  label: 部分可用
+  refs:
+  - behavior_variables:execution_action.set_variable
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: ''
+- name: standoff_reached
+  kind: function
+  conclusion: simplified
+  label: 简化处理
+  refs:
+  - target_tracking:track_state.latitude
+  - own_kinematic_state:platform_state.position
+  - track_identification:track_state.affiliation
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: 观察发现：理想观察：探测范围内的目标直接可见，敌我属性取仿真真值；与最近敌方距离不超过安全距离
+- name: terrain_value.class
+  kind: operand
+  conclusion: confirm
+  label: 需确认
+  refs:
+  - terrain_classification:environment_state.terrain_class
+  roles:
+  - platoon_leader
+  gaps:
+  - cap-gap-4935405097
+  note: ''
+- name: terrain_value.distance_to_class
+  kind: operand
+  conclusion: confirm
+  label: 需确认
+  refs:
+  - terrain_classification:environment_state.distance_to_terrain_class
+  roles:
+  - platoon_leader
+  gaps:
+  - cap-gap-d6c37285a4
+  note: ''
+- name: time_in_state_gte
+  kind: function
+  conclusion: simplified
+  label: 简化处理
+  refs:
+  - state_timing:execution_state.time_in_state
+  roles:
+  - platoon_leader
+  gaps: []
+  note: 任务控制：由行为模型运行时提供（状态机、计时、黑板变量）
+- name: track_value.nearest_hostile_range
+  kind: operand
+  conclusion: simplified
+  label: 简化处理
+  refs:
+  - target_tracking:track_state.latitude
+  - own_kinematic_state:platform_state.position
+  - track_identification:track_state.affiliation
+  roles:
+  - platoon_leader
+  - wingman
+  gaps: []
+  note: 观察发现：理想观察：探测范围内的目标直接可见，敌我属性取仿真真值；最近敌方距离 = 航迹位置与自身位置计算距离，并按敌我属性筛选

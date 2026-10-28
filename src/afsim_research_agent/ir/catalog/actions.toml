@@ -1,0 +1,227 @@
+# Neutral action catalog for Tactical Behavior IR 1.0 (design §16).
+# Backend template mappings live in each backend package, never here.
+#
+# argument types:
+#   quantity types : distance speed time angle altitude ratio   (operand or {value, unit})
+#   value types    : bool int double string value               (operand)
+#   id types       : role formation message route position sensor weapon comm processor
+#                    blackboard_key                              (plain string)
+#   fields         : mapping of message field -> operand
+
+[meta]
+version = "actions-2026.10.1"
+
+[[action]]
+name = "move_to_position"
+aliases = ["fly_to_position"]
+category = "movement"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+arguments = { position = { type = "position", required = true }, speed = { type = "speed" } }
+
+[[action]]
+name = "move_to_platform"
+aliases = ["fly_to_platform"]
+category = "movement"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+arguments = { platform = { type = "string", required = true }, speed = { type = "speed" } }
+
+[[action]]
+name = "move_to_track"
+aliases = ["fly_to_track"]
+category = "movement"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+arguments = { track = { type = "string", required = true }, speed = { type = "speed" } }
+
+[[action]]
+name = "set_heading"
+category = "movement"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+arguments = { heading = { type = "angle", required = true } }
+
+[[action]]
+name = "set_speed"
+category = "movement"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+arguments = { speed = { type = "speed", required = true } }
+
+[[action]]
+name = "set_altitude"
+category = "movement"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+capability_classes = ["air_vehicle", "surface_vessel"]
+arguments = { altitude = { type = "altitude", required = true } }
+
+[[action]]
+name = "follow_route"
+category = "movement"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+arguments = { route = { type = "route", required = true }, speed = { type = "speed" } }
+
+[[action]]
+name = "halt"
+category = "movement"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+arguments = {}
+
+[[action]]
+name = "assume_formation"
+category = "formation"
+requires = []
+resources = []
+external = true
+arguments = { formation = { type = "formation", required = true } }
+
+[[action]]
+name = "keep_station"
+category = "formation"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+every_tick = true
+arguments = { leader = { type = "role", required = true }, formation = { type = "formation", required = true }, max_speed = { type = "speed" } }
+
+[[action]]
+name = "follow_route_with_offset"
+category = "formation"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+arguments = { route = { type = "route", required = true }, offset_right = { type = "distance", required = true }, speed = { type = "speed" } }
+
+[[action]]
+name = "bound_to_position"
+category = "formation"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+# toward: "heading" (default), "nearest_hostile" or a scenario waypoint id.
+# stop_short: do not end closer than this to the target (nearest_hostile / waypoint).
+arguments = { distance = { type = "distance", required = true }, speed = { type = "speed" }, toward = { type = "target" }, stop_short = { type = "distance" } }
+
+[[action]]
+name = "hold_overwatch_position"
+category = "formation"
+requires = ["mover"]
+resources = ["movement_control"]
+external = true
+arguments = {}
+
+[[action]]
+name = "turn_sensor_on"
+category = "sensor"
+requires = ["sensor"]
+resources = ["sensor_control"]
+external = true
+arguments = { sensor = { type = "sensor", required = true } }
+
+[[action]]
+name = "turn_sensor_off"
+category = "sensor"
+requires = ["sensor"]
+resources = ["sensor_control"]
+external = true
+arguments = { sensor = { type = "sensor", required = true } }
+
+[[action]]
+name = "orient_sensor"
+category = "sensor"
+requires = ["sensor"]
+resources = ["sensor_control"]
+external = true
+arguments = { sensor = { type = "sensor", required = true }, azimuth = { type = "angle", required = true } }
+
+[[action]]
+name = "fire_weapon"
+category = "engagement"
+requires = ["weapon"]
+resources = ["weapon_control"]
+external = true
+every_tick_forbidden = true
+arguments = { weapon = { type = "weapon", required = true }, track = { type = "string" } }
+
+[[action]]
+name = "send_message"
+category = "comms"
+requires = ["comms"]
+resources = ["comm_control"]
+external = true
+every_tick_forbidden = true
+arguments = { message = { type = "message", required = true }, fields = { type = "fields" } }
+
+[[action]]
+name = "report_contact"
+category = "comms"
+requires = ["comms"]
+resources = ["comm_control"]
+external = true
+every_tick_forbidden = true
+arguments = { message = { type = "message", required = true } }
+
+[[action]]
+name = "turn_controller_on"
+aliases = ["turn_processor_on"]
+category = "control"
+requires = ["processor"]
+resources = []
+external = true
+arguments = { controller = { type = "processor", required = true } }
+
+[[action]]
+name = "turn_controller_off"
+aliases = ["turn_processor_off"]
+category = "control"
+requires = ["processor"]
+resources = []
+external = true
+arguments = { controller = { type = "processor", required = true } }
+
+[[action]]
+name = "set_blackboard"
+category = "control"
+requires = []
+resources = []
+external = false
+every_tick = true
+arguments = { key = { type = "blackboard_key", required = true }, value = { type = "value", required = true } }
+
+[[action]]
+name = "delete_blackboard_value"
+category = "control"
+requires = []
+resources = []
+external = false
+every_tick = true
+arguments = { key = { type = "blackboard_key", required = true } }
+
+[[action]]
+name = "wait"
+category = "control"
+requires = []
+resources = []
+external = false
+arguments = { duration = { type = "time", required = true } }
+
+[[action]]
+name = "set_reserve_threshold"
+aliases = ["set_bingo_fuel"]
+category = "resource"
+requires = ["energy"]
+resources = []
+external = true
+arguments = { threshold = { type = "ratio", required = true } }

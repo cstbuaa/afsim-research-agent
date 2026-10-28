@@ -1,0 +1,175 @@
+{
+  "backends": {
+    "python_sim": {
+      "backend": "python_sim",
+      "binding_version": "bindings-2026.10.1",
+      "ir_hash": "sha256:3a1e881cc3b05d393137f936c99aa0dfedd6d2fc234485a0e98386ab6d44f376",
+      "roles": {
+        "platoon_leader": {
+          "platform_template": "sim.ground_vehicle",
+          "components": {
+            "mover": {
+              "kind": "mover",
+              "capability": "route_following_ground",
+              "component": "sim.GroundMover",
+              "settings": {
+                "max_speed_mps": 15.0,
+                "max_accel_mps2": 2.0,
+                "turn_rate_dps": 45.0
+              }
+            },
+            "vehicle_sight": {
+              "kind": "sensors",
+              "capability": "visual_search",
+              "component": "sim.RangeSensor",
+              "settings": {
+                "range_m": 2000.0
+              }
+            },
+            "platoon_net": {
+              "kind": "comms",
+              "capability": "voice_data",
+              "component": "sim.Radio",
+              "settings": {}
+            }
+          }
+        },
+        "wingman": {
+          "platform_template": "sim.ground_vehicle",
+          "components": {
+            "mover": {
+              "kind": "mover",
+              "capability": "route_following_ground",
+              "component": "sim.GroundMover",
+              "settings": {
+                "max_speed_mps": 15.0,
+                "max_accel_mps2": 2.0,
+                "turn_rate_dps": 45.0
+              }
+            },
+            "vehicle_sight": {
+              "kind": "sensors",
+              "capability": "visual_search",
+              "component": "sim.RangeSensor",
+              "settings": {
+                "range_m": 2000.0
+              }
+            },
+            "platoon_net": {
+              "kind": "comms",
+              "capability": "voice_data",
+              "component": "sim.Radio",
+              "settings": {}
+            }
+          }
+        }
+      }
+    },
+    "btcpp_xml": {
+      "backend": "btcpp_xml",
+      "binding_version": "bindings-2026.10.1",
+      "ir_hash": "sha256:3a1e881cc3b05d393137f936c99aa0dfedd6d2fc234485a0e98386ab6d44f376",
+      "roles": {
+        "platoon_leader": {
+          "platform_template": "abstract:ground_vehicle",
+          "components": {
+            "mover": {
+              "kind": "mover",
+              "capability": "route_following_ground",
+              "component": "port:route_following_ground",
+              "settings": {}
+            },
+            "vehicle_sight": {
+              "kind": "sensors",
+              "capability": "visual_search",
+              "component": "port:visual_search",
+              "settings": {}
+            },
+            "platoon_net": {
+              "kind": "comms",
+              "capability": "voice_data",
+              "component": "port:voice_data",
+              "settings": {}
+            }
+          }
+        },
+        "wingman": {
+          "platform_template": "abstract:ground_vehicle",
+          "components": {
+            "mover": {
+              "kind": "mover",
+              "capability": "route_following_ground",
+              "component": "port:route_following_ground",
+              "settings": {}
+            },
+            "vehicle_sight": {
+              "kind": "sensors",
+              "capability": "visual_search",
+              "component": "port:visual_search",
+              "settings": {}
+            },
+            "platoon_net": {
+              "kind": "comms",
+              "capability": "voice_data",
+              "component": "port:voice_data",
+              "settings": {}
+            }
+          }
+        }
+      }
+    },
+    "mermaid": {
+      "backend": "mermaid",
+      "binding_version": "bindings-2026.10.1",
+      "ir_hash": "sha256:3a1e881cc3b05d393137f936c99aa0dfedd6d2fc234485a0e98386ab6d44f376",
+      "roles": {
+        "platoon_leader": {
+          "platform_template": "abstract:ground_vehicle",
+          "components": {
+            "mover": {
+              "kind": "mover",
+              "capability": "route_following_ground",
+              "component": "port:route_following_ground",
+              "settings": {}
+            },
+            "vehicle_sight": {
+              "kind": "sensors",
+              "capability": "visual_search",
+              "component": "port:visual_search",
+              "settings": {}
+            },
+            "platoon_net": {
+              "kind": "comms",
+              "capability": "voice_data",
+              "component": "port:voice_data",
+              "settings": {}
+            }
+          }
+        },
+        "wingman": {
+          "platform_template": "abstract:ground_vehicle",
+          "components": {
+            "mover": {
+              "kind": "mover",
+              "capability": "route_following_ground",
+              "component": "port:route_following_ground",
+              "settings": {}
+            },
+            "vehicle_sight": {
+              "kind": "sensors",
+              "capability": "visual_search",
+              "component": "port:visual_search",
+              "settings": {}
+            },
+            "platoon_net": {
+              "kind": "comms",
+              "capability": "voice_data",
+              "component": "port:voice_data",
+              "settings": {}
+            }
+          }
+        }
+      }
+    }
+  }
+}

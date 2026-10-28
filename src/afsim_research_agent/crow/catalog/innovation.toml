@@ -1,0 +1,137 @@
+# Gap-filling innovation vocabulary (crow-tactic-proposal-v1 §5.6).
+# Innovation only fills gaps left by retrieved tactics. Operators are listed
+# from the smallest change to the largest; candidates using fewer and smaller
+# operators are preferred.
+
+[meta]
+version = "innovation-2026.10.1"
+
+# Method B: adaptation operators (change an existing retrieved tactic).
+[[operators]]
+id = "remove_dependency"
+name = "去掉前提"
+rank = 1
+description = "Drop a precondition so the tactic works in worse conditions (e.g. pre-arranged signals when radio fails)."
+
+[[operators]]
+id = "change_tempo"
+name = "改变节奏"
+rank = 1
+description = "Change pace or timing (e.g. continuous bounds -> bounds with halts to observe)."
+
+[[operators]]
+id = "reorder"
+name = "调换顺序"
+rank = 2
+description = "Swap the order of steps (e.g. occupy overwatch positions before reporting)."
+
+[[operators]]
+id = "substitute_role"
+name = "替换角色承担者"
+rank = 2
+description = "Another unit takes a role (e.g. overwatch by a wingman instead of the leader)."
+
+[[operators]]
+id = "exploit_terrain"
+name = "换地形利用方式"
+rank = 2
+description = "Use terrain differently (e.g. along building edges instead of along the road)."
+
+[[operators]]
+id = "regroup"
+name = "改变编成"
+rank = 3
+description = "Change grouping or role ratio (e.g. 2+2 -> 3+1 with one vehicle scouting ahead)."
+
+[[operators]]
+id = "add_deception"
+name = "加入欺骗"
+rank = 3
+description = "Add a feint, decoy or smoke screen."
+
+[[operators]]
+id = "invert"
+name = "反转方向或攻守"
+rank = 4
+description = "Reverse direction or attack/defend relation (e.g. frontal bounds -> flanking approach)."
+
+# Method C: situation perturbation (mainly fills the exceptions/abort dimension).
+[[operators]]
+id = "perturb_situation"
+name = "情况扰动"
+rank = 2
+description = "Reverse one key assumption (comms lost, anti-armor threat present, poor visibility) and give the contingency version."
+
+# Method A: morphological combination. The model chooses one option per
+# dimension (options must appear in the evidence or the pattern table); code
+# rejects incompatible pairs below.
+[[dimensions]]
+id = "grouping"
+name = "编成与角色"
+options = ["2+2_alternating", "3+1_lead_scout", "whole_platoon"]
+
+[[dimensions]]
+id = "formation"
+name = "队形几何"
+options = ["wedge", "column", "echelon", "line", "vee", "staggered_column"]
+
+[[dimensions]]
+id = "movement"
+name = "机动方式"
+options = ["traveling", "traveling_overwatch", "alternate_bounds", "successive_bounds"]
+
+[[dimensions]]
+id = "fires"
+name = "火力运用"
+options = ["suppress_then_move", "fire_while_moving", "hold_fire_concealed"]
+
+[[dimensions]]
+id = "deception"
+name = "欺骗"
+options = ["none", "feint", "smoke"]
+
+[[dimensions]]
+id = "authority"
+name = "决策权"
+options = ["leader_assigns", "autonomous", "hybrid"]
+
+[[dimensions]]
+id = "tempo"
+name = "节奏"
+options = ["fast_pass", "halt_and_observe"]
+
+[[dimensions]]
+id = "terrain_use"
+name = "地形利用"
+options = ["along_road", "along_cover", "avoid_open"]
+
+# Pairs of options that cannot appear together in one combination.
+[[incompatible]]
+a = "hold_fire_concealed"
+b = "suppress_then_move"
+why = "隐蔽不射击与先压制后机动矛盾"
+
+[[incompatible]]
+a = "hold_fire_concealed"
+b = "fire_while_moving"
+why = "隐蔽不射击与边机动边射击矛盾"
+
+[[incompatible]]
+a = "fast_pass"
+b = "halt_and_observe"
+why = "快速通过与逐段停顿观察矛盾"
+
+[[incompatible]]
+a = "whole_platoon"
+b = "alternate_bounds"
+why = "全排一体行动无法交替跃进（需要分组）"
+
+[[incompatible]]
+a = "whole_platoon"
+b = "successive_bounds"
+why = "全排一体行动无法连续跃进（需要分组）"
+
+[[incompatible]]
+a = "traveling"
+b = "fire_while_moving"
+why = "行进（预计无接触）与边机动边射击矛盾"

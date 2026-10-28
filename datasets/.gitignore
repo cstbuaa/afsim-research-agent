@@ -1,0 +1,3 @@
+# 源码转换层与平台绑定只存本地
+**/_local/
+**/bindings.local.json

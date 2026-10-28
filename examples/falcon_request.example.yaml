@@ -1,0 +1,28 @@
+# Falcon request file (design: docs/design/tactical-falcon-v1.md §2.1, §13).
+# Copy next to your Crow run, point crow_result at its research_result.json, then:
+#   python -m afsim_research_agent.falcon draft falcon_request.yaml
+# After choosing a tactic in Crow (crow.select), give tactic_selection instead: requirement
+# and crow_result may then be omitted (Crow's requirement and research_result.json are used).
+requirement: |
+  研究装甲排在开阔地和城区的编队方式：开阔地用楔形，接近城区时转纵队，纵队车距 50 米；
+  接敌后报告并交替跃进，与敌保持安全距离。
+model_id: armor_platoon_v2                        # output: models/armor_platoon_v2/
+crow_result: data/runs/<run>/research_result.json  # relative to this file
+# tactic_selection: data/runs/<run>/<tactics>/      # Crow C5 selection (dir or tactic_selection.yaml)
+platforms:                                         # optional hints
+  - {role_hint: platoon_leader, capability_class: ground_vehicle, count: 1}
+  - {role_hint: wingman, capability_class: ground_vehicle, count: 3}
+terrain_classes: [open, urban]                     # optional; catalog terrain classes only
+user_parameters: {}                                # optional: values you state directly, e.g.
+#  column_interval: {value: 50, unit: m}
+# target_engine: integrations/lab_engine/bindings.example.json   # optional capability check
+backends: [python_sim, btcpp_xml, mermaid]
+# Platform capability judgment (optional). coarse: only the core groups (ground vehicles:
+# maneuver, formation, terrain) are checked precisely; other missing items are simplified.
+# capability_granularity: coarse
+# capability_refine: [comms]                       # groups to check precisely when needed
+# Generation layer (optional): v1 = JSON sections (default); v2 = tactic sheet
+# (YAML + Mermaid + Python + BehaviorTree.CPP XML, compiled to IR; design falcon-surface-formats-v2).
+# generator: v2
+# sheet_calls: 3                                    # v2: 3 drafts (default) or 1 call
+# sheet_tree_format: python                         # v2: behavior trees as Python functions (default) or xml

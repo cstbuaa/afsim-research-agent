@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AFSIM 战术建模 Agent</title>
+<style>
+/* Layout: three panes — threads/plan | conversation | files. Colors: friendly blue for the agent, amber for anything waiting on the person. */
+:root {
+  --paper: #eef0eb; --sheet: #f8f9f6; --ink: #1d262a; --ink-2: #56636a; --rule: #d3d9d3; --grid: #e3e7e1;
+  --friend: #2d66ad; --friend-soft: #dbe6f3; --bad: #c23b33; --bad-soft: #f6dedb;
+  --ok: #2f7d4a; --ok-soft: #dcefe2; --wait: #a8701a; --wait-soft: #f6e8cd; --muted-soft: #e6e9e4;
+  --body: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #12181b; --sheet: #182024; --ink: #e2e8e6; --ink-2: #9aa7ab; --rule: #2c373b; --grid: #1f292c;
+    --friend: #6f9fe0; --friend-soft: #1c2b3f; --bad: #ec7a71; --bad-soft: #3a2220;
+    --ok: #6cc18a; --ok-soft: #173322; --wait: #e2ab55; --wait-soft: #382b16; --muted-soft: #222b2f;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--paper); color: var(--ink); font: 14px/1.6 var(--body); display: flex; flex-direction: column; }
+button { font: inherit; cursor: pointer; }
+code, pre, textarea.mono { font-family: var(--mono); font-size: 12.5px; }
+header { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border-bottom: 1px solid var(--rule); background: var(--sheet); }
+header h1 { font-size: 16px; margin: 0; letter-spacing: .02em; }
+header .meta { color: var(--ink-2); font-size: 12.5px; display: flex; gap: 14px; flex-wrap: wrap; }
+header .spacer { flex: 1; }
+.btn { border: 1px solid var(--rule); background: var(--sheet); color: var(--ink); border-radius: 4px; padding: 5px 12px; }
+.btn:hover { border-color: var(--ink-2); }
+.btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.btn.ok { background: var(--ok); border-color: var(--ok); color: #fff; }
+.btn.bad { background: transparent; border-color: var(--bad); color: var(--bad); }
+.btn:disabled { opacity: .45; cursor: default; }
+main { flex: 1; display: grid; grid-template-columns: 250px minmax(0, 1fr) 400px; min-height: 0; }
+main.nofiles { grid-template-columns: 250px minmax(0, 1fr) 0; }
+aside, section { min-height: 0; overflow: auto; }
+#left { border-right: 1px solid var(--rule); padding: 12px; display: flex; flex-direction: column; gap: 16px; }
+#files { border-left: 1px solid var(--rule); display: flex; flex-direction: column; background: var(--sheet); }
+main.nofiles #files { display: none; }
+.label { font-size: 11.5px; letter-spacing: .1em; color: var(--ink-2); font-weight: 600; margin-bottom: 6px; }
+.threads { display: flex; flex-direction: column; gap: 4px; }
+.threads button { text-align: left; border: 1px solid transparent; background: none; color: var(--ink); padding: 6px 8px; border-radius: 4px; display: flex; flex-direction: column; }
+.threads button.on { background: var(--sheet); border-color: var(--rule); }
+.threads small { color: var(--ink-2); font-size: 11.5px; }
+.todo { display: flex; gap: 8px; font-size: 13px; padding: 2px 0; }
+.todo i { font-style: normal; width: 16px; flex: none; }
+.todo.completed { color: var(--ink-2); text-decoration: line-through; }
+.todo.in_progress { font-weight: 600; }
+.ext { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; padding: 2px 0; }
+.ext span:last-child { color: var(--ink-2); text-align: right; }
+.ext.on span:last-child { color: var(--ok); }
+#center { display: flex; flex-direction: column; min-height: 0; }
+#timeline { flex: 1; overflow: auto; padding: 18px 24px 8px; display: flex; flex-direction: column; gap: 12px; }
+.empty { margin: auto; max-width: 520px; text-align: center; color: var(--ink-2); display: flex; flex-direction: column; gap: 12px; }
+.empty .examples { display: flex; flex-direction: column; gap: 6px; }
+.empty .examples button { text-align: left; }
+.msg-user { align-self: flex-end; max-width: 75%; background: var(--friend); color: #fff; padding: 8px 12px; border-radius: 10px 10px 2px 10px; white-space: pre-wrap; }
+.msg-ai { max-width: 85%; }
+.msg-ai p { margin: 0 0 6px; }
+.msg-ai ul { margin: 0 0 6px; padding-left: 20px; }
+.card { border: 1px solid var(--rule); border-radius: 6px; background: var(--sheet); max-width: 92%; }
+.card .hd { display: flex; align-items: center; gap: 8px; padding: 7px 12px; flex-wrap: wrap; }
+.card .name { font-family: var(--mono); font-weight: 600; font-size: 13px; }
+.card .args { color: var(--ink-2); font-size: 12px; font-family: var(--mono); overflow-wrap: anywhere; }
+.card .bd { padding: 0 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+.card .summary { font-weight: 500; }
+.card ul { margin: 0; padding-left: 18px; font-size: 13px; }
+.card details { font-size: 12.5px; }
+.card pre { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--paper); padding: 8px; border-radius: 4px; max-height: 260px; overflow: auto; }
+.pill { font-size: 11.5px; padding: 1px 8px; border-radius: 10px; font-weight: 600; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.failed { background: var(--bad-soft); color: var(--bad); }
+.pill.blocked { background: var(--muted-soft); color: var(--ink-2); }
+.pill.needs_human, .pill.waiting { background: var(--wait-soft); color: var(--wait); }
+.pill.not_configured { background: transparent; color: var(--ink-2); border: 1px dashed var(--ink-2); }
+.pill.running { background: var(--friend-soft); color: var(--friend); }
+.links { display: flex; flex-wrap: wrap; gap: 6px; }
+.links a { font-family: var(--mono); font-size: 12px; color: var(--friend); text-decoration: none; border: 1px solid var(--friend-soft); border-radius: 3px; padding: 0 6px; cursor: pointer; }
+.links a:hover { border-color: var(--friend); }
+.mark { font-size: 12.5px; color: var(--wait); }
+.err { color: var(--bad); background: var(--bad-soft); padding: 8px 12px; border-radius: 6px; }
+.working { color: var(--ink-2); font-size: 13px; display: flex; gap: 8px; align-items: center; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--friend); animation: pulse 1s infinite alternate; }
+@keyframes pulse { from { opacity: .25; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+#decide { margin: 0 24px; border: 2px solid var(--wait); background: var(--wait-soft); border-radius: 8px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+#decide[hidden] { display: none; }
+#decide h3 { margin: 0; font-size: 14px; color: var(--wait); }
+#decide .q { font-size: 15px; font-weight: 600; }
+#decide .row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+#decide label { display: inline-flex; gap: 4px; align-items: center; }
+#decide textarea, #decide input:not([type=radio]) { width: 100%; border: 1px solid var(--rule); border-radius: 4px; background: var(--sheet); color: var(--ink); padding: 6px 8px; font: inherit; }
+#decide textarea.mono { min-height: 110px; }
+#composer { padding: 10px 24px 14px; display: flex; gap: 8px; }
+#composer textarea { flex: 1; min-height: 44px; max-height: 160px; resize: vertical; border: 1px solid var(--rule); border-radius: 6px; background: var(--sheet); color: var(--ink); padding: 8px 10px; font: inherit; }
+#files .bar { padding: 10px 12px; border-bottom: 1px solid var(--rule); display: flex; gap: 8px; align-items: center; }
+#files .bar input { flex: 1; font-family: var(--mono); font-size: 12px; border: 1px solid var(--rule); border-radius: 4px; background: var(--paper); color: var(--ink); padding: 4px 6px; }
+#fileBody { flex: 1; overflow: auto; padding: 8px 12px; }
+#fileBody .entry { display: flex; justify-content: space-between; gap: 8px; padding: 3px 4px; border-radius: 3px; cursor: pointer; font-size: 13px; }
+#fileBody .entry:hover { background: var(--paper); }
+#fileBody .entry small { color: var(--ink-2); font-family: var(--mono); }
+#fileBody pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+dialog { border: 1px solid var(--rule); border-radius: 8px; background: var(--sheet); color: var(--ink); max-width: 760px; width: 92vw; }
+dialog table { border-collapse: collapse; width: 100%; font-size: 13px; }
+dialog td, dialog th { text-align: left; border-bottom: 1px solid var(--rule); padding: 5px 8px; vertical-align: top; }
+@media (max-width: 1100px) { main, main.nofiles { grid-template-columns: 210px minmax(0, 1fr); } #files { display: none; } main.showfiles { grid-template-columns: minmax(0, 1fr) 360px; } main.showfiles #left { display: none; } main.showfiles #files { display: flex; } }
+@media (max-width: 760px) { main, main.nofiles, main.showfiles { grid-template-columns: minmax(0, 1fr); } #left { display: none; } main.showfiles #center { display: none; } #timeline, #composer { padding-left: 12px; padding-right: 12px; } #decide { margin: 0 12px; } header .meta span:nth-child(2) { display: none; } }
+:focus-visible { outline: 2px solid var(--friend); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AFSIM 战术建模 Agent</h1>
+  <div class="meta"><span id="model">模型 —</span><span>工作区 data/</span><span id="threadStatus"></span></div>
+  <div class="spacer"></div>
+  <button class="btn" id="toolsBtn" type="button">工具清单</button>
+  <button class="btn" id="filesBtn" type="button">文件</button>
+</header>
+<main id="main">
+  <aside id="left">
+    <div><button class="btn primary" id="newBtn" type="button" style="width:100%">＋ 新会话</button></div>
+    <div><div class="label">会话</div><div class="threads" id="threads"></div></div>
+    <div><div class="label">计划</div><div id="todos"><div class="todo"><i></i><span style="color:var(--ink-2)">agent 写下计划后显示在这里</span></div></div></div>
+    <div><div class="label">扩展接入</div><div id="exts"></div></div>
+  </aside>
+  <section id="center">
+    <div id="timeline"></div>
+    <div id="decide" hidden></div>
+    <form id="composer">
+      <textarea id="input" placeholder="输入战术需求或指令，Enter 发送，Shift+Enter 换行" aria-label="消息"></textarea>
+      <button class="btn primary" id="sendBtn" type="submit">发送</button>
+    </form>
+  </section>
+  <aside id="files">
+    <div class="bar"><button class="btn" id="upBtn" type="button" title="上一级">↑</button><input id="pathInput" aria-label="路径" value="/runs"><button class="btn" id="goBtn" type="button">打开</button></div>
+    <div id="fileBody"></div>
+  </aside>
+</main>
+<dialog id="toolsDlg"><h3 style="margin-top:0">工具清单</h3><div id="toolsTable"></div><div style="text-align:right;margin-top:10px"><button class="btn" type="button" onclick="this.closest('dialog').close()">关闭</button></div></dialog>
+
+<script>
+(() => {
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const STATUS = { ok: '通过', failed: '未通过', blocked: '未执行', needs_human: '需要你决定', not_configured: '未接入', running: '运行中', paused: '等待你', idle: '空闲', error: '出错' };
+const EXAMPLES = [
+  '先看一下流程和已接入的扩展能力。',
+  '检查模型包 /runs/crow-research/armor-eval-03/models/armor_tc01_sheet_py9_fix4，并在二维仿真里跑一遍想定，告诉我问题出在哪。',
+  '研究装甲排在开阔地和城区的编队方式：开阔地用楔形，接近城区时转纵队，纵队车距 50 米；接敌后报告并交替跃进，与敌保持安全距离。',
+];
+let current = null, after = 0, events = [], pending = [], status = 'idle', pollTimer = null;
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+// ------------------------------------------------------------------ sidebar
+async function loadInfo() {
+  const info = await api('/api/info');
+  $('#model').textContent = '模型 ' + (info.model || '—');
+  const names = { action_library: '动作集', tactic_library: '战术集', plan_compiler: '行为树生成器', platform_backends: '仿真平台后端', plugin_builder: '能力插件' };
+  $('#exts').innerHTML = Object.entries(info.extensions).map(([k, v]) =>
+    `<div class="ext ${v === '未接入' ? '' : 'on'}"><span>${names[k] || k}</span><span>${esc(v)}</span></div>`).join('')
+    + (info.extension_problems || []).map(p => `<div class="ext"><span style="color:var(--bad)">⚠ ${esc(p)}</span></div>`).join('');
+  $('#toolsTable').innerHTML = '<table><tr><th>工具</th><th>说明</th><th>调用模型</th><th>需批准</th></tr>' +
+    info.tools.map(t => `<tr><td><code>${t.name}</code></td><td>${esc(t.description)}</td><td>${t.uses_model ? '是' : ''}</td><td>${t.needs_approval ? '是' : ''}</td></tr>`).join('') +
+    '<tr><td><code>ask_human</code></td><td>向你提问并等待回答</td><td></td><td>—</td></tr></table>';
+}
+
+async function loadThreads() {
+  const list = await api('/api/threads');
+  $('#threads').innerHTML = list.length ? list.map(t =>
+    `<button type="button" data-id="${t.id}" class="${t.id === current ? 'on' : ''}"><span>${esc(t.title)}</span><small>${new Date(t.created * 1000).toLocaleString()} · ${STATUS[t.status] || t.status}</small></button>`).join('')
+    : '<small style="color:var(--ink-2)">还没有会话</small>';
+  $('#threads').querySelectorAll('button').forEach(b => b.onclick = () => openThread(b.dataset.id));
+  return list;
+}
+
+async function newThread(title) {
+  const t = await api('/api/threads', { method: 'POST', body: JSON.stringify({ title: title || '新会话' }) });
+  await openThread(t.id);
+  await loadThreads();
+  return t;
+}
+
+async function openThread(id) {
+  current = id; after = 0; events = []; pending = [];
+  $('#timeline').innerHTML = '';
+  await poll();
+  loadThreads();
+}
+
+// ------------------------------------------------------------------ polling
+async function poll() {
+  clearTimeout(pollTimer);
+  if (!current) { renderEmpty(); return; }
+  try {
+    const data = await api(`/api/threads/${current}/events?after=${after}`);
+    if (data.events.length) { events.push(...data.events); after += data.events.length; }
+    pending = data.pending || [];
+    if (data.thread.status !== status) loadThreads();
+    status = data.thread.status;
+    render();
+  } catch (e) { console.warn(e); }
+  pollTimer = setTimeout(poll, status === 'running' ? 700 : 2500);
+}
+
+// ------------------------------------------------------------------ rendering
+function md(text) {
+  const lines = esc(text).split(/\n/);
+  let html = '', list = false;
+  for (const raw of lines) {
+    const line = raw.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>');
+    if (/^\s*[-*]\s+/.test(raw)) { if (!list) { html += '<ul>'; list = true; } html += '<li>' + line.replace(/^\s*[-*]\s+/, '') + '</li>'; continue; }
+    if (list) { html += '</ul>'; list = false; }
+    if (line.trim()) html += '<p>' + line + '</p>';
+  }
+  return html + (list ? '</ul>' : '');
+}
+
+function argsLine(args) {
+  if (!args || !Object.keys(args).length) return '';
+  return Object.entries(args).map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`).join('  ').slice(0, 220);
+}
+
+function resultBody(r, text) {
+  if (!r) return text ? `<div class="bd"><pre>${esc(text.slice(0, 3000))}</pre></div>` : '';
+  let h = `<div class="bd"><div class="summary">${esc(r.summary)}</div>`;
+  if (r.question) h += `<div class="mark">❓ ${esc(r.question)}</div>`;
+  const probs = r.problems || [];
+  if (probs.length) {
+    const first = probs.slice(0, 3).map(p => `<li>${esc(p)}</li>`).join('');
+    const rest = probs.slice(3).map(p => `<li>${esc(p)}</li>`).join('');
+    h += `<ul>${first}</ul>` + (rest ? `<details><summary>另外 ${probs.length - 3} 条</summary><ul>${rest}</ul></details>` : '');
+  }
+  const arts = r.artifacts || {};
+  if (Object.keys(arts).length) h += '<div class="links">' + Object.entries(arts).map(([k, p]) => `<a data-path="${esc(p)}" title="${esc(p)}">${esc(k)}</a>`).join('') + '</div>';
+  if (r.next_steps && r.next_steps.length) h += `<div style="font-size:12.5px;color:var(--ink-2)">下一步：${esc(r.next_steps.join('；'))}</div>`;
+  if (r.data && Object.keys(r.data).length) h += `<details><summary>详细数据</summary><pre>${esc(JSON.stringify(r.data, null, 1))}</pre></details>`;
+  return h + '</div>';
+}
+
+function renderEmpty() {
+  $('#timeline').innerHTML = `<div class="empty"><div style="font-size:16px;color:var(--ink)">用自然语言说出战术需求，agent 会按流程检索、生成、检查并仿真。</div>
+    <div>需要你决定的地方（选战术、确认清单、导出到 AFSIM、战术意图问题）会在下方高亮，等你回答后再继续。</div>
+    <div class="examples">${EXAMPLES.map((e, i) => `<button class="btn" type="button" data-ex="${i}">${esc(e)}</button>`).join('')}</div></div>`;
+  $('#timeline').querySelectorAll('[data-ex]').forEach(b => b.onclick = () => { $('#input').value = EXAMPLES[+b.dataset.ex]; $('#input').focus(); });
+  $('#decide').hidden = true;
+  $('#threadStatus').textContent = '';
+}
+
+function render() {
+  const tl = $('#timeline');
+  const nearBottom = tl.scrollHeight - tl.scrollTop - tl.clientHeight < 80;
+  if (!events.length && status === 'idle') { renderEmpty(); return; }
+  const results = {};
+  for (const e of events) if (e.type === 'tool_result' && e.call_id) results[e.call_id] = e;
+  const waitingIds = new Set();
+  let html = '', todos = null;
+  for (const e of events) {
+    if (e.type === 'user') html += `<div class="msg-user">${esc(e.text)}</div>`;
+    else if (e.type === 'ai') html += `<div class="msg-ai">${md(e.text)}</div>`;
+    else if (e.type === 'tool_call') {
+      const res = results[e.call_id];
+      const r = res && res.result;
+      let pill;
+      if (r) pill = `<span class="pill ${r.status}">${STATUS[r.status] || r.status}</span>`;
+      else if (res) pill = `<span class="pill ok">完成</span>`;
+      else if (pending.length) pill = `<span class="pill waiting">等待你</span>`;
+      else if (status === 'running') pill = `<span class="pill running">运行中</span>`;
+      else pill = `<span class="pill blocked">未返回</span>`;
+      html += `<div class="card"><div class="hd"><span class="name">${esc(e.name)}</span>${pill}<span class="args">${esc(argsLine(e.args))}</span></div>${res ? resultBody(r, res.text) : ''}</div>`;
+    } else if (e.type === 'todos') todos = e.todos;
+    else if (e.type === 'status' && e.status === 'error') html += `<div class="err">运行出错：${esc(e.detail || '')}</div>`;
+  }
+  if (status === 'running') html += '<div class="working"><span class="dot"></span>agent 正在工作……长耗时的检索、生成和纠错可能需要几分钟</div>';
+  tl.innerHTML = html;
+  tl.querySelectorAll('.links a').forEach(a => a.onclick = () => openFile(a.dataset.path));
+  if (nearBottom) tl.scrollTop = tl.scrollHeight;
+  if (todos) renderTodos(todos);
+  renderDecide();
+  $('#threadStatus').innerHTML = `<span class="pill ${status === 'paused' ? 'waiting' : status}">${STATUS[status] || status}</span>`;
+  const busy = status === 'running' || pending.length > 0;
+  $('#sendBtn').disabled = busy;
+  $('#input').placeholder = pending.length ? '请先在上方回答或批准' : status === 'running' ? 'agent 正在工作……' : '输入战术需求或指令，Enter 发送，Shift+Enter 换行';
+}
+
+function renderTodos(todos) {
+  const icon = { completed: '✓', in_progress: '▸', pending: '○' };
+  $('#todos').innerHTML = todos.map(t => `<div class="todo ${t.status}"><i>${icon[t.status] || '○'}</i><span>${esc(t.content)}</span></div>`).join('');
+}
+
+let decideKey = '';
+function renderDecide() {
+  const box = $('#decide');
+  if (!pending.length || status === 'running') { box.hidden = true; decideKey = ''; return; }
+  const p = pending[0];
+  const key = JSON.stringify(p);
+  if (key === decideKey) return;  // keep what the user is typing
+  decideKey = key;
+  box.hidden = false;
+  if (p.kind === 'ask_human' || p.kind === 'other') {
+    box.innerHTML = `<h3>需要你决定</h3><div class="q">${esc(p.question)}</div>
+      <div class="row">${(p.options || []).map((o, i) => `<button class="btn" type="button" data-opt="${i}">${esc(o)}</button>`).join('')}</div>
+      <input id="answerInput" placeholder="或输入你的回答（可补充理由）"><div class="row"><button class="btn primary" id="answerBtn" type="button">提交回答</button></div>`;
+    box.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => answer(p.options[+b.dataset.opt]));
+    $('#answerBtn').onclick = () => { const v = $('#answerInput').value.trim(); if (v) answer(v); };
+    $('#answerInput').onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); $('#answerBtn').click(); } };
+  } else {
+    const reqs = p.requests || [];
+    box.innerHTML = `<h3>需要你批准 ${reqs.length} 个操作</h3>` + reqs.map((r, i) => `
+      <div style="display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--rule);padding-top:8px">
+        <div><code style="font-weight:600">${esc(r.name)}</code> <span style="color:var(--ink-2)">${esc(r.description || '')}</span></div>
+        <textarea class="mono" data-args="${i}" aria-label="参数">${esc(JSON.stringify(r.args, null, 2))}</textarea>
+        <input data-reason="${i}" placeholder="拒绝理由（可选，会告诉 agent）">
+        <div class="row">
+          <label><input type="radio" name="d${i}" value="approve" checked> 批准</label>
+          ${r.allowed.includes('edit') ? `<label><input type="radio" name="d${i}" value="edit"> 按修改后的参数执行</label>` : ''}
+          <label><input type="radio" name="d${i}" value="reject"> 拒绝</label>
+        </div></div>`).join('') + `<div class="row"><button class="btn primary" id="decideBtn" type="button">提交决定</button><span id="decideErr" style="color:var(--bad)"></span></div>`;
+    $('#decideBtn').onclick = () => {
+      try {
+        const decisions = reqs.map((r, i) => {
+          const type = box.querySelector(`input[name="d${i}"]:checked`).value;
+          if (type === 'edit') return { type, edited_action: { name: r.name, args: JSON.parse(box.querySelector(`[data-args="${i}"]`).value) } };
+          if (type === 'reject') return { type, message: box.querySelector(`[data-reason="${i}"]`).value || '用户拒绝' };
+          return { type };
+        });
+        resume({ decisions });
+      } catch (e) { $('#decideErr').textContent = '参数不是有效的 JSON：' + e.message; }
+    };
+  }
+}
+
+async function answer(text) { await resume({ answer: text }); }
+async function resume(body) {
+  try { await api(`/api/threads/${current}/resume`, { method: 'POST', body: JSON.stringify(body) }); decideKey = ''; poll(); }
+  catch (e) { alertBox(e.message); }
+}
+function alertBox(msg) { const tl = $('#timeline'); tl.insertAdjacentHTML('beforeend', `<div class="err">${esc(msg)}</div>`); tl.scrollTop = tl.scrollHeight; }
+
+// ------------------------------------------------------------------ sending
+$('#composer').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const text = $('#input').value.trim();
+  if (!text) return;
+  try {
+    if (!current) await newThread(text.slice(0, 30));
+    await api(`/api/threads/${current}/messages`, { method: 'POST', body: JSON.stringify({ text }) });
+    $('#input').value = '';
+    status = 'running';
+    poll(); loadThreads();
+  } catch (e) { alertBox(e.message); }
+};
+$('#input').onkeydown = (ev) => { if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); $('#composer').requestSubmit(); } };
+$('#newBtn').onclick = () => { current = null; events = []; pending = []; status = 'idle'; renderEmpty(); loadThreads(); $('#input').focus(); };
+
+// ------------------------------------------------------------------ files
+async function openFile(path, show = true) {
+  if (show) { $('#main').classList.remove('nofiles'); $('#main').classList.add('showfiles'); }
+  $('#pathInput').value = path;
+  const body = $('#fileBody');
+  body.innerHTML = '<small>读取中……</small>';
+  try {
+    const f = await api('/api/files?path=' + encodeURIComponent(path));
+    $('#pathInput').value = f.path;
+    if (f.dir) {
+      body.innerHTML = f.entries.length ? f.entries.map(e => `<div class="entry" data-path="${esc(e.path)}"><span>${e.dir ? '📁 ' : ''}${esc(e.name)}</span><small>${e.dir ? '' : fmtSize(e.size)}</small></div>`).join('') : '<small>空目录</small>';
+      body.querySelectorAll('.entry').forEach(x => x.onclick = () => openFile(x.dataset.path));
+    } else if (f.text == null) body.innerHTML = `<small>${esc(f.note || '')}（${fmtSize(f.size)}）</small>`;
+    else body.innerHTML = (f.truncated ? '<small>文件较大，只显示前 400 KB</small>' : '') + `<pre>${esc(f.text)}</pre>`;
+  } catch (e) { body.innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+function fmtSize(n) { return n == null ? '' : n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+$('#goBtn').onclick = () => openFile($('#pathInput').value);
+$('#pathInput').onkeydown = (ev) => { if (ev.key === 'Enter') openFile($('#pathInput').value); };
+$('#upBtn').onclick = () => { const p = $('#pathInput').value.replace(/\/[^/]*$/, '') || '/'; openFile(p); };
+$('#filesBtn').onclick = () => {
+  const m = $('#main');
+  const visible = innerWidth >= 1100 ? !m.classList.contains('nofiles') : m.classList.contains('showfiles');
+  if (visible) { m.classList.add('nofiles'); m.classList.remove('showfiles'); }
+  else openFile($('#pathInput').value);
+};
+$('#toolsBtn').onclick = () => $('#toolsDlg').showModal();
+
+// ------------------------------------------------------------------ start
+loadInfo().catch(e => console.warn(e));
+loadThreads().then(list => { if (list.length) openThread(list[0].id); else renderEmpty(); });
+openFile('/runs', false);
+})();
+</script>
+</body>
+</html>

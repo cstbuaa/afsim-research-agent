@@ -1,0 +1,339 @@
+format: PlatformCapabilityCatalogPart
+format_version: 0.3.0
+catalog:
+  id: afsim_2_9_capabilities
+  platform_family: afsim
+  platform_version: '2.9'
+  language: zh-CN
+  classification: public
+  updated_on: '2026-10-16'
+part:
+  domain: execution
+  display_name: 执行环境类
+  summary: 行为模型自身运行所需的能力：变量、计时、等待、控制器开关、决策周期。
+  subcategories:
+  - id: variables
+    display_name: 行为变量
+    summary: 本平台内的黑板变量读写。
+  - id: timing
+    display_name: 计时
+    summary: 仿真时间、状态持续时间、等待。
+  - id: control
+    display_name: 控制
+    summary: 控制器开关与决策周期。
+conventions:
+  status: capability/provides/accepts 状态：available | partial | unavailable | unknown；partial = 来源有说明但接口参数或运行验证未完成；unknown
+    = 推断存在但来源未给出接口。
+  ir_v1: 对应 IR 1.0 的动作、操作数、函数或黑板（blackboard）；null 表示 IR 1.0 无对应项（ir_gap）。
+capabilities:
+- id: behavior_variables
+  display_name: 行为变量
+  aliases: []
+  domain: execution
+  subcategory: variables
+  kind: processor
+  description: 行为模型在本平台内保存和读取的变量（黑板），如当前队形、是否已报告。
+  natural_language:
+    definition: 行为模型在本平台内读写的具名变量，跨决策周期保持。
+    use_when: 需要记住决策结果或进度（当前队形、本次接敌是否已报告、跃进次数）时。
+    expected_result: 变量在本平台的行为模型内可读可写。
+    boundaries:
+    - 只在本平台内有效；其他平台的变量须通过消息获得。
+    - 变量类型限于布尔、数值、字符串、带单位数值。
+    requirement_example: 记录本次接敌已报告，避免重复报告。
+  tactical_uses:
+  - 记录当前队形
+  - 避免重复报告
+  - 记录跃进进度
+  keywords:
+  - 变量
+  - 黑板
+  - 记忆
+  - 状态记录
+  - blackboard
+  - variable
+  - memory
+  applicable_platform_classes: &id002
+  - air_vehicle
+  - ground_vehicle
+  - surface_vessel
+  - subsurface_vehicle
+  - space_vehicle
+  - static_node
+  - weapon_platform
+  status: partial
+  maturity: draft
+  ir_v1:
+  - set_blackboard
+  - delete_blackboard_value
+  - blackboard
+  provides:
+  - ir: execution_state.variable
+    display_name: 读取行为变量
+    value_type: any
+    cardinality: collection
+    freshness: dynamic
+    status: partial
+    ir_v1: blackboard
+  accepts:
+  - ir: execution_action.set_variable
+    display_name: 写入行为变量
+    status: partial
+    ir_v1: set_blackboard
+    parameters:
+    - name: name
+      type: string
+      required: true
+    - name: value
+      type: any
+      required: true
+    result:
+      type: command_status
+      values: &id001
+      - accepted
+      - rejected
+      status: unknown
+    side_effects:
+    - 覆盖该变量原值。
+  - ir: execution_action.delete_variable
+    display_name: 删除行为变量
+    status: unknown
+    ir_v1: delete_blackboard_value
+    parameters:
+    - name: name
+      type: string
+      required: true
+    result:
+      type: command_status
+      values: *id001
+      status: unknown
+    side_effects:
+    - 之后读取返回默认值。
+  settings: []
+  dependencies: []
+  constraints: []
+  limitations:
+  - 跨平台共享变量不在本能力内，须经消息交换实现。
+  - 来源确认脚本可声明并读写脚本变量；删除变量的方式未见，删除动作仍为 unknown。
+  source_gaps:
+  - 处理器与脚本运行时参考（脚本变量、计时、处理器开关、执行周期）
+  binding: local
+- id: state_timing
+  display_name: 状态计时与仿真时间
+  aliases: []
+  domain: execution
+  subcategory: timing
+  kind: processor
+  description: 读取仿真时间、决策周期计数，以及当前状态已持续的时间。
+  natural_language:
+    definition: 行为模型可读取当前仿真时间和决策周期序号；状态机可读取进入当前状态以来经过的时间。
+    use_when: 需要“保持一段时间后再转换”“超时处理”时。
+    expected_result: 得到以秒计的时间量。
+    boundaries:
+    - 状态持续时间以进入该状态的时刻为起点，重新进入时清零。
+    requirement_example: 失去接触后保持接敌状态 2 分钟再恢复行进。
+  tactical_uses:
+  - 超时处理
+  - 保持一段时间后转换
+  - 定时行动
+  keywords:
+  - 计时
+  - 超时
+  - 持续时间
+  - 仿真时间
+  - timer
+  - timeout
+  - time in state
+  applicable_platform_classes: *id002
+  status: partial
+  maturity: draft
+  ir_v1:
+  - time_in_state_gte
+  - simulation_value.time
+  - simulation_value.tick
+  provides:
+  - ir: execution_state.time_in_state
+    display_name: 当前状态已持续时间
+    value_type: duration
+    unit: s
+    cardinality: one
+    freshness: dynamic
+    status: unknown
+    ir_v1: time_in_state_gte
+    note: IR 1.0 以函数 time_in_state_gte 使用；可由仿真时间与进入状态时记录的时刻（行为变量）组合实现。
+  - ir: execution_state.simulation_time
+    display_name: 仿真时间
+    value_type: duration
+    unit: s
+    cardinality: one
+    freshness: dynamic
+    status: partial
+    ir_v1: simulation_value.time
+  - ir: execution_state.decision_tick
+    display_name: 决策周期序号
+    value_type: count
+    unit: count
+    cardinality: one
+    freshness: dynamic
+    status: unknown
+    ir_v1: simulation_value.tick
+  accepts: []
+  settings: []
+  dependencies:
+  - state_machine_execution
+  constraints: []
+  limitations: []
+  source_gaps:
+  - 处理器与脚本运行时参考（脚本变量、计时、处理器开关、执行周期）
+  binding: local
+- id: timed_wait
+  display_name: 等待
+  aliases: []
+  domain: execution
+  subcategory: timing
+  kind: processor
+  description: 行为树中等待一段时间后再继续。
+  natural_language:
+    definition: 当前行为等待指定时间后成功。
+    use_when: 需要停顿观察、错开时机时。
+    expected_result: 等待结束后继续后续节点。
+    boundaries:
+    - 等待期间不下达新的机动命令。
+    requirement_example: 跃进到位后停顿观察 10 秒。
+  tactical_uses:
+  - 停顿观察
+  - 错开时机
+  keywords:
+  - 等待
+  - 停顿
+  - wait
+  - delay
+  applicable_platform_classes: *id002
+  status: unknown
+  maturity: draft
+  ir_v1:
+  - wait
+  provides: []
+  accepts:
+  - ir: execution_action.wait
+    display_name: 等待指定时间
+    status: unknown
+    ir_v1: wait
+    parameters:
+    - name: duration
+      type: duration
+      unit: s
+      required: true
+    result:
+      type: command_status
+      values: *id001
+      status: unknown
+    side_effects:
+    - 占用当前行为直到时间到。
+  settings: []
+  dependencies:
+  - state_timing
+  constraints: []
+  limitations: []
+  source_gaps:
+  - 处理器与脚本运行时参考（脚本变量、计时、处理器开关、执行周期）
+  binding: local
+- id: controller_activation
+  display_name: 行为控制器开关
+  aliases: []
+  domain: execution
+  subcategory: control
+  kind: processor
+  description: 开启或关闭平台上的某个行为控制器（处理器）。
+  natural_language:
+    definition: 按名称开启或关闭平台上的行为控制器。
+    use_when: 需要按阶段启用或停用某部分行为逻辑时。
+    expected_result: 指定控制器进入开或关状态。
+    boundaries:
+    - 关闭的控制器不再决策。
+    requirement_example: 接敌后启用交战控制器。
+  tactical_uses:
+  - 按阶段启用行为
+  keywords:
+  - 控制器
+  - 处理器
+  - 开关
+  - controller
+  - processor
+  applicable_platform_classes: *id002
+  status: unknown
+  maturity: draft
+  ir_v1:
+  - turn_controller_on
+  - turn_controller_off
+  provides: []
+  accepts:
+  - ir: execution_action.set_controller_power
+    display_name: 开启或关闭控制器
+    status: unknown
+    ir_v1: turn_controller_on
+    parameters:
+    - name: controller
+      type: string
+      required: true
+    - name: power
+      type: enumeration
+      values:
+      - 'on'
+      - 'off'
+      required: true
+    result:
+      type: command_status
+      values: *id001
+      status: unknown
+    side_effects:
+    - 关闭后该控制器停止决策。
+    note: IR 1.0 以 turn_controller_on / turn_controller_off 两个动作表达。
+  settings: []
+  dependencies: []
+  constraints: []
+  limitations: []
+  source_gaps:
+  - 处理器与脚本运行时参考（脚本变量、计时、处理器开关、执行周期）
+  binding: local
+- id: decision_cycle
+  display_name: 决策周期
+  aliases: []
+  domain: execution
+  subcategory: control
+  kind: processor
+  description: 行为模型按固定周期评估条件与转换。
+  natural_language:
+    definition: 行为模型按设定的时间间隔执行一次决策。
+    use_when: 所有行为模型。
+    expected_result: 每个周期评估一次转换与行为树。
+    boundaries:
+    - 周期过长会延误反应；不同状态使用同一周期（每状态独立周期为 IR 缺口）。
+    requirement_example: 每 1 秒决策一次。
+  tactical_uses:
+  - 反应时间
+  keywords:
+  - 周期
+  - 更新间隔
+  - update interval
+  - tick
+  applicable_platform_classes: *id002
+  status: unknown
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: decision_period
+    display_name: 决策周期
+    type: duration
+    unit: s
+    default: 1
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - state_machine_execution
+  constraints: []
+  limitations: []
+  source_gaps:
+  - 处理器与脚本运行时参考（脚本变量、计时、处理器开关、执行周期）
+  binding: local

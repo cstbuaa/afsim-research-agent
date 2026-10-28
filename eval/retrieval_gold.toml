@@ -1,0 +1,185 @@
+# Retrieval evaluation gold set — DRAFT, needs your review.
+#
+# Each case is a typical tactical requirement plus the sources a competent
+# analyst would expect a literature search to surface. The harness checks
+# whether Crow discovers, keeps (after screening) and accepts them.
+#
+# match kinds (first that applies is used; several may be given):
+#   doi           exact DOI (case-insensitive)
+#   arxiv         arXiv identifier without version
+#   designation   doctrine designation found in title or URL, e.g. "ATP 3-20.15"
+#   title         title similarity >= 0.85 after normalization
+#   url_contains  substring of the candidate URL
+#
+# importance: "must" (a search that misses it is clearly inadequate) or
+#             "should" (strong expected source).
+# verified:   true when the reference itself was confirmed to exist (Crossref
+#             record, publisher page or official index); review the rest.
+#
+# Please review: delete gold entries you disagree with, add the papers you
+# consider canonical, add Chinese requirements and CNKI sources (match by
+# title) once your library is populated, then set status = "reviewed".
+
+version = "2026-10-12-draft"
+status = "draft"
+
+[[case]]
+id = "armor-terrain-formations"
+requirement = "研究装甲车在不同地形情况下的编队方式"
+[[case.gold]]
+label = "ATP 3-20.15 Tank Platoon"
+designation = "ATP 3-20.15"
+importance = "must"
+verified = true
+[[case.gold]]
+label = "ATP 3-21.71 Mechanized Infantry Platoon and Squad"
+designation = "ATP 3-21.71"
+importance = "should"
+verified = false
+
+[[case]]
+id = "recon-platoon"
+requirement = "研究侦察排执行区域侦察和掩护任务时的队形与运动方式"
+[[case.gold]]
+label = "ATP 3-20.98 Reconnaissance / Scout Platoon"
+designation = "ATP 3-20.98"
+importance = "must"
+verified = true
+
+[[case]]
+id = "tactical-convoy"
+requirement = "研究战术车队行军队形、车距设置以及遭遇伏击时的反应行为"
+[[case.gold]]
+label = "ATP 4-01.45 Tactical Convoy Operations (or FM 4-01.45)"
+designation = "ATP 4-01.45"
+importance = "must"
+verified = false
+[[case.gold]]
+label = "FM 4-01.45 Tactical Convoy Ops (older multi-service edition)"
+designation = "FM 4-01.45"
+importance = "should"
+verified = true
+
+[[case]]
+id = "uav-swarm-formation"
+requirement = "研究无人机集群的编队控制与队形保持方法"
+[[case.gold]]
+label = "Oh, Park, Ahn (2015) A survey of multi-agent formation control. Automatica"
+doi = "10.1016/j.automatica.2014.10.022"
+importance = "must"
+verified = true
+[[case.gold]]
+label = "Olfati-Saber (2006) Flocking for multi-agent dynamic systems. IEEE TAC"
+doi = "10.1109/tac.2005.864190"
+importance = "must"
+verified = true
+[[case.gold]]
+label = "Reynolds (1987) Flocks, herds and schools. SIGGRAPH Computer Graphics"
+doi = "10.1145/37402.37406"
+title = "Flocks, herds and schools: A distributed behavioral model"
+importance = "should"
+verified = true
+
+[[case]]
+id = "behavior-based-formation"
+requirement = "研究多平台编队在遇到障碍或威胁时的队形切换与行为协调机制"
+[[case.gold]]
+label = "Balch, Arkin (1998) Behavior-based formation control for multirobot teams. IEEE TRA"
+doi = "10.1109/70.736776"
+importance = "must"
+verified = true
+[[case.gold]]
+label = "Desai, Ostrowski, Kumar (2001) Modeling and control of formations of nonholonomic mobile robots"
+doi = "10.1109/70.976023"
+importance = "should"
+verified = true
+
+[[case]]
+id = "task-allocation"
+requirement = "研究多平台协同作战中的任务分工与动态任务分配方法"
+[[case.gold]]
+label = "Gerkey, Mataric (2004) A formal analysis and taxonomy of task allocation in multi-robot systems"
+doi = "10.1177/0278364904045564"
+importance = "must"
+verified = true
+[[case.gold]]
+label = "Choi, Brunet, How (2009) Consensus-based decentralized auctions (CBBA). IEEE T-RO"
+doi = "10.1109/tro.2009.2022423"
+importance = "must"
+verified = true
+
+[[case]]
+id = "tewa"
+requirement = "研究防空作战中的威胁评估与武器目标分配决策方法"
+[[case.gold]]
+label = "Kline, Ahner, Hill (2019) The weapon-target assignment problem. Computers & OR"
+doi = "10.1016/j.cor.2018.10.015"
+importance = "must"
+verified = true
+[[case.gold]]
+label = "Roux, van Vuuren (2007) TEWA decision support: a review of the state of the art. ORiON"
+title = "Threat evaluation and weapon assignment decision support: A review of the state of the art"
+importance = "should"
+verified = true
+
+[[case]]
+id = "behavior-trees"
+requirement = "研究如何用行为树对作战仿真中的兵力实体行为进行建模"
+[[case.gold]]
+label = "Iovino et al. (2022) A survey of Behavior Trees in robotics and AI. RAS"
+doi = "10.1016/j.robot.2022.104096"
+importance = "must"
+verified = true
+[[case.gold]]
+label = "Colledanchise, Ogren. Behavior Trees in Robotics and AI: An Introduction"
+arxiv = "1709.00084"
+title = "Behavior Trees in Robotics and AI: An Introduction"
+importance = "must"
+verified = true
+
+[[case]]
+id = "air-combat-cgf"
+requirement = "研究四机编队超视距空战中计算机生成兵力的战术行为建模"
+[[case.gold]]
+label = "Toubman et al. Rewarding air combat behavior in training simulations"
+title = "Rewarding Air Combat Behavior in Training Simulations"
+importance = "should"
+verified = true
+
+[[case]]
+id = "mumt"
+requirement = "研究有人直升机与无人机协同（有人/无人协同）执行侦察打击任务的协同机制"
+[[case.gold]]
+label = "FM 3-04 Army Aviation"
+designation = "FM 3-04"
+importance = "must"
+verified = true
+[[case.gold]]
+label = "JAPCC: Manned-Unmanned Teaming"
+url_contains = "japcc.org"
+importance = "should"
+verified = true
+
+[[case]]
+id = "afsim-behavior"
+requirement = "研究在 AFSIM 中实现平台战术行为（处理器、任务分配与行为树）的建模方法"
+[[case.gold]]
+label = "AFSIM overview (Clive et al. 2015 / CSIAC article)"
+title = "Advanced Framework for Simulation, Integration and Modeling (AFSIM)"
+url_contains = "afsim"
+importance = "must"
+verified = true
+
+[[case]]
+id = "mech-infantry-movement"
+requirement = "研究机械化步兵排在接敌运动中的行进掩护与交替跃进方法"
+[[case.gold]]
+label = "ATP 3-21.71 Mechanized Infantry Platoon and Squad (Bradley)"
+designation = "ATP 3-21.71"
+importance = "must"
+verified = false
+[[case.gold]]
+label = "ATP 3-21.8 Infantry Platoon and Squad"
+designation = "ATP 3-21.8"
+importance = "should"
+verified = false

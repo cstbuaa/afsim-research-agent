@@ -1,0 +1,23 @@
+# Controlled tactical intent vocabulary for model.intent (design §6).
+# "custom" is accepted but always requires human review.
+
+[meta]
+version = "intents-2026.10.1"
+
+intents = [
+  "area_defense",
+  "bounding_overwatch",
+  "convoy_escort",
+  "defensive_counter_air",
+  "delay",
+  "formation_transition",
+  "hasty_attack",
+  "intercept",
+  "movement_to_contact",
+  "offensive_counter_air",
+  "patrol",
+  "route_reconnaissance",
+  "screen",
+  "withdrawal",
+  "custom",
+]

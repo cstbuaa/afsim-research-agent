@@ -1,0 +1,53 @@
+# Coordination pattern catalog (design §11.1).
+# Expansion rules are implemented in afsim_research_agent.ir.coordination and
+# produce IDs of the form "<coordination_id>__<suffix>". Specs may reference
+# those generated IDs from trees and conditions.
+
+[meta]
+version = "coordination-2026.10.2"
+# Initiators of synchronizing patterns re-broadcast their current synchronized
+# state (and, for leader_follower, the formation) at this interval unless the
+# coordination sets resync_interval (0 disables).
+default_resync_s = 5.0
+# standoff_reached is true within this margin outside the standoff distance.
+standoff_margin_m = 10.0
+
+[pattern.leader_follower]
+description = "Followers keep station on the leader in the formation the leader announces."
+required = ["leader", "followers", "formation_ref"]
+optional = ["resync_interval"]
+supports_sync = true
+generated.messages = ["formation", "transition"]
+generated.conditions = ["formation_known"]
+generated.behaviors = ["announce_formation", "keep_station"]
+generated.trees = []
+
+[pattern.bounding_overwatch]
+description = "Two groups alternate: one bounds forward while the other overwatches."
+required = ["groups", "bound_distance", "active_when"]
+optional = ["standoff_distance", "objective"]
+groups = ["bounding", "overwatch"]
+supports_sync = false
+generated.messages = ["bound_complete"]
+generated.conditions = ["active", "my_turn", "standoff_reached"]
+generated.behaviors = ["bound", "announce_bound", "overwatch"]
+generated.trees = ["tree"]
+
+[pattern.report_and_wait]
+description = "Reporter sends a report and waits for acknowledgement or timeout."
+required = ["reporter", "receiver", "ack_timeout"]
+supports_sync = false
+generated.messages = ["report", "ack"]
+generated.conditions = ["report_received", "ack_received"]
+generated.behaviors = ["send_report", "await_ack", "acknowledge"]
+generated.trees = []
+
+[pattern.synchronized_transition]
+description = "Participants follow the initiator's state transitions marked synchronize_with."
+required = ["initiator", "participants"]
+optional = ["resync_interval"]
+supports_sync = true
+generated.messages = ["transition"]
+generated.conditions = []
+generated.behaviors = []
+generated.trees = []

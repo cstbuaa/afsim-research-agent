@@ -1,0 +1,2808 @@
+{
+  "$defs": {
+    "ActionCall": {
+      "additionalProperties": false,
+      "properties": {
+        "allow_every_tick": {
+          "default": false,
+          "title": "Allow Every Tick",
+          "type": "boolean"
+        },
+        "arguments": {
+          "additionalProperties": true,
+          "title": "Arguments",
+          "type": "object"
+        },
+        "command": {
+          "title": "Command",
+          "type": "string"
+        },
+        "issue_policy": {
+          "anyOf": [
+            {
+              "enum": [
+                "once_per_activation",
+                "once_per_model_lifetime",
+                "every_tick"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issue Policy"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "ActionCall",
+      "type": "object"
+    },
+    "Assumption": {
+      "additionalProperties": false,
+      "properties": {
+        "affects": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Affects",
+          "type": "array"
+        },
+        "confirmation": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "confirmed",
+            "rejected"
+          ],
+          "title": "Confirmation",
+          "type": "string"
+        },
+        "confirmed_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confirmed By"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "impact": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Impact"
+        },
+        "requires_confirmation": {
+          "default": false,
+          "title": "Requires Confirmation",
+          "type": "boolean"
+        },
+        "statement": {
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "statement"
+      ],
+      "title": "Assumption",
+      "type": "object"
+    },
+    "Basis": {
+      "additionalProperties": false,
+      "properties": {
+        "assumptions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Assumptions",
+          "type": "array"
+        },
+        "confirmation": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "confirmed",
+            "rejected"
+          ],
+          "title": "Confirmation",
+          "type": "string"
+        },
+        "confirmed_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Confirmed By"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "rationale": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rationale"
+        },
+        "status": {
+          "enum": [
+            "explicit",
+            "inferred",
+            "conflicting",
+            "unknown",
+            "user_specified"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "Basis",
+      "type": "object"
+    },
+    "Behavior": {
+      "additionalProperties": false,
+      "properties": {
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/ActionCall"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Basis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "claims": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Claims",
+          "type": "array"
+        },
+        "continuous": {
+          "default": false,
+          "title": "Continuous",
+          "type": "boolean"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "failure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Outcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "const": "action",
+          "default": "action",
+          "title": "Kind",
+          "type": "string"
+        },
+        "memory": {
+          "items": {
+            "$ref": "#/$defs/MemoryVar"
+          },
+          "title": "Memory",
+          "type": "array"
+        },
+        "messages": {
+          "$ref": "#/$defs/BehaviorMessages"
+        },
+        "precondition": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Precondition"
+        },
+        "success": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Outcome"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timeout"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "Behavior",
+      "type": "object"
+    },
+    "BehaviorMessages": {
+      "additionalProperties": false,
+      "properties": {
+        "failure": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure"
+        },
+        "running": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Running"
+        },
+        "success": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Success"
+        }
+      },
+      "title": "BehaviorMessages",
+      "type": "object"
+    },
+    "Blackboard": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "scope": {
+          "const": "platform",
+          "default": "platform",
+          "title": "Scope",
+          "type": "string"
+        },
+        "variables": {
+          "items": {
+            "$ref": "#/$defs/Variable"
+          },
+          "title": "Variables",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "Blackboard",
+      "type": "object"
+    },
+    "Command": {
+      "additionalProperties": false,
+      "properties": {
+        "subordinates": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Subordinates",
+          "type": "array"
+        },
+        "superior": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Superior"
+        }
+      },
+      "title": "Command",
+      "type": "object"
+    },
+    "ComponentDependency": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "title": "Capability",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "capability"
+      ],
+      "title": "ComponentDependency",
+      "type": "object"
+    },
+    "Condition": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "expression": {
+          "additionalProperties": true,
+          "title": "Expression",
+          "type": "object"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "expression"
+      ],
+      "title": "Condition",
+      "type": "object"
+    },
+    "Coordination": {
+      "additionalProperties": false,
+      "properties": {
+        "ack_timeout": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantitySpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "active_when": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Active When"
+        },
+        "basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Basis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "bound_distance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DistanceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "followers": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Followers"
+        },
+        "formation_ref": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Formation Ref"
+        },
+        "groups": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Groups"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "initiator": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Initiator"
+        },
+        "leader": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Leader"
+        },
+        "objective": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Objective"
+        },
+        "participants": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Participants"
+        },
+        "pattern": {
+          "title": "Pattern",
+          "type": "string"
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Priority"
+        },
+        "receiver": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Receiver"
+        },
+        "reporter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reporter"
+        },
+        "resync_interval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantitySpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "standoff_distance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DistanceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "pattern"
+      ],
+      "title": "Coordination",
+      "type": "object"
+    },
+    "DebugOptions": {
+      "additionalProperties": false,
+      "properties": {
+        "behavior_tree_trace": {
+          "default": false,
+          "title": "Behavior Tree Trace",
+          "type": "boolean"
+        },
+        "script_writes": {
+          "default": false,
+          "title": "Script Writes",
+          "type": "boolean"
+        },
+        "state_transitions": {
+          "default": false,
+          "title": "State Transitions",
+          "type": "boolean"
+        }
+      },
+      "title": "DebugOptions",
+      "type": "object"
+    },
+    "Delivery": {
+      "additionalProperties": false,
+      "properties": {
+        "latency": {
+          "$ref": "#/$defs/QuantitySpec"
+        },
+        "reliability": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Reliability",
+          "type": "number"
+        }
+      },
+      "title": "Delivery",
+      "type": "object"
+    },
+    "Dependencies": {
+      "additionalProperties": false,
+      "properties": {
+        "comms": {
+          "items": {
+            "$ref": "#/$defs/ComponentDependency"
+          },
+          "title": "Comms",
+          "type": "array"
+        },
+        "energy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EnergyDependency"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mover": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MoverDependency"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "processors": {
+          "items": {
+            "$ref": "#/$defs/ComponentDependency"
+          },
+          "title": "Processors",
+          "type": "array"
+        },
+        "sensors": {
+          "items": {
+            "$ref": "#/$defs/ComponentDependency"
+          },
+          "title": "Sensors",
+          "type": "array"
+        },
+        "weapons": {
+          "items": {
+            "$ref": "#/$defs/ComponentDependency"
+          },
+          "title": "Weapons",
+          "type": "array"
+        }
+      },
+      "title": "Dependencies",
+      "type": "object"
+    },
+    "DistanceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "literal_distance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantitySpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "parameter_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parameter Ref"
+        },
+        "scale": {
+          "default": 1.0,
+          "title": "Scale",
+          "type": "number"
+        }
+      },
+      "title": "DistanceRef",
+      "type": "object"
+    },
+    "During": {
+      "additionalProperties": false,
+      "properties": {
+        "duration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantitySpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "from": {
+          "default": "start",
+          "title": "From",
+          "type": "string"
+        }
+      },
+      "title": "During",
+      "type": "object"
+    },
+    "EnergyDependency": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "default": "fuel_tracking",
+          "title": "Capability",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "title": "EnergyDependency",
+      "type": "object"
+    },
+    "Environment": {
+      "additionalProperties": false,
+      "properties": {
+        "duration": {
+          "$ref": "#/$defs/QuantitySpec"
+        },
+        "random_seed": {
+          "default": 0,
+          "title": "Random Seed",
+          "type": "integer"
+        },
+        "routes": {
+          "additionalProperties": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          },
+          "title": "Routes",
+          "type": "object"
+        },
+        "terrain": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Terrain"
+        },
+        "terrain_map": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Terrain Map"
+        },
+        "time_step": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantitySpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "waypoints": {
+          "additionalProperties": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "title": "Waypoints",
+          "type": "object"
+        }
+      },
+      "required": [
+        "duration"
+      ],
+      "title": "Environment",
+      "type": "object"
+    },
+    "EvidencePackageRef": {
+      "additionalProperties": false,
+      "properties": {
+        "content_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Hash"
+        },
+        "package_id": {
+          "title": "Package Id",
+          "type": "string"
+        },
+        "path": {
+          "default": "evidence_package.json",
+          "title": "Path",
+          "type": "string"
+        },
+        "readiness": {
+          "default": "passed",
+          "enum": [
+            "passed",
+            "failed",
+            "overridden"
+          ],
+          "title": "Readiness",
+          "type": "string"
+        }
+      },
+      "required": [
+        "package_id"
+      ],
+      "title": "EvidencePackageRef",
+      "type": "object"
+    },
+    "Execution": {
+      "additionalProperties": false,
+      "properties": {
+        "architecture": {
+          "enum": [
+            "script_processor",
+            "behavior_tree",
+            "state_machine",
+            "state_machine_with_behavior_trees"
+          ],
+          "title": "Architecture",
+          "type": "string"
+        },
+        "controller_name": {
+          "default": "tactical_controller",
+          "title": "Controller Name",
+          "type": "string"
+        },
+        "debug": {
+          "$ref": "#/$defs/DebugOptions"
+        },
+        "deterministic": {
+          "default": true,
+          "title": "Deterministic",
+          "type": "boolean"
+        },
+        "random_seed_parameter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Random Seed Parameter"
+        },
+        "update_interval": {
+          "$ref": "#/$defs/QuantitySpec"
+        }
+      },
+      "required": [
+        "architecture",
+        "update_interval"
+      ],
+      "title": "Execution",
+      "type": "object"
+    },
+    "Formation": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Basis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "reference": {
+          "const": "leader",
+          "default": "leader",
+          "title": "Reference",
+          "type": "string"
+        },
+        "slots": {
+          "items": {
+            "$ref": "#/$defs/Slot"
+          },
+          "title": "Slots",
+          "type": "array"
+        },
+        "tolerance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DistanceRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "slots"
+      ],
+      "title": "Formation",
+      "type": "object"
+    },
+    "MemoryVar": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Default"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "bool",
+            "int",
+            "double",
+            "string"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "default"
+      ],
+      "title": "MemoryVar",
+      "type": "object"
+    },
+    "Message": {
+      "additionalProperties": false,
+      "properties": {
+        "delivery": {
+          "$ref": "#/$defs/Delivery"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "$ref": "#/$defs/MessageField"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "title": "From"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "to": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            }
+          ],
+          "title": "To"
+        }
+      },
+      "required": [
+        "id",
+        "from",
+        "to"
+      ],
+      "title": "Message",
+      "type": "object"
+    },
+    "MessageField": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "bool",
+            "int",
+            "double",
+            "string"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ],
+      "title": "MessageField",
+      "type": "object"
+    },
+    "ModelMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "authoring_mode": {
+          "default": "agent_generated",
+          "enum": [
+            "agent_generated",
+            "user_authored",
+            "mixed"
+          ],
+          "title": "Authoring Mode",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "display_name": {
+          "title": "Display Name",
+          "type": "string"
+        },
+        "domain_concepts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domain Concepts",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "intent": {
+          "title": "Intent",
+          "type": "string"
+        },
+        "version": {
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "display_name",
+        "version",
+        "intent"
+      ],
+      "title": "ModelMeta",
+      "type": "object"
+    },
+    "MoverDependency": {
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "title": "Capability",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "capability"
+      ],
+      "title": "MoverDependency",
+      "type": "object"
+    },
+    "Outcome": {
+      "additionalProperties": false,
+      "properties": {
+        "expression": {
+          "additionalProperties": true,
+          "title": "Expression",
+          "type": "object"
+        }
+      },
+      "required": [
+        "expression"
+      ],
+      "title": "Outcome",
+      "type": "object"
+    },
+    "Parameter": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Basis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "maximum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maximum"
+        },
+        "minimum": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Minimum"
+        },
+        "type": {
+          "enum": [
+            "distance",
+            "speed",
+            "time",
+            "angle",
+            "altitude",
+            "mass",
+            "frequency",
+            "ratio",
+            "integer",
+            "boolean",
+            "string"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "vocabulary": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Vocabulary"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "Parameter",
+      "type": "object"
+    },
+    "Policy": {
+      "additionalProperties": false,
+      "properties": {
+        "count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Count"
+        },
+        "type": {
+          "enum": [
+            "threshold",
+            "all",
+            "one",
+            "fail_on_one",
+            "fail_on_all"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "Policy",
+      "type": "object"
+    },
+    "Provenance": {
+      "additionalProperties": false,
+      "properties": {
+        "evidence_package": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EvidencePackageRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "references": {
+          "items": {
+            "$ref": "#/$defs/Reference"
+          },
+          "title": "References",
+          "type": "array"
+        },
+        "requirements": {
+          "items": {
+            "$ref": "#/$defs/Requirement"
+          },
+          "title": "Requirements",
+          "type": "array"
+        }
+      },
+      "title": "Provenance",
+      "type": "object"
+    },
+    "QuantitySpec": {
+      "additionalProperties": false,
+      "properties": {
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "title": "QuantitySpec",
+      "type": "object"
+    },
+    "Reference": {
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "default": "public",
+          "enum": [
+            "public",
+            "user_private"
+          ],
+          "title": "Classification",
+          "type": "string"
+        },
+        "content_hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Content Hash"
+        },
+        "kind": {
+          "enum": [
+            "crow_source",
+            "user_document",
+            "standard",
+            "other"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "locator": {
+          "default": "",
+          "title": "Locator",
+          "type": "string"
+        },
+        "quality_tier": {
+          "anyOf": [
+            {
+              "enum": [
+                "A",
+                "B",
+                "C",
+                "D"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quality Tier"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "kind"
+      ],
+      "title": "Reference",
+      "type": "object"
+    },
+    "Requirement": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "default": "user_input",
+          "enum": [
+            "user_input",
+            "user_document"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "locator": {
+          "default": "conversation",
+          "title": "Locator",
+          "type": "string"
+        },
+        "source_id": {
+          "title": "Source Id",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_id",
+        "summary"
+      ],
+      "title": "Requirement",
+      "type": "object"
+    },
+    "Resource": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "policy": {
+          "default": "exclusive",
+          "enum": [
+            "exclusive",
+            "shared"
+          ],
+          "title": "Policy",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "Resource",
+      "type": "object"
+    },
+    "Role": {
+      "additionalProperties": false,
+      "properties": {
+        "blackboards": {
+          "items": {
+            "$ref": "#/$defs/Blackboard"
+          },
+          "title": "Blackboards",
+          "type": "array"
+        },
+        "capability_class": {
+          "enum": [
+            "ground_vehicle",
+            "air_vehicle",
+            "surface_vessel",
+            "static_node"
+          ],
+          "title": "Capability Class",
+          "type": "string"
+        },
+        "command": {
+          "$ref": "#/$defs/Command"
+        },
+        "count": {
+          "default": 1,
+          "maximum": 64,
+          "minimum": 1,
+          "title": "Count",
+          "type": "integer"
+        },
+        "dependencies": {
+          "$ref": "#/$defs/Dependencies"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "root_tree": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Root Tree"
+        },
+        "state_machine": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StateMachine"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "capability_class"
+      ],
+      "title": "Role",
+      "type": "object"
+    },
+    "Scenario": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "environment": {
+          "$ref": "#/$defs/Environment"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/ScenarioEvent"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "expect": {
+          "items": {
+            "$ref": "#/$defs/ScenarioExpectation"
+          },
+          "title": "Expect",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "initial": {
+          "additionalProperties": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Initial",
+          "type": "object"
+        },
+        "traces_to": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Traces To",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "environment"
+      ],
+      "title": "Scenario",
+      "type": "object"
+    },
+    "ScenarioEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantitySpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "duration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantitySpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "loss": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Loss",
+          "type": "number"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "position": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Position"
+        },
+        "target_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Id"
+        },
+        "type": {
+          "enum": [
+            "marker",
+            "spawn_hostile",
+            "comm_degradation",
+            "message_loss",
+            "remove_hostile"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "when": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "When"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "ScenarioEvent",
+      "type": "object"
+    },
+    "ScenarioExpectation": {
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Command"
+        },
+        "during": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/During"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "equals": {
+          "default": null,
+          "title": "Equals"
+        },
+        "formation": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Formation"
+        },
+        "gt": {
+          "default": null,
+          "title": "Gt"
+        },
+        "gte": {
+          "default": null,
+          "title": "Gte"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "instance": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Instance"
+        },
+        "lt": {
+          "default": null,
+          "title": "Lt"
+        },
+        "lte": {
+          "default": null,
+          "title": "Lte"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Message"
+        },
+        "observable": {
+          "title": "Observable",
+          "type": "string"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "within": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Window"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "id",
+        "observable"
+      ],
+      "title": "ScenarioExpectation",
+      "type": "object"
+    },
+    "Slot": {
+      "additionalProperties": false,
+      "properties": {
+        "forward": {
+          "$ref": "#/$defs/DistanceRef"
+        },
+        "right": {
+          "$ref": "#/$defs/DistanceRef"
+        },
+        "role_instance": {
+          "title": "Role Instance",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role_instance",
+        "forward",
+        "right"
+      ],
+      "title": "Slot",
+      "type": "object"
+    },
+    "State": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "terminal": {
+          "default": false,
+          "title": "Terminal",
+          "type": "boolean"
+        },
+        "transitions": {
+          "items": {
+            "$ref": "#/$defs/Transition"
+          },
+          "title": "Transitions",
+          "type": "array"
+        },
+        "tree": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tree"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "State",
+      "type": "object"
+    },
+    "StateMachine": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "initial_state": {
+          "title": "Initial State",
+          "type": "string"
+        },
+        "states": {
+          "items": {
+            "$ref": "#/$defs/State"
+          },
+          "title": "States",
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "initial_state",
+        "states"
+      ],
+      "title": "StateMachine",
+      "type": "object"
+    },
+    "TestCase": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "enum": [
+                "nominal",
+                "precondition_failure",
+                "priority_transition",
+                "resource_unavailable",
+                "timeout_or_loss"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "expect": {
+          "$ref": "#/$defs/TestExpect"
+        },
+        "given": {
+          "$ref": "#/$defs/TestGiven"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "given",
+        "expect"
+      ],
+      "title": "TestCase",
+      "type": "object"
+    },
+    "TestExpect": {
+      "additionalProperties": false,
+      "properties": {
+        "blackboard": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Blackboard"
+        },
+        "fired_transition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fired Transition"
+        },
+        "issued_actions": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issued Actions"
+        },
+        "next_state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Next State"
+        },
+        "selected_path": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Selected Path"
+        },
+        "sent_messages": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sent Messages"
+        },
+        "tree_status": {
+          "anyOf": [
+            {
+              "enum": [
+                "success",
+                "failure",
+                "running"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tree Status"
+        }
+      },
+      "title": "TestExpect",
+      "type": "object"
+    },
+    "TestGiven": {
+      "additionalProperties": false,
+      "properties": {
+        "blackboard": {
+          "additionalProperties": true,
+          "title": "Blackboard",
+          "type": "object"
+        },
+        "components": {
+          "additionalProperties": true,
+          "title": "Components",
+          "type": "object"
+        },
+        "coordination": {
+          "additionalProperties": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Coordination",
+          "type": "object"
+        },
+        "elapsed": {
+          "additionalProperties": true,
+          "title": "Elapsed",
+          "type": "object"
+        },
+        "formation": {
+          "additionalProperties": true,
+          "title": "Formation",
+          "type": "object"
+        },
+        "instance": {
+          "default": 0,
+          "title": "Instance",
+          "type": "integer"
+        },
+        "messages": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Messages",
+          "type": "array"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "platform": {
+          "additionalProperties": true,
+          "title": "Platform",
+          "type": "object"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "simulation": {
+          "additionalProperties": true,
+          "title": "Simulation",
+          "type": "object"
+        },
+        "state": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "State"
+        },
+        "team": {
+          "additionalProperties": true,
+          "title": "Team",
+          "type": "object"
+        },
+        "terrain": {
+          "additionalProperties": true,
+          "title": "Terrain",
+          "type": "object"
+        },
+        "tracks": {
+          "additionalProperties": true,
+          "title": "Tracks",
+          "type": "object"
+        }
+      },
+      "title": "TestGiven",
+      "type": "object"
+    },
+    "Timeout": {
+      "additionalProperties": false,
+      "properties": {
+        "result": {
+          "default": "failure",
+          "enum": [
+            "success",
+            "failure"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "title": "Timeout",
+      "type": "object"
+    },
+    "Transition": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Basis"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "priority": {
+          "default": 0,
+          "title": "Priority",
+          "type": "integer"
+        },
+        "synchronize_with": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Synchronize With"
+        },
+        "to": {
+          "title": "To",
+          "type": "string"
+        },
+        "transition_id": {
+          "title": "Transition Id",
+          "type": "string"
+        },
+        "when": {
+          "additionalProperties": true,
+          "title": "When",
+          "type": "object"
+        }
+      },
+      "required": [
+        "transition_id",
+        "to",
+        "when"
+      ],
+      "title": "Transition",
+      "type": "object"
+    },
+    "Tree": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "root": {
+          "$ref": "#/$defs/TreeNode"
+        }
+      },
+      "required": [
+        "id",
+        "root"
+      ],
+      "title": "Tree",
+      "type": "object"
+    },
+    "TreeNode": {
+      "additionalProperties": false,
+      "properties": {
+        "behavior": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Behavior"
+        },
+        "children": {
+          "items": {
+            "$ref": "#/$defs/TreeNode"
+          },
+          "title": "Children",
+          "type": "array"
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Condition"
+        },
+        "count": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Count"
+        },
+        "decorator": {
+          "anyOf": [
+            {
+              "enum": [
+                "inverter",
+                "succeeder",
+                "negator",
+                "repeat_count",
+                "repeat_until_done",
+                "repeat_for_duration"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Decorator"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "duration": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuantitySpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "failure_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Policy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "fitness": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fitness"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "success_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Policy"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tree": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Tree"
+        },
+        "type": {
+          "enum": [
+            "behavior",
+            "condition",
+            "sequence",
+            "sequence_with_memory",
+            "selector",
+            "selector_with_memory",
+            "priority_selector",
+            "weighted_random",
+            "parallel",
+            "decorator",
+            "subtree"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "until": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Until"
+        },
+        "weight": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Weight"
+        }
+      },
+      "required": [
+        "node_id",
+        "type"
+      ],
+      "title": "TreeNode",
+      "type": "object"
+    },
+    "Variable": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "title": "Default"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "bool",
+            "int",
+            "double",
+            "string"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "default"
+      ],
+      "title": "Variable",
+      "type": "object"
+    },
+    "Window": {
+      "additionalProperties": false,
+      "properties": {
+        "after": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After"
+        },
+        "after_event": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "After Event"
+        },
+        "unit": {
+          "title": "Unit",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "unit"
+      ],
+      "title": "Window",
+      "type": "object"
+    }
+  },
+  "$id": "https://afsim-research-agent.local/schema/behavior_spec-1.0.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "assumptions": {
+      "items": {
+        "$ref": "#/$defs/Assumption"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "behaviors": {
+      "items": {
+        "$ref": "#/$defs/Behavior"
+      },
+      "title": "Behaviors",
+      "type": "array"
+    },
+    "conditions": {
+      "items": {
+        "$ref": "#/$defs/Condition"
+      },
+      "title": "Conditions",
+      "type": "array"
+    },
+    "coordination": {
+      "items": {
+        "$ref": "#/$defs/Coordination"
+      },
+      "title": "Coordination",
+      "type": "array"
+    },
+    "execution": {
+      "$ref": "#/$defs/Execution"
+    },
+    "formations": {
+      "items": {
+        "$ref": "#/$defs/Formation"
+      },
+      "title": "Formations",
+      "type": "array"
+    },
+    "messages": {
+      "items": {
+        "$ref": "#/$defs/Message"
+      },
+      "title": "Messages",
+      "type": "array"
+    },
+    "model": {
+      "$ref": "#/$defs/ModelMeta"
+    },
+    "parameters": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Parameter"
+      },
+      "title": "Parameters",
+      "type": "object"
+    },
+    "provenance": {
+      "$ref": "#/$defs/Provenance"
+    },
+    "resources": {
+      "items": {
+        "$ref": "#/$defs/Resource"
+      },
+      "title": "Resources",
+      "type": "array"
+    },
+    "roles": {
+      "items": {
+        "$ref": "#/$defs/Role"
+      },
+      "minItems": 1,
+      "title": "Roles",
+      "type": "array"
+    },
+    "scenarios": {
+      "items": {
+        "$ref": "#/$defs/Scenario"
+      },
+      "title": "Scenarios",
+      "type": "array"
+    },
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "tests": {
+      "items": {
+        "$ref": "#/$defs/TestCase"
+      },
+      "title": "Tests",
+      "type": "array"
+    },
+    "trees": {
+      "items": {
+        "$ref": "#/$defs/Tree"
+      },
+      "title": "Trees",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "model",
+    "execution",
+    "roles",
+    "parameters",
+    "conditions",
+    "behaviors",
+    "trees",
+    "tests"
+  ],
+  "title": "Tactical Behavior IR 1.0 (behavior_spec.yaml)",
+  "type": "object"
+}

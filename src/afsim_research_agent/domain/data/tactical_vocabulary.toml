@@ -1,0 +1,250 @@
+# Controlled tactical vocabulary.
+#
+# Used to (1) give the planner a glossary of professional terms, (2) expand
+# queries deterministically, (3) route doctrine queries to the right
+# publications and (4) build Chinese search strings for manual CNKI/Wanfang work.
+#
+# Matching is case-insensitive substring matching on the requirement, research
+# questions and key terms, over `preferred`, `en` and `zh`.
+# `doctrine` must list real publication designations only.
+
+# ---------------------------------------------------------------- formations
+[[concept]]
+id = "formation.wedge"
+category = "formation"
+preferred = "wedge formation"
+en = ["wedge"]
+zh = ["楔形队形", "楔形编队", "三角队形"]
+doctrine = ["ATP 3-20.15", "ATP 3-21.71"]
+scholarly = ["formation geometry", "multi-vehicle formation control"]
+
+[[concept]]
+id = "formation.vee"
+category = "formation"
+preferred = "vee formation"
+en = ["vee", "V formation", "V-formation"]
+zh = ["V形队形", "倒楔形"]
+doctrine = ["ATP 3-20.15"]
+scholarly = ["formation geometry"]
+
+[[concept]]
+id = "formation.echelon"
+category = "formation"
+preferred = "echelon formation"
+en = ["echelon left", "echelon right", "echelon"]
+zh = ["梯形队形", "梯次队形", "梯队"]
+doctrine = ["ATP 3-20.15"]
+scholarly = ["formation geometry"]
+
+[[concept]]
+id = "formation.line"
+category = "formation"
+preferred = "line formation"
+en = ["line abreast", "line formation"]
+zh = ["横队", "一字横队", "并列队形"]
+doctrine = ["ATP 3-20.15"]
+scholarly = ["formation geometry"]
+
+[[concept]]
+id = "formation.column"
+category = "formation"
+preferred = "column formation"
+en = ["column", "staggered column", "file"]
+zh = ["纵队", "交错纵队", "纵队队形"]
+doctrine = ["ATP 3-20.15", "ATP 4-01.45"]
+scholarly = ["platoon movement", "convoy formation"]
+
+[[concept]]
+id = "formation.general"
+category = "formation"
+preferred = "tactical formation"
+en = ["formation", "formation change", "formation transition", "formation switching"]
+zh = ["编队", "队形", "队形变换", "队形转换", "编队构型"]
+doctrine = []
+scholarly = ["formation control", "formation reconfiguration", "formation switching"]
+
+# --------------------------------------------------------- movement techniques
+[[concept]]
+id = "movement.techniques"
+category = "movement"
+preferred = "movement techniques"
+en = ["traveling overwatch", "bounding overwatch", "movement technique", "overwatch"]
+zh = ["行进掩护", "交替跃进", "跃进掩护", "运动方式", "掩护行进"]
+doctrine = ["ATP 3-20.15", "ATP 3-21.8"]
+scholarly = ["bounding overwatch", "cooperative maneuver"]
+
+# -------------------------------------------------------------- unit types
+[[concept]]
+id = "unit.tank_platoon"
+category = "unit"
+preferred = "tank platoon"
+en = ["tank platoon", "armored platoon", "armor platoon", "tank"]
+zh = ["坦克排", "装甲排", "坦克分队", "装甲车", "坦克"]
+doctrine = ["ATP 3-20.15"]
+scholarly = ["armored vehicle", "ground combat vehicle"]
+
+[[concept]]
+id = "unit.mech_infantry"
+category = "unit"
+preferred = "mechanized infantry platoon"
+en = ["mechanized infantry", "infantry fighting vehicle", "Bradley"]
+zh = ["机械化步兵", "步兵战车", "机步排"]
+doctrine = ["ATP 3-21.71"]
+scholarly = ["infantry fighting vehicle"]
+
+[[concept]]
+id = "unit.reconnaissance"
+category = "unit"
+preferred = "reconnaissance platoon"
+en = ["scout platoon", "reconnaissance platoon", "recon"]
+zh = ["侦察排", "侦察分队", "侦察"]
+doctrine = ["ATP 3-20.98"]
+scholarly = ["reconnaissance mission planning"]
+
+[[concept]]
+id = "unit.convoy"
+category = "unit"
+preferred = "tactical convoy"
+en = ["convoy", "march column", "road march"]
+zh = ["车队", "行军纵队", "输送车队", "摩托化行军"]
+doctrine = ["ATP 4-01.45"]
+scholarly = ["convoy protection", "vehicle platooning"]
+
+[[concept]]
+id = "unit.attack_aviation"
+category = "unit"
+preferred = "attack reconnaissance aviation"
+en = ["attack helicopter", "attack aviation", "helicopter team"]
+zh = ["武装直升机", "攻击直升机", "直升机编队"]
+doctrine = ["ATP 3-04.1", "FM 3-04"]
+scholarly = ["helicopter formation"]
+
+[[concept]]
+id = "unit.fighter"
+category = "unit"
+preferred = "fighter formation tactics"
+en = ["fighter", "two-ship", "four-ship", "flight lead", "wingman", "air combat"]
+zh = ["战斗机", "双机", "四机", "长机", "僚机", "空战", "编队空战"]
+doctrine = []
+scholarly = ["air combat maneuvering", "beyond visual range air combat", "multi-aircraft cooperative air combat"]
+
+# ---------------------------------------------------------- manned/unmanned
+[[concept]]
+id = "coop.mumt"
+category = "cooperation"
+preferred = "manned-unmanned teaming"
+en = ["manned-unmanned teaming", "manned unmanned teaming", "MUM-T", "MUMT", "loyal wingman"]
+zh = ["有人/无人协同", "有人无人协同", "有人-无人协同", "忠诚僚机", "有/无人协同"]
+doctrine = ["FM 3-04", "ATP 3-04.1"]
+scholarly = ["manned-unmanned teaming", "levels of interoperability unmanned aircraft", "human-autonomy teaming"]
+
+[[concept]]
+id = "coop.swarm"
+category = "cooperation"
+preferred = "UAV swarm cooperation"
+en = ["swarm", "UAV swarm", "drone swarm", "multi-UAV"]
+zh = ["蜂群", "无人机集群", "集群", "多无人机"]
+doctrine = []
+scholarly = ["UAV swarm cooperative control", "flocking", "multi-UAV cooperative mission planning"]
+
+[[concept]]
+id = "coop.leader_follower"
+category = "cooperation"
+preferred = "leader-follower coordination"
+en = ["leader-follower", "leader follower", "lead and wingman"]
+zh = ["领航-跟随", "长僚机", "领航跟随"]
+doctrine = []
+scholarly = ["leader-follower formation control"]
+
+[[concept]]
+id = "coop.task_allocation"
+category = "decision"
+preferred = "multi-agent task allocation"
+en = ["task allocation", "task assignment", "role assignment", "division of labor"]
+zh = ["任务分配", "任务分工", "角色分配", "协同分工"]
+doctrine = []
+scholarly = ["multi-robot task allocation", "consensus-based bundle algorithm", "market-based task allocation"]
+
+[[concept]]
+id = "coop.communication"
+category = "cooperation"
+preferred = "communication-constrained coordination"
+en = ["communication", "datalink", "data link", "Link 16", "comms degraded", "bandwidth"]
+zh = ["通信", "数据链", "通信受限", "通信约束", "链路"]
+doctrine = []
+scholarly = ["communication-constrained multi-agent coordination", "intermittent communication"]
+
+# ------------------------------------------------------------ threat/engagement
+[[concept]]
+id = "decision.tewa"
+category = "decision"
+preferred = "threat evaluation and weapon assignment"
+en = ["threat evaluation", "threat assessment", "weapon assignment", "weapon-target assignment", "TEWA"]
+zh = ["威胁评估", "威胁判断", "火力分配", "武器目标分配", "目标分配"]
+doctrine = []
+scholarly = ["threat evaluation and weapon assignment", "weapon target assignment problem"]
+
+[[concept]]
+id = "decision.engagement"
+category = "decision"
+preferred = "engagement decision"
+en = ["engagement", "rules of engagement", "fire control", "threat response"]
+zh = ["交战", "交战决策", "威胁响应", "火力控制", "开火时机"]
+doctrine = ["FM 3-90"]
+scholarly = ["engagement decision making", "tactical decision making"]
+
+# ---------------------------------------------------------------- terrain
+[[concept]]
+id = "terrain.general"
+category = "terrain"
+preferred = "terrain analysis"
+en = ["terrain", "OAKOC", "cover and concealment", "mobility corridor"]
+zh = ["地形", "地形分析", "掩蔽", "机动走廊", "通视"]
+doctrine = ["ATP 2-01.3"]
+scholarly = ["terrain-aware path planning", "line of sight analysis"]
+
+[[concept]]
+id = "terrain.urban"
+category = "terrain"
+preferred = "urban operations"
+en = ["urban", "MOUT", "built-up area", "city"]
+zh = ["城市", "城镇", "城区作战", "巷战"]
+doctrine = ["ATP 3-06"]
+scholarly = ["urban warfare simulation"]
+
+# ----------------------------------------------------------- behavior modeling
+[[concept]]
+id = "model.behavior_tree"
+category = "modeling"
+preferred = "behavior tree"
+en = ["behavior tree", "behaviour tree", "BT"]
+zh = ["行为树"]
+doctrine = []
+scholarly = ["behavior trees in robotics and AI", "behavior tree computer generated forces"]
+
+[[concept]]
+id = "model.state_machine"
+category = "modeling"
+preferred = "finite state machine"
+en = ["state machine", "FSM", "state transition"]
+zh = ["状态机", "有限状态机", "状态转换", "状态转移"]
+doctrine = []
+scholarly = ["finite state machine agent behavior"]
+
+[[concept]]
+id = "model.cgf"
+category = "modeling"
+preferred = "computer generated forces"
+en = ["computer generated forces", "CGF", "semi-automated forces", "SAF", "constructive simulation"]
+zh = ["计算机生成兵力", "兵力生成", "构造仿真", "作战仿真", "兵棋推演"]
+doctrine = []
+scholarly = ["computer generated forces behavior modeling", "human behavior representation military simulation"]
+
+[[concept]]
+id = "model.afsim"
+category = "modeling"
+preferred = "AFSIM"
+en = ["AFSIM", "Advanced Framework for Simulation, Integration and Modeling", "WSF"]
+zh = ["AFSIM"]
+doctrine = []
+scholarly = ["AFSIM", "Advanced Framework for Simulation, Integration and Modeling"]

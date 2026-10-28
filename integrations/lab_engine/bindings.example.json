@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy to <model package>/bindings/lab_engine.json and replace engine names.",
+  "entities": {
+    "platoon_leader[0]": "tank_01",
+    "wingman[0]": "tank_02",
+    "wingman[1]": "tank_03",
+    "wingman[2]": "tank_04"
+  },
+  "capabilities": {
+    "platform:ground_vehicle": {"component": "LAB_TRACKED_VEHICLE"},
+    "route_following_ground": {"component": "LAB_GROUND_MOVER", "settings": {"max_speed_mps": 15}},
+    "visual_search": {"component": "LAB_OPTICAL_SENSOR", "settings": {"range_m": 2000}},
+    "voice_data": {"component": "LAB_VHF_RADIO", "settings": {}}
+  }
+}

@@ -1,0 +1,1749 @@
+format: PlatformCapabilityCatalogPart
+format_version: 0.3.0
+catalog:
+  id: afsim_2_9_capabilities
+  platform_family: afsim
+  platform_version: '2.9'
+  language: zh-CN
+  classification: public
+  updated_on: '2026-10-16'
+part:
+  domain: communication
+  display_name: 通信类
+  summary: 平台之间如何收发消息、谁能和谁通信、通信何时中断或受干扰、传输有多快。
+  subcategories:
+  - id: messaging
+    display_name: 消息收发
+    summary: 发送、接收、定址、群发消息，以及带确认的报告；行为之间协同的基本手段。
+  - id: reporting
+    display_name: 情报与航迹上报
+    summary: 把已有的目标航迹报告给上级或友邻。
+  - id: link_state
+    display_name: 链路与设备状态
+    summary: 通信是否可用、设备开关与无线电静默、受干扰感知、备用频率切换、通信中断判定。
+  - id: network
+    display_name: 网络组织与路由
+    summary: 谁和谁在同一个网里、网络拓扑（星形、网状、环形等）、随距离变化的动态组网、消息路由。
+  - id: transmission
+    display_name: 传输性能
+    summary: 发送队列、优先级与重传，传播时延与速率，共享信道的竞争与传输模式。
+  - id: device_type
+    display_name: 通信设备类型
+    summary: 有线、无线电、时分数据链、水下、激光等设备的特性与边界。
+  - id: fidelity_selection
+    display_name: 保真度选择
+    summary: 按保真度在多个通信模型之间选择。
+conventions:
+  status: capability/provides/accepts 状态：available | partial | unavailable | unknown；partial = 来源有说明但接口参数或运行验证未完成；unknown
+    = 推断存在但来源未给出接口。
+  ir_v1: 对应 IR 1.0 的动作或操作数；null 表示 IR 1.0 无对应项（ir_gap）。
+  kind: comm = 通信设备提供；network = 网络配置；processor = 由处理组件提供；composite = 由其他能力组合实现（见 composed_of）。
+  replaces: 记录从 0.2.0 目录迁移的条目。
+capabilities:
+- id: message_exchange
+  display_name: 类型化消息交换
+  aliases: []
+  domain: communication
+  subcategory: messaging
+  kind: comm
+  description: 发送和接收保留类型、消息身份与端点身份的消息。
+  natural_language:
+    definition: 发送和接收保留类型、消息身份与端点身份的消息。
+    use_when: 行为需要交换状态、控制或业务内容并按类型处理时。
+    expected_result: 收到时能分辨消息类型，发送请求可明确内容和收发接口。
+    boundaries:
+    - 交换描述消息内容与交付事件，传输可用性由通信链路另行表示。
+    - 消息已发送、已接收和业务任务已接受是三个不同事实。
+    - 发送端须指定发送用的通信设备；接收按消息类型分派到相应处理。
+    requirement_example: 通过指定收发接口发送状态消息，接收后按类型分派处理。
+  tactical_uses:
+  - 通报队形或阶段转换
+  - 跃进完成通报
+  - 下达或转发命令
+  - 同步状态转换
+  keywords:
+  - 消息
+  - 发送
+  - 接收
+  - 通报
+  - 广播
+  - message
+  - send
+  - receive
+  - notify
+  applicable_platform_classes: &id001
+  - air_vehicle
+  - ground_vehicle
+  - surface_vessel
+  - subsurface_vehicle
+  - space_vehicle
+  - static_node
+  - weapon_platform
+  status: partial
+  maturity: draft
+  ir_v1:
+  - send_message
+  - message_received
+  provides:
+  - ir: communication_message.received_type
+    display_name: 已接收消息类型
+    value_type: string
+    cardinality: collection
+    key: message_id
+    item_scope: per_message
+    freshness: event
+    status: partial
+    ir_v1: message_received
+    note: IR 1.0 以 message_received(消息) 判断是否收到某类消息。
+  accepts:
+  - ir: communication_action.send_message
+    display_name: 发送类型化消息
+    status: unknown
+    ir_v1: send_message
+    parameters: &id002
+    - name: message_reference
+      type: string
+      required: true
+    - name: message_type
+      type: string
+      required: true
+    - name: payload
+      type: string
+      required: true
+    - name: sender_interface
+      type: string
+      required: true
+    - name: receiver_interface
+      type: string
+      required: true
+    result:
+      type: command_status
+      values: &id003
+      - accepted
+      - rejected
+      status: unknown
+    side_effects:
+    - 可能占用发送资源并触发消息发送及后续接收事件；不保证送达或业务执行。
+  settings: []
+  dependencies:
+  - data_link_communication
+  constraints:
+  - 端点必须唯一识别通信设备，不能只给平台名称。
+  - 消息标识必须在发送者与接收者之间可关联，业务内容由相应类型解释。
+  limitations:
+  - 通用发送方法及其重载未在所读页确认，发送动作绑定未知。
+  - 接收回调只证明送达当前处理器，不证明业务执行成功或必定送达。
+  source_gaps:
+  - 通信组件与消息对象的运行时脚本接口参考（发送方法、参数、返回值、状态读取）
+  binding: local
+- id: point_to_point_communication
+  display_name: 定址通信
+  aliases: []
+  domain: communication
+  subcategory: messaging
+  kind: comm
+  description: 向明确的单一接收通信接口发送类型化消息。
+  natural_language:
+    definition: 向明确的单一接收通信接口发送类型化消息。
+    use_when: 行为需要指定唯一收件设备而非广播或关系接收者集合时。
+    expected_result: 每个发送请求保留唯一目的接口，并可关联消息身份。
+    boundaries:
+    - 定址单播是一种行为语义，不限定网络拓扑只能有两个成员。
+    - 定址消息仍可能经过多跳路由。
+    requirement_example: 向目标平台上的指定接收设备发送一条任务状态消息。
+  tactical_uses:
+  - 向排长单独报告
+  - 向指定车辆下达命令
+  keywords:
+  - 定址
+  - 单播
+  - 点对点
+  - 指定接收者
+  - unicast
+  - addressed
+  - point to point
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  ir_v1:
+  - send_message
+  provides:
+  - ir: communication_link.addressed_destination
+    display_name: 定址消息目的接口
+    value_type: string
+    cardinality: collection
+    key: message_id
+    item_scope: per_message
+    freshness: dynamic
+    status: unknown
+    ir_v1: null
+  accepts:
+  - ir: communication_action.send_addressed_message
+    display_name: 发送定址消息
+    status: unknown
+    ir_v1: send_message
+    parameters: *id002
+    result:
+      type: command_status
+      values: *id003
+      status: unknown
+    side_effects:
+    - 可能占用源接口的发送资源并触发指定目的接口的接收事件；不保证送达或业务执行。
+    note: IR 1.0 的 send_message 由消息声明给出接收者；单一接收者即定址发送。
+  settings: []
+  dependencies:
+  - message_exchange
+  constraints:
+  - 必须提供源接口和目的接口的唯一标识，并存在有效通信路径。
+  limitations:
+  - 仅声明定址通信，不从点对点网络模型推导专用连接或安全保证。
+  - 外部链接配置已证实，但任意消息的运行时发送重载及目的接口读取仍未知。
+  source_gaps:
+  - 通信组件与消息对象的运行时脚本接口参考（发送方法、参数、返回值、状态读取）
+  binding: local
+- id: group_messaging
+  display_name: 群组通信
+  aliases: []
+  domain: communication
+  subcategory: messaging
+  kind: comm
+  description: 向一个群组地址发送消息，群组内成员都能收到，减少逐一发送的消息数量。
+  natural_language:
+    definition: 设备加入一个或多个群组；发往群组地址的消息被投递给群组内所有成员。
+    use_when: 需要同时通知多个成员（全排、全连）而不逐一定址时。
+    expected_result: 一次发送，群组内具备群组收发能力的成员都收到。
+    boundaries:
+    - 发送者、接收者以及中间转发的设备都须具备群组收发能力，否则消息被丢弃。
+    - 群组能力本身不选择路径，须与常规路由一同使用。
+    - 设备能力分三级：不支持、只能发送、可收可发（默认）。
+    - 来源说明运行中加入和离开群组的接口为计划功能，目前群组成员关系在想定配置时确定。
+    requirement_example: 排长向全排群组通报转入攻击阶段，各车同时收到。
+  tactical_uses:
+  - 全排通报
+  - 全连广播
+  - 同时下达阶段转换
+  keywords:
+  - 群组
+  - 组播
+  - 广播
+  - 全排
+  - multicast
+  - group
+  - broadcast
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  ir_v1:
+  - send_message
+  provides: []
+  accepts:
+  - ir: communication_action.send_group_message
+    display_name: 向群组发送消息
+    status: unknown
+    ir_v1: send_message
+    parameters:
+    - name: message_reference
+      type: string
+      required: true
+    - name: message_type
+      type: string
+      required: true
+    - name: payload
+      type: string
+      required: true
+    - name: sender_interface
+      type: string
+      required: true
+    - name: group
+      type: string
+      required: true
+    result:
+      type: command_status
+      values: *id003
+      status: unknown
+    side_effects:
+    - 向群组内所有可达成员投递；不保证每个成员都收到。
+  - ir: communication_action.join_group
+    display_name: 运行中加入群组
+    status: unknown
+    ir_v1: null
+    parameters:
+    - name: interface
+      type: string
+      required: true
+    - name: group
+      type: string
+      required: true
+    result:
+      type: command_status
+      values: *id003
+      status: unknown
+    side_effects:
+    - 经过加入时延后开始接收该群组消息。
+    note: 来源称运行中加入/离开为计划功能。
+  - ir: communication_action.leave_group
+    display_name: 运行中离开群组
+    status: unknown
+    ir_v1: null
+    parameters:
+    - name: interface
+      type: string
+      required: true
+    - name: group
+      type: string
+      required: true
+    result:
+      type: command_status
+      values: *id003
+      status: unknown
+    side_effects:
+    - 经过离开时延后不再接收该群组消息。
+    note: 来源称运行中加入/离开为计划功能。
+  settings:
+  - name: group_membership
+    display_name: 初始加入的群组
+    type: list
+    required: false
+    sensitivity: model_characteristic
+  - name: group_capability_level
+    display_name: 群组收发能力
+    type: enumeration
+    values:
+    - none
+    - send_only
+    - send_and_receive
+    default: send_and_receive
+    required: false
+    sensitivity: model_characteristic
+  - name: group_join_delay
+    display_name: 加入群组时延
+    type: duration
+    unit: s
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  - name: group_leave_delay
+    display_name: 离开群组时延
+    type: duration
+    unit: s
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - message_exchange
+  - network_routing
+  constraints:
+  - 群组地址须在保留的群组地址段内。
+  - 路径上的转发设备也须具备群组能力。
+  limitations:
+  - 默认不启用群组协议，须在设备上显式配置。
+  - 运行中加入/离开群组不可用（来源称为计划功能）。
+  source_gaps:
+  - 通信组件与消息对象的运行时脚本接口参考（发送方法、参数、返回值、状态读取）
+  binding: local
+- id: acknowledged_messaging
+  display_name: 带确认的报告
+  aliases: []
+  domain: communication
+  subcategory: messaging
+  kind: composite
+  description: 发送报告后等待接收方确认，超时未确认则重发或按预案处理。
+  natural_language:
+    definition: 发送一条报告，等待接收方回复确认消息；在规定时间内收到确认即完成，否则视为未送达。
+    use_when: 报告必须被上级知悉（接敌报告、跃进完成、请求火力）而通信可能不可靠时。
+    expected_result: 报告方得到“已确认”或“超时”两种结果之一，可据此重发或改用其他手段。
+    boundaries:
+    - 确认只表示接收方收到消息，不表示接收方接受或执行。
+    - 确认消息本身也可能丢失，超时不等于对方未收到。
+    - 设备层的自动重传与本能力的确认是两回事。
+    requirement_example: 僚车跃进到位后向排长报告“到位”，5 秒内未收到确认则再报一次，两次无确认转为自主掩护。
+  tactical_uses:
+  - 接敌报告
+  - 跃进到位报告
+  - 请求火力
+  - 通信不可靠时确保送达
+  keywords:
+  - 确认
+  - 应答
+  - 回执
+  - 超时
+  - 重发
+  - acknowledge
+  - ack
+  - timeout
+  - report
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: ack_timeout
+    display_name: 确认等待时间
+    type: duration
+    unit: s
+    required: false
+    sensitivity: model_characteristic
+  - name: max_report_attempts
+    display_name: 最多报告次数
+    type: count
+    unit: count
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - message_exchange
+  - point_to_point_communication
+  composed_of:
+  - capability: message_exchange
+    role: 发送报告与确认消息
+  - capability: point_to_point_communication
+    role: 向指定接收者报告
+  constraints:
+  - 报告与确认须能用消息身份对应起来。
+  limitations:
+  - 没有原生的确认机制，由行为层组合实现；组合方式尚未运行验证。
+  binding: local
+- id: track_reporting
+  display_name: 航迹报告传播
+  aliases: []
+  domain: communication
+  subcategory: reporting
+  kind: processor
+  description: 向指定接收者传播已有航迹报告并保留航迹与报告来源。
+  natural_language:
+    definition: 向指定接收者传播已有航迹报告并保留航迹与报告来源。
+    use_when: 行为需要向协同节点共享已知目标信息时。
+    expected_result: 接收方获得可关联航迹身份的报告事件。
+    boundaries:
+    - 报告传播不创建测量、不关联或融合航迹。
+    - 本地状态通知和跨平台航迹报告不是同一种消息。
+    - 按周期配置的上报不是“立即上报”动作；立即上报一个接触须经消息发送组合实现。
+    requirement_example: 把本地允许报告的目标航迹经指定接口上报，区分原始和融合来源。
+  tactical_uses:
+  - 向排长报告发现敌车辆
+  - 逐级上报敌情
+  - 友邻间共享目标
+  keywords:
+  - 接触报告
+  - 敌情
+  - 航迹
+  - 上报
+  - 目标共享
+  - contact report
+  - track report
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  ir_v1:
+  - report_contact
+  provides:
+  - ir: track_report.reported_track
+    display_name: 报告携带的航迹引用
+    value_type: track_reference
+    cardinality: per_track
+    key: track_id
+    freshness: event
+    status: partial
+    metadata:
+    - message_id
+    - source_interface
+    - destination_interface
+    - report_kind
+    ir_v1: null
+  accepts:
+  - ir: communication_action.report_contact
+    display_name: 立即上报接触
+    status: unknown
+    ir_v1: report_contact
+    parameters:
+    - name: track_reference
+      type: track_reference
+      required: true
+    - name: receiver_interface
+      type: string
+      required: true
+    result:
+      type: command_status
+      values: *id003
+      status: unknown
+    side_effects:
+    - 向接收者发送一条带航迹的报告；不保证送达。
+    note: 来源中没有通用的立即上报动作；可由消息发送携带航迹字段实现。
+  settings:
+  - name: report_period
+    display_name: 航迹报告间隔
+    type: duration
+    required: false
+    sensitivity: public_generic
+    unit: s
+  - name: report_kind
+    display_name: 报告数据类别
+    type: enumeration
+    required: false
+    sensitivity: public_generic
+    values:
+    - raw
+    - fused
+  dependencies:
+  - message_exchange
+  constraints:
+  - 须有已有航迹、报告选择条件和可用的外部通信链接。
+  limitations:
+  - 配置报告不等于每条报告可靠送达，接收事件需另行观察。
+  - 融合报告须避免返回源节点而形成循环；无通用强制立即报告动作。
+  source_gaps:
+  - 通信组件与消息对象的运行时脚本接口参考（发送方法、参数、返回值、状态读取）
+  binding: local
+- id: data_link_communication
+  display_name: 数据链路通信
+  aliases: []
+  domain: communication
+  subcategory: link_state
+  kind: comm
+  description: 表示指定通信接口之间承载数据消息的传输可用性。
+  natural_language:
+    definition: 表示指定通信接口之间承载数据消息的传输可用性。
+    use_when: 行为需要判断是否具有支持消息交换的通信条件时。
+    expected_result: 得到带收发接口身份的传输可用性要求，并显式保留未知状态。
+    boundaries:
+    - 链路只承载消息，不定义消息内容、任务结果或命令权限。
+    - 物理链路存在不等于接收设备兼容或消息可靠送达。
+    requirement_example: 检查指定数据链路的传输条件，再请求发送报告。
+  tactical_uses:
+  - 发送前检查能否通信
+  - 失联后改按预案行动
+  - 选择可用的通信设备
+  keywords:
+  - 链路
+  - 通信可用
+  - 能否通信
+  - 失联
+  - link
+  - available
+  - connectivity
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  ir_v1:
+  - comm_value.available
+  provides:
+  - ir: communication_link.transport_available
+    display_name: 端点间传输可用性
+    value_type: boolean
+    cardinality: collection
+    key: link_endpoint_pair_id
+    item_scope: per_link
+    freshness: dynamic
+    status: unknown
+    ir_v1: comm_value.available
+    note: IR 1.0 的 comm_value.available 是设备级可用，不区分对端。
+  accepts: []
+  settings: []
+  dependencies: []
+  constraints:
+  - 收发方向、接口能力、链路与路由及共享媒介约束均须满足。
+  limitations:
+  - 所读页未确认统一链路可用性查询，不能将配置或真实网络图直接当作行为感知。
+  - 专用时分终端仅模拟物理传输，不意味着实现所有战术消息或加解密。
+  source_gaps:
+  - 通信组件与消息对象的运行时脚本接口参考（发送方法、参数、返回值、状态读取）
+  replaces:
+  - data_link_communication.settings[propagation_speed] → transmission_performance
+  - data_link_communication.settings[channel_count] → transmission_queueing
+  binding: local
+- id: comm_device_control
+  display_name: 通信设备开关与无线电静默
+  aliases: []
+  domain: communication
+  subcategory: link_state
+  kind: comm
+  description: 开启或关闭指定通信设备，并设定设备只在发送时辐射还是持续辐射。
+  natural_language:
+    definition: 按设备开启或关闭通信设备；关闭期间不收不发。辐射方式分为“只在发送时辐射”和“开机即持续辐射”。
+    use_when: 需要无线电静默、隐蔽接近、或在接敌后恢复通信时。
+    expected_result: 指定设备进入开或关状态，行为可读取其开关状态。
+    boundaries:
+    - 关闭设备会同时停止接收，静默期间收不到命令。
+    - 只在发送时辐射是默认方式；持续辐射用于模拟广播类设备。
+    - 辐射方式只对无线电类设备有意义。
+    requirement_example: 接近发起线前全排无线电静默，接敌后恢复通信并报告。
+  tactical_uses:
+  - 无线电静默
+  - 隐蔽接近
+  - 接敌后恢复通信
+  - 减少电磁暴露
+  keywords:
+  - 静默
+  - 无线电静默
+  - 开机
+  - 关机
+  - 电磁管制
+  - radio silence
+  - emcon
+  - power
+  applicable_platform_classes: *id001
+  status: unknown
+  maturity: draft
+  provides:
+  - ir: communication_state.power
+    display_name: 通信设备开关状态
+    value_type: enumeration
+    cardinality: collection
+    key: interface
+    item_scope: per_interface
+    freshness: dynamic
+    status: unknown
+    ir_v1: null
+  accepts:
+  - ir: communication_action.set_comm_power
+    display_name: 开启或关闭通信设备
+    status: unknown
+    ir_v1: null
+    parameters:
+    - name: interface
+      type: string
+      required: true
+    - name: power
+      type: enumeration
+      values:
+      - 'on'
+      - 'off'
+      required: true
+    result:
+      type: command_status
+      values: *id003
+      status: unknown
+    side_effects:
+    - 关闭后设备停止收发，队列中的消息可能丢失。
+    note: IR 1.0 没有通信设备开关动作（ir_gap），建议纳入 IR v1.1。
+  settings:
+  - name: emission_mode
+    display_name: 辐射方式
+    type: enumeration
+    values:
+    - when_transmitting
+    - continuous
+    default: when_transmitting
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints:
+  - 须按设备指定，不能只给平台。
+  limitations:
+  - 设备开关属于平台组件公共命令，不在本章；运行中开关的接口未在来源中给出。
+  source_gaps:
+  - 平台组件公共命令（3.1.1 节：组件开关、初始状态）
+  - 通信组件与消息对象的运行时脚本接口参考（发送方法、参数、返回值、状态读取）
+  binding: local
+- id: jamming_perception
+  display_name: 通信干扰感知
+  aliases: []
+  domain: communication
+  subcategory: link_state
+  kind: comm
+  description: 通信设备在干扰超过阈值时感知到受干扰，干扰消失一段时间后不再感知。
+  natural_language:
+    definition: 接收到的干扰超过感知阈值时，设备（操作员）感知到受干扰；干扰低于阈值后经过保持时间才解除。
+    use_when: 需要在受干扰时切换频率、改用其他通信手段或转为按预案行动时。
+    expected_result: 行为得到“正在受干扰”的判断，可据此改变通信方式。
+    boundaries:
+    - 感知阈值按干扰类型（连续、脉冲、相干）可分别设定。
+    - 感知到干扰不等于消息一定无法送达。
+    requirement_example: 检测到通信受干扰后改用备用频率，仍受干扰则按预定信号转入下一阶段。
+  tactical_uses:
+  - 受干扰时切换频率
+  - 受干扰时转入预案
+  - 评估通信环境
+  keywords:
+  - 干扰
+  - 压制
+  - 受干扰
+  - jamming
+  - interference
+  - jammed
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides:
+  - ir: communication_state.jamming_perceived
+    display_name: 是否感知到干扰
+    value_type: boolean
+    cardinality: collection
+    key: interface
+    item_scope: per_interface
+    freshness: dynamic
+    status: unknown
+    ir_v1: null
+  accepts: []
+  settings:
+  - name: jamming_perception_hold
+    display_name: 干扰感知保持时间
+    type: duration
+    unit: s
+    required: false
+    sensitivity: model_characteristic
+  - name: jamming_detect_threshold
+    display_name: 干扰感知阈值
+    type: ratio
+    unit: dB
+    required: false
+    sensitivity: model_characteristic
+  - name: jamming_perception_threshold_by_type
+    display_name: 按干扰类型的感知阈值
+    type: map
+    unit: dB
+    values:
+    - continuous
+    - pulsed
+    - coherent
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - data_link_communication
+  constraints: []
+  limitations:
+  - 感知阈值与保持时间可配置；行为读取“是否受干扰”的接口未在来源中给出。
+  source_gaps:
+  - 通信组件与消息对象的运行时脚本接口参考（发送方法、参数、返回值、状态读取）
+  binding: local
+- id: alternate_frequency_selection
+  display_name: 备用频率切换
+  aliases: []
+  domain: communication
+  subcategory: link_state
+  kind: comm
+  description: 切换到发射机上预先定义的备用频率，切换需要一段时延。
+  natural_language:
+    definition: 设备在预先定义的多个频率之间切换，切换期间有时延。
+    use_when: 受干扰或需要避开某一频率时。
+    expected_result: 设备改用备用频率继续收发。
+    boundaries:
+    - 只能在发射机已定义的频率之间切换。
+    - 与电子战类的电子防护能力相关，频率捷变的效果由电子战模型决定。
+    requirement_example: 受干扰后切换到备用频率并重发未确认的报告。
+  tactical_uses:
+  - 抗干扰换频
+  - 避开被侦听频率
+  keywords:
+  - 换频
+  - 备用频率
+  - 跳频
+  - 频率捷变
+  - frequency
+  - alternate frequency
+  - hop
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts:
+  - ir: communication_action.select_alternate_frequency
+    display_name: 切换到备用频率
+    status: unknown
+    ir_v1: null
+    parameters:
+    - name: interface
+      type: string
+      required: true
+    - name: frequency_index
+      type: count
+      required: false
+    result:
+      type: command_status
+      values: *id003
+      status: unknown
+    side_effects:
+    - 切换时延内设备不能按新频率收发。
+  settings:
+  - name: frequency_switch_delay
+    display_name: 频率切换时延
+    type: duration
+    unit: s
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  - name: alternate_frequencies
+    display_name: 备用频率表
+    type: list
+    unit: Hz
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - data_link_communication
+  constraints: []
+  limitations:
+  - 来源只给出切换时延；备用频率的定义在发射机命令中，运行中切换的接口未给出。
+  source_gaps:
+  - 发射机与接收机公共命令（3.5.5.8–3.5.5.9 节：频率、功率、带宽、最大距离）
+  - 通信组件与消息对象的运行时脚本接口参考（发送方法、参数、返回值、状态读取）
+  binding: local
+- id: comm_loss_detection
+  display_name: 通信中断判定
+  aliases: []
+  domain: communication
+  subcategory: link_state
+  kind: composite
+  description: 根据链路可用性或预期消息超时未到，判定与某个成员失去联系。
+  natural_language:
+    definition: 链路不可用，或在规定时间内没有收到对方的任何消息（如周期性状态通报），即判定通信中断。
+    use_when: 战术要求“与排长失联时按最后命令行动”或“失联超过一定时间自行撤回”时。
+    expected_result: 行为得到与指定成员“在联”或“失联”的判断及失联持续时间。
+    boundaries:
+    - 链路可用不保证对方在收听；用消息超时判断更接近战术含义。
+    - 超时阈值过短会误判，过长会延误反应。
+    requirement_example: 僚车 30 秒未收到排长的状态通报，判定失联，按最后命令继续占领掩护位置。
+  tactical_uses:
+  - 失联后按最后命令行动
+  - 失联自动撤回
+  - 触发通信预案
+  keywords:
+  - 失联
+  - 通信中断
+  - 断联
+  - 心跳
+  - 超时
+  - comm loss
+  - lost link
+  - heartbeat
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: comm_loss_timeout
+    display_name: 失联判定时间
+    type: duration
+    unit: s
+    required: false
+    sensitivity: model_characteristic
+  - name: status_report_period
+    display_name: 周期性状态通报间隔
+    type: duration
+    unit: s
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - data_link_communication
+  - message_exchange
+  composed_of:
+  - capability: data_link_communication
+    role: 链路可用性
+  - capability: message_exchange
+    role: 最后一次收到消息的时间
+  constraints: []
+  limitations:
+  - 没有原生的失联事件，由行为层组合实现；组合方式尚未运行验证。
+  binding: local
+- id: network_membership
+  display_name: 通信网成员与地址
+  aliases: []
+  domain: communication
+  subcategory: network
+  kind: network
+  description: 规定每台通信设备属于哪个网、地址是什么、与哪些设备有直接链接。
+  natural_language:
+    definition: 设备通过网名或地址加入通信网；也可以直接指定与其他设备（含同平台设备）之间的链接、所用路由器和网关。
+    use_when: 需要表达“排内网”“连指挥网”等编组，以及谁能和谁直接通信时。
+    expected_result: 每台设备有确定的网和地址，消息可按网和地址投递。
+    boundaries:
+    - 地址只用于在仿真内唯一标识设备，不表示只支持 IP 通信。
+    - 未显式定义网时，按平台和设备自动成网。
+    - 显式链接是否被采用取决于所用路由协议。
+    requirement_example: 全排四车的电台加入“一排网”，排长车另一部电台加入“连指挥网”，两网经排长车转接。
+  tactical_uses:
+  - 排内网编组
+  - 上下级网转接
+  - 跨网转发
+  keywords:
+  - 通信网
+  - 网络
+  - 编组
+  - 地址
+  - 转接
+  - 网关
+  - network
+  - net
+  - address
+  - gateway
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: net_id
+    display_name: 所属网名
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  - name: net_address
+    display_name: 网络或设备地址
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  - name: direct_links
+    display_name: 直接链接的设备
+    type: list
+    required: false
+    sensitivity: model_characteristic
+  - name: router
+    display_name: 所用路由器
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  - name: gateway_interface
+    display_name: 网关设备
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  - name: default_address_block_size
+    display_name: 自动分配地址容量
+    type: count
+    unit: count
+    default: 254
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints:
+  - 地址不得与其他网或保留地址冲突。
+  - 路由器须与设备在同一平台。
+  limitations:
+  - 网络成员关系在想定配置时确定；运行中读取成员的接口未在来源中给出。
+  source_gaps:
+  - 通信组件与消息对象的运行时脚本接口参考（发送方法、参数、返回值、状态读取）
+  binding: local
+- id: network_topology
+  display_name: 通信网拓扑
+  aliases: []
+  domain: communication
+  subcategory: network
+  kind: network
+  description: 规定网内成员之间的链接方式：星形、全互联、环形、点对点或自定义。
+  natural_language:
+    definition: 按拓扑类型自动建立网内链接：星形（只与中心相连，任意两成员最多两跳）、全互联（两两双向）、按通信能力建立的全互联（仅在建网时能互通的成员之间建链，默认）、点对点（恰好两个成员）、环形（与相邻成员双向，至少三个成员）、单向环、或逐条指定的自定义链接。
+    use_when: 需要表达指挥关系对通信路径的约束，例如排内各车只能经排长转发时。
+    expected_result: 网内链接按拓扑生成，消息只能沿这些链接传递。
+    boundaries:
+    - 星形网未指定中心时不建任何链接。
+    - 指定了链接不保证两端设备类型兼容、能实际通信。
+    - 默认拓扑只在建网时检查通信能力，之后不随距离变化更新；需要随距离变化请用动态组网。
+    requirement_example: 一排网采用星形拓扑，排长车为中心，僚车之间的消息经排长车转发。
+  tactical_uses:
+  - 排长为中心的指挥网
+  - 全互联协同网
+  - 点对点专线
+  keywords:
+  - 拓扑
+  - 星形
+  - 网状
+  - 环形
+  - 点对点
+  - 中心
+  - topology
+  - star
+  - mesh
+  - ring
+  - hub
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: topology
+    display_name: 拓扑类型
+    type: enumeration
+    values:
+    - star
+    - full_mesh
+    - capability_mesh
+    - point_to_point
+    - ring
+    - directed_ring
+    - custom
+    default: capability_mesh
+    required: false
+    sensitivity: model_characteristic
+  - name: members
+    display_name: 成员设备
+    type: list
+    required: false
+    sensitivity: model_characteristic
+  - name: hub
+    display_name: 星形中心设备
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  - name: custom_links
+    display_name: 自定义有向链接
+    type: list
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - network_membership
+  constraints:
+  - 点对点恰好两个成员；环形至少三个成员；星形中心必须是成员。
+  limitations:
+  - 拓扑在想定配置时确定。
+  binding: local
+- id: ad_hoc_networking
+  display_name: 动态组网
+  aliases: []
+  domain: communication
+  subcategory: network
+  kind: network
+  description: 按设定间隔检查成员之间能否通信，自动建立或断开链接，使网络随距离、遮挡变化。
+  natural_language:
+    definition: 每隔一段时间，网内每台设备检查与其他成员能否通信，能通则建链，不能则断链。
+    use_when: 需要通信关系随车辆间距、地形遮挡变化，例如车辆拉开距离后失去联系时。
+    expected_result: 网内链接随实际通信能力动态变化。
+    boundaries:
+    - 未设更新间隔时不会自动更新，可与静态链接混用。
+    - 只更新网内链接，不涉及跨网链接。
+    - 每台设备每次检查所有其他成员，成员多时有性能负担，宜限制成员数量。
+    requirement_example: 全排四车组成动态网，每 5 秒更新一次；车辆被山体遮挡时自动断链，绕出后恢复。
+  tactical_uses:
+  - 随距离变化的通信
+  - 遮挡导致失联
+  - 车辆拉开后断联
+  keywords:
+  - 动态组网
+  - 自组网
+  - 断链
+  - 重连
+  - ad hoc
+  - manet
+  - dynamic network
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: link_update_period
+    display_name: 链接更新间隔
+    type: duration
+    unit: s
+    required: false
+    sensitivity: model_characteristic
+  - name: per_member_update_period
+    display_name: 按成员的更新间隔
+    type: map
+    unit: s
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - network_membership
+  - data_link_communication
+  constraints:
+  - 链接是否建立由所用通信设备的模型决定。
+  limitations:
+  - 链接变化发生在网络内部，行为通过链路可用性间接感知。
+  binding: local
+- id: network_routing
+  display_name: 通信路由选择
+  aliases: []
+  domain: communication
+  subcategory: network
+  kind: comm
+  description: 依据可用网络知识决定消息的下一跳及是否存在可用转发选择。
+  natural_language:
+    definition: 依据可用网络知识决定消息的下一跳及是否存在可用转发选择。
+    use_when: 通信行为需要按目的地选择下一跳或处理无路可转发时。
+    expected_result: 为每次路由决策保留接口、消息及下一跳的对应关系。
+    boundaries:
+    - 此处路由是通信路径，不是平台运动路线。
+    - 所选下一跳不证明最终送达，感知拓扑与真实拓扑必须区分。
+    requirement_example: 在消息路由回调中为当前接口选择直接连接的下一跳，找不到时丢弃。
+  tactical_uses:
+  - 经排长车转发
+  - 跨网转发
+  - 无路可达时丢弃
+  keywords:
+  - 路由
+  - 转发
+  - 下一跳
+  - 跳数
+  - routing
+  - relay
+  - next hop
+  - hop
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides:
+  - ir: communication_route.next_hop
+    display_name: 本次路由决策下一跳
+    value_type: string
+    cardinality: collection
+    key: routing_decision_id
+    freshness: event
+    status: partial
+    item_scope: per_routing_decision
+    ir_v1: null
+  accepts: []
+  settings:
+  - name: max_hops
+    display_name: 消息最大跳数
+    type: count
+    required: false
+    sensitivity: public_generic
+    unit: count
+  dependencies:
+  - data_link_communication
+  - network_membership
+  constraints:
+  - 决策必须关联消息、当前接口、目的地及路由器上下文。
+  - 自定义下一跳须直接连接到当前接口，空选择表示丢弃。
+  limitations:
+  - 已确认回调的决策值，未确认查询任意路由表或最终路由成功的通用接口。
+  - 默认真实拓扑协议可能绕过受限协议失败，须按选定实现解释。
+  replaces:
+  - network_routing 的最大跳数设置改名为 max_hops（0.2.0 名称与原生命令同名）
+  binding: local
+- id: transmission_queueing
+  display_name: 发送队列、优先级与重传
+  aliases: []
+  domain: communication
+  subcategory: transmission
+  kind: comm
+  description: 设备同时能发几条消息、待发消息如何排队、队满或超时如何丢弃、失败后重传几次。
+  natural_language:
+    definition: 设备有若干发送信道；超出的消息进入队列，按先进先出、后进先出或优先级出队；队列满时后到的消息被丢弃，超过保留时间的消息被清除，发送失败可按次数和间隔重传。
+    use_when: 需要表达通信拥塞、重要消息优先、消息过时作废时。
+    expected_result: 消息的实际发出时间和是否被丢弃受队列规则约束。
+    boundaries:
+    - 默认 1 个信道、先进先出、队列无上限、不清除、不重传。
+    - 清除时间短于重传间隔时，消息可能在重传前就被清除。
+    requirement_example: 接敌报告设为高优先级，通信拥塞时先于状态通报发出。
+  tactical_uses:
+  - 重要消息优先
+  - 通信拥塞
+  - 过时消息作废
+  - 失败重发
+  keywords:
+  - 队列
+  - 优先级
+  - 拥塞
+  - 重传
+  - 丢弃
+  - queue
+  - priority
+  - retransmit
+  - congestion
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: channel_count
+    display_name: 同时传输信道数
+    type: count
+    unit: count
+    default: 1
+    required: false
+    sensitivity: public_generic
+  - name: queue_order
+    display_name: 排队方式
+    type: enumeration
+    values:
+    - fifo
+    - lifo
+    - priority
+    default: fifo
+    required: false
+    sensitivity: model_characteristic
+  - name: queue_capacity
+    display_name: 队列容量
+    type: count
+    unit: count
+    required: false
+    sensitivity: model_characteristic
+  - name: queue_expiry
+    display_name: 消息在队列中的保留时间
+    type: duration
+    unit: s
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  - name: retry_count
+    display_name: 重传次数
+    type: count
+    unit: count
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  - name: retransmit_interval
+    display_name: 重传间隔
+    type: duration
+    unit: s
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - data_link_communication
+  constraints: []
+  limitations:
+  - 按优先级排队时，消息优先级如何在发送时给出未在本章说明。
+  source_gaps:
+  - 通信组件与消息对象的运行时脚本接口参考（发送方法、参数、返回值、状态读取）
+  binding: local
+- id: transmission_performance
+  display_name: 传输时延与速率
+  aliases: []
+  domain: communication
+  subcategory: transmission
+  kind: comm
+  description: 消息的传播速度、传输速率和附加时延，以及无线设备按信噪比或误码率确定的速率。
+  natural_language:
+    definition: 消息送达时间由传播速度、传输速率（消息大小/速率）和附加时延决定；无线设备可按信噪比查表或按误码率要求计算速率。
+    use_when: 需要表达通信延迟、带宽不足、远距离速率下降时。
+    expected_result: 消息带有与距离、速率、信号质量相符的送达时延。
+    boundaries:
+    - 默认传播速度为光速、传输瞬时完成、无附加时延。
+    - 信噪比速率表与误码率表互斥，以最后指定的为准。
+    - 附加时延可用来综合表示各种原因的延迟。
+    requirement_example: 排内电台速率较低，长报文需数秒才能发完，期间后续报告排队等待。
+  tactical_uses:
+  - 通信延迟
+  - 带宽限制
+  - 远距离速率下降
+  keywords:
+  - 时延
+  - 延迟
+  - 速率
+  - 带宽
+  - 信噪比
+  - 误码率
+  - latency
+  - delay
+  - data rate
+  - snr
+  - ber
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: propagation_speed
+    display_name: 传播速度
+    type: speed
+    unit: m/s
+    required: false
+    sensitivity: public_generic
+  - name: data_rate
+    display_name: 传输速率
+    type: data_rate
+    unit: bit/s
+    required: false
+    sensitivity: model_characteristic
+  - name: added_delay
+    display_name: 附加时延
+    type: duration
+    unit: s
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  - name: snr_rate_table
+    display_name: 信噪比-速率表
+    type: table
+    unit: dB→bit/s
+    required: false
+    sensitivity: model_characteristic
+  - name: design_bit_error_probability
+    display_name: 设计误码率
+    type: ratio
+    required: false
+    sensitivity: model_characteristic
+  - name: error_correction_gain
+    display_name: 纠错增益
+    type: ratio
+    unit: dB
+    required: false
+    sensitivity: model_characteristic
+  - name: ber_ebno_table
+    display_name: 误码率-Eb/No 表
+    type: table
+    unit: dB
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - data_link_communication
+  constraints: []
+  limitations:
+  - 参数为模型特性，行为不在运行中读取。
+  binding: local
+- id: shared_medium
+  display_name: 共享信道与传输模式
+  aliases: []
+  domain: communication
+  subcategory: transmission
+  kind: comm
+  description: 多台设备共用一个传输媒介及其信道，信道被占满时其他设备须等待；每次发送可选择传输模式。
+  natural_language:
+    definition: 传输媒介（有线或无线）可被多台设备共享，共享的信道数限制所有设备的并发传输；媒介可定义多种传输模式（不同速率、时延），每次发送时可按消息选择模式。
+    use_when: 需要表达同一电台网内多车争用信道，或按消息类型选用不同传输方式时。
+    expected_result: 并发传输受共享信道数约束；每条消息按所选模式传输。
+    boundaries:
+    - 默认共享；可设为每台设备独立使用。
+    - 模式选择返回空或不存在的模式时使用默认模式。
+    requirement_example: 全排共用一个频道（1 个信道），一车发报时其他车须等待；紧急报告选用短时延模式。
+  tactical_uses:
+  - 同网争用信道
+  - 按消息选择传输方式
+  keywords:
+  - 共享信道
+  - 信道争用
+  - 传输模式
+  - 媒介
+  - shared channel
+  - medium
+  - mode
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts:
+  - ir: communication_action.select_transmission_mode
+    display_name: 为本次发送选择传输模式
+    status: partial
+    ir_v1: null
+    parameters:
+    - name: message_reference
+      type: string
+      required: true
+    - name: mode
+      type: string
+      required: true
+    result:
+      type: command_status
+      values: *id003
+      status: unknown
+    side_effects:
+    - 本次传输按所选模式的速率与时延进行。
+    note: 来源给出每次发送时调用的选择回调，由回调返回模式名。
+  settings:
+  - name: medium_kind
+    display_name: 媒介类型
+    type: enumeration
+    values:
+    - guided
+    - unguided
+    required: false
+    sensitivity: model_characteristic
+  - name: medium_channel_count
+    display_name: 共享信道数
+    type: count
+    unit: count
+    required: false
+    sensitivity: model_characteristic
+  - name: medium_shared
+    display_name: 是否共享
+    type: boolean
+    default: true
+    required: false
+    sensitivity: model_characteristic
+  - name: medium_modes
+    display_name: 传输模式
+    type: list
+    required: false
+    sensitivity: model_characteristic
+  - name: default_mode
+    display_name: 默认模式
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - transmission_performance
+  constraints: []
+  limitations:
+  - 媒介只能在全局定义，设备按类型引用。
+  binding: local
+- id: wired_comm
+  display_name: 有线（理想）通信
+  aliases: []
+  domain: communication
+  subcategory: device_type
+  kind: comm
+  description: 不受距离和遮挡限制的基础通信设备，可只发、只收或收发。
+  natural_language:
+    definition: 理想化的通信设备，除公共的队列、时延、速率配置外不施加额外限制。
+    use_when: 只关心消息逻辑、不关心电波传播时；或模拟有线、光纤连接。
+    expected_result: 按该类设备的特性传输消息。
+    boundaries:
+    - 不模拟距离、遮挡、干扰。
+    - 在同类设备组成的网中实际形成全互联。
+    requirement_example: 指挥所之间的有线连接；或战术验证阶段先用理想通信。
+  tactical_uses:
+  - 理想通信
+  - 有线连接
+  - 先验证战术逻辑
+  keywords:
+  - 有线
+  - 理想通信
+  - wired
+  - perfect comm
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: direction
+    display_name: 收发方式
+    type: enumeration
+    values:
+    - transmit_and_receive
+    - transmit_only
+    - receive_only
+    default: transmit_and_receive
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - data_link_communication
+  constraints: []
+  limitations: []
+  binding: local
+- id: radio_comm
+  display_name: 无线电通信
+  aliases: []
+  domain: communication
+  subcategory: device_type
+  kind: comm
+  description: 带天线、发射机和接收机的无线电设备，受距离、视距、干扰影响，速率可随信噪比变化。
+  natural_language:
+    definition: 按发射机、接收机和天线计算信号，能否收到和速率取决于信噪比。
+    use_when: 需要表达通信距离、地形遮挡、干扰对通信的影响时。
+    expected_result: 按该类设备的特性传输消息。
+    boundaries:
+    - 受视距、地形、区域衰减影响。
+    - 频率、功率、最大距离等在发射机和接收机命令中定义（不在本章）。
+    requirement_example: 车载电台在山后失去视距，信噪比下降导致速率降低或无法通信。
+  tactical_uses:
+  - 车载电台
+  - 视距通信
+  - 受干扰通信
+  keywords:
+  - 无线电
+  - 电台
+  - 视距
+  - radio
+  - line of sight
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: direction
+    display_name: 收发方式
+    type: enumeration
+    values:
+    - transmit_and_receive
+    - transmit_only
+    - receive_only
+    default: transmit_and_receive
+    required: false
+    sensitivity: model_characteristic
+  - name: zone_attenuation_category
+    display_name: 区域衰减类别
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - data_link_communication
+  constraints: []
+  limitations: []
+  source_gaps:
+  - 发射机与接收机公共命令（3.5.5.8–3.5.5.9 节：频率、功率、带宽、最大距离）
+  binding: local
+- id: tactical_datalink_terminal
+  display_name: 时分战术数据链终端
+  aliases: []
+  domain: communication
+  subcategory: device_type
+  kind: comm
+  description: 按时分多址方式在数据链网络上传输数据，以每帧时隙数表示网络容量，支持中继。
+  natural_language:
+    definition: 终端按时隙组占用时隙发送，时隙数量决定网络容量；支持多个网络、成对时隙中继和中继中的时隙重用。
+    use_when: 需要表达数据链容量、时隙分配、远距离中继时。
+    expected_result: 按该类设备的特性传输消息。
+    boundaries:
+    - 只模拟消息的物理传输，不模拟具体的战术报文格式。
+    - 不执行加解密，安全参数只写入报文头。
+    - 未实现争用接入、时隙重分配接入和转发式中继。
+    - 正常距离 300 海里，扩展距离 500 海里；同网设备应一致，模型不强制。
+    requirement_example: 空中预警平台经数据链向编队分发目标信息，超视距成员经中继时隙收到。
+  tactical_uses:
+  - 数据链分发目标
+  - 超视距中继
+  - 网络容量
+  keywords:
+  - 数据链
+  - 时分
+  - 时隙
+  - 中继
+  - datalink
+  - tdma
+  - relay
+  applicable_platform_classes:
+  - air_vehicle
+  - surface_vessel
+  - ground_vehicle
+  - static_node
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: terminal_max_range
+    display_name: 最大通信距离
+    type: distance
+    unit: m
+    default: 555600
+    required: false
+    sensitivity: model_characteristic
+  - name: net_number
+    display_name: 网络编号
+    type: count
+    unit: count
+    required: false
+    sensitivity: model_characteristic
+  - name: participation_group
+    display_name: 网络参与组
+    type: string
+    required: false
+    sensitivity: model_characteristic
+  - name: frame_slot_count
+    display_name: 每帧时隙数
+    type: count
+    unit: count
+    required: false
+    sensitivity: model_characteristic
+  - name: packing
+    display_name: 报文打包方式
+    type: enumeration
+    values:
+    - standard
+    - packed_2_single
+    - packed_2_double
+    - packed_4_single
+    required: false
+    sensitivity: model_characteristic
+  - name: relay_slot_spacing
+    display_name: 中继时隙偏移
+    type: count
+    unit: count
+    required: false
+    sensitivity: model_characteristic
+  - name: command_chain_slot_groups
+    display_name: 按指挥链分配时隙组
+    type: map
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - data_link_communication
+  constraints: []
+  limitations: []
+  binding: local
+- id: subsurface_comm
+  display_name: 水下通信
+  aliases: []
+  domain: communication
+  subcategory: device_type
+  kind: comm
+  description: 可与水下平台通信的设备，分甚低频（几乎不受限制）和光学（受入水角度、水下距离、水衰减限制）两种方式。
+  natural_language:
+    definition: 甚低频方式忽略地平线和地形限制；默认的光学方式按水下路径长度、入水角度和水衰减限制通信。
+    use_when: 需要与潜艇等水下平台通信时。
+    expected_result: 按该类设备的特性传输消息。
+    boundaries:
+    - 两种方式都只模拟通信效果，不模拟波的传播物理。
+    - 仅测试过空中平台与另一平台之间的消息传递，复杂路由未验证。
+    requirement_example: 潜艇在 200 米以浅接收岸基甚低频指令。
+  tactical_uses:
+  - 对潜通信
+  keywords:
+  - 水下通信
+  - 甚低频
+  - 对潜
+  - underwater
+  - vlf
+  - submarine
+  applicable_platform_classes:
+  - subsurface_vehicle
+  - surface_vessel
+  - air_vehicle
+  - static_node
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: direction
+    display_name: 收发方式
+    type: enumeration
+    values:
+    - transmit_and_receive
+    - transmit_only
+    - receive_only
+    default: transmit_and_receive
+    required: false
+    sensitivity: model_characteristic
+  - name: vlf_mode
+    display_name: 甚低频方式
+    type: boolean
+    default: false
+    required: false
+    sensitivity: model_characteristic
+  - name: max_comm_depth
+    display_name: 最大通信深度
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: min_entry_angle
+    display_name: 最小入水角
+    type: angle
+    unit: deg
+    default: -90
+    required: false
+    sensitivity: model_characteristic
+  - name: max_underwater_path
+    display_name: 最大水下路径长度
+    type: distance
+    unit: m
+    default: 1000
+    required: false
+    sensitivity: model_characteristic
+  - name: water_attenuation
+    display_name: 水衰减
+    type: ratio
+    unit: dB/m
+    default: 0
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - data_link_communication
+  constraints: []
+  limitations: []
+  binding: local
+- id: laser_comm
+  display_name: 激光通信
+  aliases: []
+  domain: communication
+  subcategory: device_type
+  kind: comm
+  description: 按光学链路预算计算接收功率、信噪比和速率的激光通信设备，模拟捕获时间与链路保持。
+  natural_language:
+    definition: 按发射功率、孔径、调制方式、大气与湍流损耗、探测器噪声计算信噪比和速率。
+    use_when: 需要高速、窄波束、受天气影响的点对点链路时。
+    expected_result: 按该类设备的特性传输消息。
+    boundaries:
+    - 需要指向对方，适合点对点。
+    - 大气湍流目前只有一种模型。
+    requirement_example: 两架飞机之间建立激光链路传输图像。
+  tactical_uses:
+  - 高速点对点链路
+  - 抗截获通信
+  keywords:
+  - 激光通信
+  - 光通信
+  - laser
+  - optical
+  - free space optical
+  applicable_platform_classes:
+  - air_vehicle
+  - space_vehicle
+  - static_node
+  - surface_vessel
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: direction
+    display_name: 收发方式
+    type: enumeration
+    values:
+    - transmit_and_receive
+    - transmit_only
+    - receive_only
+    default: transmit_and_receive
+    required: false
+    sensitivity: model_characteristic
+  - name: modulation
+    display_name: 调制方式
+    type: enumeration
+    values:
+    - ook
+    - ppm
+    - dpsk
+    default: ppm
+    required: false
+    sensitivity: model_characteristic
+  - name: mean_transmit_power
+    display_name: 平均功率
+    type: power
+    unit: W
+    required: false
+    sensitivity: model_characteristic
+  - name: transmit_aperture
+    display_name: 发射孔径
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  - name: receive_aperture
+    display_name: 接收孔径
+    type: distance
+    unit: m
+    required: false
+    sensitivity: model_characteristic
+  dependencies:
+  - data_link_communication
+  constraints: []
+  limitations: []
+  binding: local
+- id: comm_fidelity_selection
+  display_name: 通信模型保真度选择
+  aliases: []
+  domain: communication
+  subcategory: fidelity_selection
+  kind: comm
+  description: 一个平台上定义多个通信模型，按保真度值在初始化时选用其一。
+  natural_language:
+    definition: 为同一通信设备定义多个模型及各自的保真度区间，初始化时按设定的保真度选用匹配的模型。
+    use_when: 同一想定需要在快速运行（理想通信）与高保真运行（无线电）之间切换时。
+    expected_result: 平台上实际使用的通信模型与保真度设置一致。
+    boundaries:
+    - 选择在初始化时完成，运行中不切换。
+    - 保真度区间不得重叠，可指定默认模型。
+    requirement_example: 战术验证用理想通信，评估时改用无线电模型，行为不变。
+  tactical_uses:
+  - 快速验证与高保真评估切换
+  keywords:
+  - 保真度
+  - 多分辨率
+  - fidelity
+  - multiresolution
+  applicable_platform_classes: *id001
+  status: partial
+  maturity: draft
+  provides: []
+  accepts: []
+  settings:
+  - name: fidelity
+    display_name: 保真度
+    type: ratio
+    default: 1.0
+    required: false
+    sensitivity: model_characteristic
+  dependencies: []
+  constraints: []
+  limitations:
+  - 选择在初始化时完成。
+  binding: local

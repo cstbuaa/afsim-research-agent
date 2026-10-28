@@ -1,0 +1,28 @@
+.env
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.egg-info/
+
+data/raw/*
+!data/raw/.gitkeep
+data/index/*
+!data/index/.gitkeep
+data/library/*
+!data/library/README.md
+data/eval/*
+data/runs/*
+!data/runs/.gitkeep
+
+.DS_Store
+_backup_*.zip
+
+# local-only material (native names, bindings) and the capability gap registry
+_local/
+**/_local/
+data/capability/*
+
+# editor / OS
+.vscode/
+.idea/
+Thumbs.db
