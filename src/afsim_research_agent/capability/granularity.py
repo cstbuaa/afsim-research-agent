@@ -44,15 +44,33 @@ class GroupTable:
     ir_detail: frozenset[str]
     detail_default: str
     by_capability: dict[str, str] = field(default_factory=dict)
+    # platform class → IR elements it can never have (e.g. altitude for ground vehicles)
+    excluded: dict[str, frozenset[str]] = field(default_factory=dict)
+
+    def not_applicable(self, platform_class: str | None) -> frozenset[str]:
+        return self.excluded.get(platform_class or "", frozenset())
 
     @classmethod
     @cache
     def default(cls) -> GroupTable:
-        return cls.from_file(_GROUPS)
+        """Repository groups plus the members kept next to the default capability set."""
+        from afsim_research_agent.capability.catalog import (
+            GROUP_MEMBERS_FILE,
+            default_catalog_root,
+        )
+
+        members = default_catalog_root() / GROUP_MEMBERS_FILE
+        return cls.from_file(_GROUPS, members if members.exists() else None)
 
     @classmethod
-    def from_file(cls, path: Path) -> GroupTable:
+    def from_file(cls, path: Path, members: Path | None = None) -> GroupTable:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
+        if members is not None:
+            extra = tomllib.loads(members.read_text(encoding="utf-8")).get("group", {})
+            for gid, lists in extra.items():
+                if gid not in data["group"]:
+                    raise ValueError(f"{members.name}: unknown group '{gid}'")
+                data["group"][gid].update(lists)
         groups = {
             gid: Group(
                 id=gid,
@@ -77,6 +95,9 @@ class GroupTable:
             ir_detail=frozenset(ir.get("detail", ())),
             detail_default=data["meta"].get("detail_default", ""),
             by_capability=by_capability,
+            excluded={
+                k: frozenset(v.get("not_applicable", ())) for k, v in data.get("class", {}).items()
+            },
         )
 
     def group_of(self, ref: str) -> str | None:

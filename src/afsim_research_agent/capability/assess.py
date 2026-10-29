@@ -67,7 +67,6 @@ _CAPABILITY_STATUS = {
     "unknown": "confirm",
     "unavailable": "develop",
 }
-_ALIASES = Path(__file__).with_name("aliases.toml")
 
 if TYPE_CHECKING:
     from afsim_research_agent.capability.granularity import CapabilityPolicy
@@ -186,6 +185,15 @@ def assess_ref(
     conclusion = _CAPABILITY_STATUS.get(cap.status, "confirm")
     if cap.is_composite and conclusion == "ready":
         conclusion = "composable"
+    if (
+        need_ir
+        and conclusion != "develop"
+        and cap.kind != "slice"
+        and not cap.ir_v1
+        and cap.id not in (Aliases.default().reachable_refs())
+    ):
+        # implemented on the platform, but no IR 1.0 element can use it
+        conclusion = "ir_extension"
     return RefResult(ref, conclusion, cap.status, cap.display_name, basis=cap.basis)
 
 
@@ -234,11 +242,18 @@ class Aliases:
     version: str
     bindings: dict[str, tuple[str, ...]]
     elements: dict[str, dict]
+    static_bindings: frozenset[str] = frozenset()
 
     @classmethod
     @cache
     def default(cls) -> Aliases:
-        return cls.from_file(_ALIASES)
+        """``ir_alignment.toml`` next to the default capability set; empty without one."""
+        from afsim_research_agent.capability.catalog import ALIGNMENT_FILE, default_catalog_root
+
+        path = default_catalog_root() / ALIGNMENT_FILE
+        if not path.exists():
+            return cls(version="none", bindings={}, elements={})
+        return cls.from_file(path)
 
     def reachable_refs(self) -> frozenset[str]:
         """Every catalog reference some IR element or role dependency is mapped to."""
@@ -253,8 +268,11 @@ class Aliases:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
         return cls(
             version=data["meta"]["version"],
-            bindings={k: tuple(v["uses"]) for k, v in data.get("binding", {}).items()},
+            bindings={k: tuple(v.get("uses", ())) for k, v in data.get("binding", {}).items()},
             elements=dict(data.get("element", {})),
+            static_bindings=frozenset(
+                k for k, v in data.get("binding", {}).items() if v.get("static")
+            ),
         )
 
 

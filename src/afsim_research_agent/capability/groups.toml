@@ -1,134 +1,100 @@
-# Tactical capability groups: the coarse view of the catalog.
+# Tactical capability groups: the coarse view of the capability set.
 #
 # First drafts are judged at group level: only the core groups of a platform class are
-# checked interface by interface; the other groups take part in the simulation but, when
-# the platform lacks or has not confirmed something, it is handled by the simplification
-# below instead of becoming a gap. Detail capabilities and interfaces (fuel, ammunition
-# count, sensor power, simulation internals) are left out of a first draft altogether.
-# The user refines a group when the tactic needs it (`refine`), which brings back the
-# precise judgment and the detail items for that group.
+# checked entry by entry; the other groups take part in the simulation but, when the
+# platform lacks something, it is handled by the simplification below instead of becoming
+# a gap. Detail entries are left out of a first draft altogether. The user refines a group
+# when the tactic needs it (`refine`), which brings back the precise judgment and the
+# detail entries for that group.
+#
+# Which capability-set entries belong to which group is kept next to the local capability
+# set (`group_members.toml`), because it lists the lab's entry ids. Every entry belongs to
+# exactly one group (tests check this when the set is present).
 
 [meta]
-version = "capability-groups-2026.10.1"
+version = "capability-groups-2026.10.2"
 detail_default = "细节项按默认值处理（如燃油充足、弹药不限、设备常开）"
 
-# Core groups per platform class. Classes without an entry use [class.default].
 [class.ground_vehicle]
 core = ["maneuver", "formation", "terrain"]
+not_applicable = ["set_altitude", "self_value.altitude"]
 
 [class.default]
 core = ["maneuver", "formation", "terrain"]
 
 [group.maneuver]
 display_name = "机动"
-capabilities = [
-  "point_navigation", "heading_control", "speed_control", "altitude_control", "motion_halt",
-  "air_navigation", "ground_navigation", "surface_navigation", "subsurface_navigation",
-  "rotorcraft_navigation", "own_kinematic_state", "route_navigation", "road_network_navigation",
-]
-detail = [
-  "motion_fidelity_selection", "six_dof_flight_control", "guided_munition_flyout",
-  "ballistic_munition_flyout", "orbital_maneuvering", "orbital_attitude_control",
-  "orbit_propagation", "towed_asset_recovery", "trajectory_playback",
-]
 simplification = "理想机动：按指定路线与速度运动"
 
 [group.formation]
 display_name = "编队"
-capabilities = ["formation_following", "follower_route_switching", "formation_change"]
-detail = []
-detail_interfaces = ["formation_following:formation_state.relative_down"]
 simplification = "理想编队：按队形偏移直接保持站位"
 
 [group.terrain]
 display_name = "地形判断"
-capabilities = ["terrain_classification", "line_of_sight", "zone_membership"]
-detail = []
 simplification = "简化地形：按想定给出的地形区域判断，通视按距离近似"
 
 [group.sensing]
 display_name = "观察发现"
-capabilities = [
-  "target_detection", "sensor_cueing", "eo_ir_search", "radar_search", "infrared_search_and_track",
-  "passive_rf_detection", "acoustic_detection", "target_tracking", "track_management",
-  "track_identification",
-]
-detail = [
-  "sensor_control", "sensor_coverage_assessment", "track_filtering", "track_correlation",
-  "track_fusion", "track_quality_assessment",
-]
 simplification = "理想观察：探测范围内的目标直接可见，敌我属性取仿真真值"
 
 [group.comms]
 display_name = "通信报告"
-capabilities = [
-  "message_exchange", "point_to_point_communication", "group_messaging", "acknowledged_messaging",
-  "track_reporting", "comm_loss_detection", "data_link_communication",
-]
-detail = [
-  "wired_comm", "radio_comm", "tactical_datalink_terminal", "subsurface_comm", "laser_comm",
-  "comm_fidelity_selection", "comm_device_control", "jamming_perception",
-  "alternate_frequency_selection", "network_routing", "network_membership", "network_topology",
-  "ad_hoc_networking", "transmission_queueing", "transmission_performance", "shared_medium",
-]
 simplification = "理想通信：消息即时送达、不丢失"
 
 [group.fires]
 display_name = "火力"
-capabilities = [
-  "weapon_selection", "weapon_launch", "direct_fire_engagement", "guided_weapon_engagement",
-  "indirect_fire_engagement", "cease_fire", "weapon_cueing", "launch_envelope_assessment",
-  "intercept_assessment", "engagement_result_monitoring",
-]
-detail = [
-  "weapon_power_control", "blast_damage_effect", "probability_table_effect",
-  "mobility_firepower_damage", "directed_energy_effect", "launched_munition",
-  "direct_acting_weapon", "high_energy_laser", "rf_jammer_device", "carried_subobject_weapon",
-  "weapon_inventory_management", "weapon_readiness", "chaff_dispensing",
-  "launch_envelope_generation",
-]
 simplification = "简化火力：射击只记录动作与目标，不计算毁伤，射程按参数判断"
 
 [group.command]
 display_name = "指挥与任务"
-capabilities = [
-  "command_chain_management", "command_authority", "situational_awareness", "threat_evaluation",
-  "task_assignment", "task_acceptance", "task_rejection", "task_cancellation", "task_completion",
-  "engagement_task_management",
-]
-detail = []
 simplification = "指挥关系按编制静态确定，任务分配由行为逻辑直接决定"
 
 [group.sustainment]
 display_name = "保障与状态"
-capabilities = ["platform_status_monitoring"]
-detail = [
-  "fuel_status_monitoring", "propulsion_power_control", "resource_allocation",
-  "component_health_management",
-]
 simplification = "默认状态良好：燃油、动力充足，平台完好"
 
 [group.control]
 display_name = "任务控制"
-capabilities = [
-  "state_machine_execution", "behavior_tree_execution", "advanced_behavior_tree_execution",
-  "behavior_selection", "agent_task_execution", "state_timing", "timed_wait", "behavior_variables",
-]
-detail = ["controller_activation", "decision_cycle"]
 simplification = "由行为模型运行时提供（状态机、计时、黑板变量）"
 
 [group.ew]
 display_name = "电子与网络对抗"
-capabilities = [
-  "electronic_attack", "electronic_protection", "rf_jamming", "cyber_attack", "cyber_protection",
-]
-detail = []
 simplification = "不建模"
 
-# IR vocabulary elements the catalog does not place (static, runtime-only) or that are
-# detail on their own.
+# IR elements by group when no entry implements them (decides gap vs simplification), and
+# IR elements that are detail on their own.
+[ir.groups]
+"in_group" = "control"
+"self_value.instance_index" = "control"
+"simulation_value.tick" = "control"
+"simulation_value.time" = "control"
+"set_blackboard" = "control"
+"delete_blackboard_value" = "control"
+"blackboard" = "control"
+"wait" = "control"
+"time_in_state_gte" = "control"
+"turn_controller_on" = "control"
+"turn_controller_off" = "control"
+"set_altitude" = "maneuver"
+"self_value.altitude" = "maneuver"
+"move_to_platform" = "formation"
+"follow_route_with_offset" = "formation"
+"bounding_turn" = "formation"
+"orient_sensor" = "sensing"
+"send_message" = "comms"
+"message_received" = "comms"
+"self_value.alive" = "sustainment"
+"self_value.damaged" = "sustainment"
+"self_value.fuel_remaining" = "sustainment"
+"self_value.fuel_reserve" = "sustainment"
+"set_reserve_threshold" = "sustainment"
+"terrain_value.class" = "terrain"
+"terrain_value.distance_to_class" = "terrain"
+"terrain_value.slope" = "terrain"
+"terrain_value.line_of_sight_to_nearest_hostile" = "terrain"
+
 [ir]
-groups = { "in_group" = "control", "self_value.instance_index" = "control", "simulation_value.tick" = "control", "simulation_value.time" = "control", "set_blackboard" = "control", "delete_blackboard_value" = "control", "blackboard" = "control", "wait" = "control" }
 detail = [
   "simulation_value.tick", "delete_blackboard_value", "turn_sensor_on", "turn_sensor_off",
   "orient_sensor", "turn_controller_on", "turn_controller_off", "self_value.fuel_remaining",

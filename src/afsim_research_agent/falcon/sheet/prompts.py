@@ -12,7 +12,7 @@ from afsim_research_agent.ir.catalog import Catalog
 
 SHEET_PROMPT_VERSION = "falcon-sheet-2026.10.13"
 
-# IR role-dependency capability IDs (ir/binding.py, capability/aliases.toml)
+# IR role-dependency capability IDs (ir/binding.py, capability/ir_alignment.toml)
 COMPONENT_CAPABILITIES = {
     "sensors": ("visual_search", "thermal_search", "radar_search"),
     "comms": ("voice_data", "data_link"),

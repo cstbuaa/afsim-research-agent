@@ -1,17 +1,22 @@
-"""Read-only access to the platform capability catalog (formal layer only).
+"""Read-only access to the platform capability set (formal layer only).
 
-Layout (design/capability-catalog-integration-v1.md §3.1)::
+The capability set is exported from the vehicle lab project (``lab_export.py``)::
 
-    <root>/capability_catalog.yaml   0.2.0 single file (domains not yet split)
-    <root>/catalog/index.yaml        retrieval index over all domains
-    <root>/catalog/<domain>.yaml     0.3.0 part files
-    <root>/capability_overrides.yaml write-back of resolved gaps (K5): user confirmations
-                                     and plugin implementations, applied last
+    <root>/index.yaml                 catalog metadata and slices
+    <root>/action_set/<slice>.yaml    primitives, actions, tactic steps (动作集)
+    <root>/tactic_set/<slice>.yaml    tactic subtrees, state trees, missions (战术集)
+    <root>/capability_overrides.yaml  write-back of resolved gaps (K5): user confirmations
+                                      and plugin implementations, applied last
 
-Capabilities in a part file replace the 0.2.0 entry with the same ID. The local layer
-(``_local/``, ``*.local.*``: native names, bindings, manual pages) is never read here, and a
-catalog that is not ``classification: public`` is refused unless explicitly allowed, because
-this module feeds prompts sent to cloud models.
+The whole set is local only (it is derived from the lab project and never committed);
+``CROW_CAPABILITY_CATALOG`` or the default path below points to it.
+
+Every slice and every action-set entry becomes one ``Capability``. Names, IR links and
+retrieval phrases come from the agent-side ``<root>/ir_alignment.toml``; status comes from the
+export (``implemented`` → available; tactic steps without their own contract → partial).
+Anything not in the set is not implemented. The local layer (``_local/``, ``*.local.*``)
+is never read, and a set that is not ``classification: public`` is refused unless
+explicitly allowed, because this module feeds prompts sent to cloud models.
 """
 
 from __future__ import annotations
@@ -30,8 +35,17 @@ OVERRIDES_FILE = "capability_overrides.yaml"
 # status a resolved reference gets: interfaces vs capabilities use different vocabularies
 _RESOLVED = {"interface": "supported", "capability": "available"}
 _REPO_DEFAULT = (
-    Path(__file__).resolve().parents[3] / "datasets" / "platform_capabilities" / "afsim-2.9"
+    Path(__file__).resolve().parents[3]
+    / "datasets"
+    / "platform_capabilities"
+    / "armored-vehicle-afsim-2.9"
 )
+# agent-side files kept next to the (local) capability set
+ALIGNMENT_FILE = "ir_alignment.toml"
+GROUP_MEMBERS_FILE = "group_members.toml"
+SET_FORMAT = "CapabilitySet"
+# export status → catalog status used by the judgment engine
+_SET_STATUS = {"implemented": "available", "partial": "partial", "unavailable": "unavailable"}
 
 
 class CatalogError(ValueError):
@@ -106,45 +120,44 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
-def _capability(raw: dict[str, Any], source: str) -> Capability:
-    interfaces: list[Interface] = []
-    for direction in ("accepts", "provides"):
-        for item in raw.get(direction) or []:
-            interfaces.append(
-                Interface(
-                    capability_id=raw["id"],
-                    direction=direction,  # type: ignore[arg-type]
-                    ir=item["ir"],
-                    display_name=item.get("display_name", item["ir"]),
-                    status=str(item.get("status", "unknown")),
-                    ir_v1=item.get("ir_v1"),
-                    basis=item.get("basis"),
-                    note=item.get("note"),
-                    ir_v1_declared="ir_v1" in item,
-                )
-            )
-    nl = raw.get("natural_language") or {}
-    composed = tuple(
-        c["capability"] if isinstance(c, dict) else str(c) for c in raw.get("composed_of") or []
-    )
-    confirmation = raw.get("confirmation") or {}
+def _alignment(path: Path) -> dict[str, Any]:
+    import tomllib
+
+    if not path.exists():
+        return {}
+    return tomllib.loads(path.read_text(encoding="utf-8")).get("entry", {})
+
+
+def _entry_capability(
+    raw: dict[str, Any],
+    slice_id: str,
+    source: str,
+    platform_classes: tuple[str, ...],
+    notes: dict[str, Any],
+) -> Capability:
+    kind = str(raw.get("kind", "action"))
+    status = _SET_STATUS.get(str(raw.get("status", "implemented")), "unknown")
+    limitations = [str(x) for x in raw.get("limitations") or []]
+    if kind == "tactic_step":
+        status = "partial"
+        users = "、".join(raw.get("used_by") or [slice_id])
+        limitations.insert(0, f"只在 {users} 战术内部实现，没有独立动作契约")
+    if notes.get("note"):
+        limitations.append(str(notes["note"]))
     return Capability(
         id=raw["id"],
-        domain=raw.get("domain", ""),
-        display_name=raw.get("display_name", raw["id"]),
-        status=str(raw.get("status", "unknown")),
-        kind=raw.get("kind", ""),
-        subcategory=raw.get("subcategory"),
-        summary=nl.get("definition") or raw.get("description", ""),
-        keywords=tuple(raw.get("keywords") or ()),
-        tactical_uses=tuple(raw.get("tactical_uses") or ()),
-        platform_classes=tuple(raw.get("applicable_platform_classes") or ()),
-        dependencies=tuple(raw.get("dependencies") or ()),
-        composed_of=composed,
-        ir_v1=tuple(raw.get("ir_v1") or ()),
-        interfaces=tuple(interfaces),
-        limitations=tuple(raw.get("limitations") or ()),
-        basis=confirmation.get("basis"),
+        domain=slice_id,
+        display_name=str(notes.get("display_name") or raw["id"]),
+        status=status,
+        kind=kind,
+        subcategory=kind,
+        summary=str(raw.get("description", "")),
+        keywords=tuple(notes.get("keywords") or ()),
+        tactical_uses=tuple(notes.get("tactical_uses") or ()),
+        platform_classes=platform_classes,
+        ir_v1=tuple(notes.get("ir_v1") or ()),
+        limitations=tuple(limitations),
+        basis="lab_implemented",
         source=source,
         raw=raw,
     )
@@ -195,6 +208,8 @@ class CapabilityCatalog:
         self.content_hash = content_hash
         self.domains = domains or {}
         self.overrides = list(overrides or [])
+        self.tactics: dict[str, dict[str, Any]] = {}  # slice → tactic set (战术集)
+        self.source: dict[str, Any] = {}
         self._by_ir_v1: dict[str, list[Interface | Capability]] = {}
         for cap in self.capabilities.values():
             for name in cap.ir_v1:
@@ -206,40 +221,54 @@ class CapabilityCatalog:
     # ------------------------------------------------------------------ loading
     @classmethod
     def load(
-        cls, root: Path | str | None = None, *, allow_private: bool = False
+        cls,
+        root: Path | str | None = None,
+        *,
+        allow_private: bool = False,
+        alignment: Path | None = None,
     ) -> CapabilityCatalog:
+        """``alignment``: the agent-side annotation file (default ``<root>/ir_alignment.toml``)."""
         root = Path(root) if root is not None else default_catalog_root()
-        single = root / "capability_catalog.yaml"
-        parts_dir = root / "catalog"
-        if not single.exists() and not parts_dir.is_dir():
-            raise CatalogError(f"no capability catalog under {root}")
-        files: list[Path] = []
+        alignment = Path(alignment) if alignment is not None else root / ALIGNMENT_FILE
+        index_path = root / "index.yaml"
+        if not index_path.exists():
+            raise CatalogError(f"no capability set under {root}")
+        index = _read_yaml(index_path)
+        if index.get("format") != SET_FORMAT:
+            raise CatalogError(f"{index_path.name}: not a {SET_FORMAT} index")
+        meta = index.get("catalog") or {}
+        cls._check_classification(meta, index_path.name, allow_private)
+        platform_classes = tuple(meta.get("platform_classes") or ())
+        notes = _alignment(alignment)
+        files: list[Path] = [index_path]
         caps: dict[str, Capability] = {}
-        meta: dict[str, Any] = {}
         domains: dict[str, str] = {}
-        if single.exists():
-            data = _read_yaml(single)
-            files.append(single)
-            meta = data.get("catalog") or {}
-            cls._check_classification(meta, single.name, allow_private)
-            for raw in data.get("capabilities") or []:
-                caps[raw["id"]] = _capability(raw, single.name)
-            for dom in data.get("capability_domains") or []:
-                domains.setdefault(dom["id"], dom.get("display_name", dom["id"]))
-        if parts_dir.is_dir():
-            for path in sorted(parts_dir.glob("*.yaml")):
-                if path.name == "index.yaml":
-                    continue
-                data = _read_yaml(path)
-                files.append(path)
-                part_meta = data.get("catalog") or {}
-                cls._check_classification(part_meta, path.name, allow_private)
-                meta = meta or part_meta
-                part = data.get("part") or {}
-                if part.get("domain"):
-                    domains[part["domain"]] = part.get("display_name", part["domain"])
-                for raw in data.get("capabilities") or []:
-                    caps[raw["id"]] = _capability(raw, f"catalog/{path.name}")
+        tactics: dict[str, dict[str, Any]] = {}
+        for sl in index.get("slices") or []:
+            sid = sl["id"]
+            domains[sid] = sl.get("display_name", sid)
+            action_path = root / sl["action_file"]
+            data = _read_yaml(action_path)
+            files.append(action_path)
+            info = data.get("slice") or {}
+            caps[sid] = _entry_capability(
+                {"id": sid, "kind": "slice", "description": info.get("description", "")},
+                sid,
+                sl["action_file"],
+                platform_classes,
+                notes.get(sid, {}),
+            )
+            for key in ("primitives", "actions", "tactic_steps"):
+                for raw in data.get(key) or []:
+                    if raw["id"] in caps:
+                        raise CatalogError(f"duplicate capability id '{raw['id']}'")
+                    caps[raw["id"]] = _entry_capability(
+                        raw, sid, sl["action_file"], platform_classes, notes.get(raw["id"], {})
+                    )
+            tactic_path = root / sl["tactic_file"]
+            if tactic_path.exists():
+                tactics[sid] = _read_yaml(tactic_path)
+                files.append(tactic_path)
         overrides: list[dict[str, Any]] = []
         override_path = root / OVERRIDES_FILE
         if override_path.exists():
@@ -252,7 +281,9 @@ class CapabilityCatalog:
         for path in files:
             digest.update(path.name.encode())
             digest.update(path.read_bytes())
-        return cls(
+        if alignment.exists():
+            digest.update(alignment.read_bytes())
+        catalog = cls(
             caps.values(),
             catalog_id=str(meta.get("id", root.name)),
             platform=" ".join(
@@ -262,6 +293,9 @@ class CapabilityCatalog:
             domains=domains,
             overrides=overrides,
         )
+        catalog.tactics = tactics
+        catalog.source = dict(index.get("source") or {})
+        return catalog
 
     @staticmethod
     def _check_classification(meta: dict[str, Any], name: str, allow_private: bool) -> None:

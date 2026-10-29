@@ -32,7 +32,7 @@ where = ["src"]
 "afsim_research_agent.domain" = ["data/*.toml"]
 "afsim_research_agent.ir" = ["catalog/*.toml", "schema/*.json"]
 "afsim_research_agent.crow" = ["catalog/*.toml"]
-"afsim_research_agent.capability" = ["aliases.toml", "groups.toml"]
+"afsim_research_agent.capability" = ["groups.toml"]
 "afsim_research_agent.orchestrator.web" = ["static/*"]
 
 [tool.pytest.ini_options]

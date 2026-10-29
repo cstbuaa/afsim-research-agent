@@ -9,7 +9,6 @@ import pytest
 import yaml
 from falcon_fixtures import crow_result, gold_script, write_request
 
-from afsim_research_agent.capability import CapabilityCatalog
 from afsim_research_agent.capability.constraints import CONSTRAINT_NOTE, vocabulary_constraints
 from afsim_research_agent.falcon.fill import catalog_text
 from afsim_research_agent.falcon.llm import ScriptedModel
@@ -19,17 +18,21 @@ from afsim_research_agent.ir.catalog import load_catalog
 
 
 @pytest.fixture(scope="module")
-def catalogs():
-    return load_catalog(), CapabilityCatalog.load()
+def catalogs(capability_set):
+    return load_catalog(), capability_set
 
 
 def test_ground_vocabulary_tiers(catalogs) -> None:
     ir_catalog, catalog = catalogs
     ground = vocabulary_constraints(ir_catalog, catalog, ["ground_vehicle"])
-    assert ground.names("unavailable") == ["set_altitude"]
-    assert {"send_message", "report_contact", "terrain_value.class"} <= set(ground.names("confirm"))
+    assert ground.names("unavailable") == ["self_value.altitude", "set_altitude"]
+    # not implemented in the lab yet: listed and allowed, becomes a development gap
+    assert {"send_message", "terrain_value.class", "bounding_turn"} <= set(ground.names("develop"))
+    assert ground.allowed("terrain_value.class", "ground_vehicle")
+    assert not ground.allowed("set_altitude", "ground_vehicle")
+    assert ground.tier("report_contact") == "available"
     assert ground.tier("follow_route") == "available"
-    assert ground.tier("keep_station") == "available"  # partial is listed normally
+    assert ground.tier("keep_station") == "available"
     # a mixed model keeps an element some classes have, marked with those classes
     mixed = vocabulary_constraints(ir_catalog, catalog, ["ground_vehicle", "air_vehicle"])
     assert mixed.tier("set_altitude") != "unavailable"
@@ -51,12 +54,15 @@ def test_coarse_drafts_hide_details_and_keep_core_marks(catalogs) -> None:
     } <= hidden
     assert {"simulation_value.tick", "turn_controller_on"} <= hidden
     # core groups keep their marks; supporting groups are simplified and listed plainly
-    assert set(coarse.names("confirm")) == {
-        "mover_value.route_complete",
+    assert set(coarse.names("confirm")) == set()
+    assert set(coarse.names("develop")) == {
         "terrain_value.class",
         "terrain_value.distance_to_class",
         "terrain_value.slope",
         "terrain_value.line_of_sight_to_nearest_hostile",
+        "move_to_platform",
+        "follow_route_with_offset",
+        "bounding_turn",
     }
     assert coarse.mark("send_message") == ""
     actions = catalog_actions(ir_catalog, coarse)
@@ -65,7 +71,7 @@ def test_coarse_drafts_hide_details_and_keep_core_marks(catalogs) -> None:
     refined = vocabulary_constraints(
         ir_catalog, catalog, ["ground_vehicle"], policy=CapabilityPolicy.make("coarse", ["comms"])
     )
-    assert refined.mark("send_message") == "【需确认】"
+    assert refined.mark("send_message") == "【工程未实现】"
 
 
 def test_prompt_lists_follow_the_tiers(catalogs) -> None:
@@ -74,18 +80,18 @@ def test_prompt_lists_follow_the_tiers(catalogs) -> None:
     actions = catalog_actions(ir_catalog, ground)
     assert "set_altitude" not in actions and "set_altitude" in catalog_actions(ir_catalog)
     line = next(x for x in actions.splitlines() if x.startswith("- send_message("))
-    assert line.endswith("【需确认】")
+    assert line.endswith("【工程未实现】")
     follow = next(x for x in actions.splitlines() if x.startswith("- follow_route("))
     assert "【" not in follow
     operands = catalog_operands(ir_catalog, ground)
-    assert "class:" in operands and "【需确认】" in operands
+    assert "class:" in operands and "【工程未实现】" in operands
     text = catalog_text("behaviors", ir_catalog, ground)
     assert text.startswith(CONSTRAINT_NOTE)
     assert CONSTRAINT_NOTE not in catalog_text("behaviors", ir_catalog)
     assert catalog_text("structure", ir_catalog, ground) == catalog_text("structure", ir_catalog)
 
 
-def test_draft_uses_constraints_and_checks_the_result(tmp_path) -> None:
+def test_draft_uses_constraints_and_checks_the_result(tmp_path, capability_set) -> None:
     request = write_request(tmp_path, crow_result())
     model = ScriptedModel(gold_script())
     result = asyncio.run(run_draft(request, model))
@@ -94,14 +100,14 @@ def test_draft_uses_constraints_and_checks_the_result(tmp_path) -> None:
     assert prompts and CONSTRAINT_NOTE in prompts[0] and "- set_altitude(" not in prompts[0]
     pkg = result.package_dir
     trace = json.loads((pkg / "falcon_trace.json").read_text(encoding="utf-8"))
-    assert trace["capability_constraints"]["unavailable"] == ["set_altitude"]
+    assert trace["capability_constraints"]["unavailable"] == ["self_value.altitude", "set_altitude"]
     assert trace["capability_constraints"]["granularity"] == "coarse"
     assert "self_value.fuel_remaining" in trace["capability_constraints"]["hidden"]
     assert "fuel_remaining" not in prompts[0]
     decisions = yaml.safe_load((pkg / "capability_decisions.yaml").read_text(encoding="utf-8"))
     assert decisions == {"granularity": "coarse", "refine": [], "decisions": {}}
     gaps = yaml.safe_load((pkg / "capability_gaps.yaml").read_text(encoding="utf-8"))
-    assert gaps["phase"] == "ir_check" and gaps["level"] == "needs_confirmation"
+    assert gaps["phase"] == "ir_check" and gaps["level"] == "needs_development"
     review = (pkg / "falcon_review.md").read_text(encoding="utf-8")
     assert "## 8. 平台能力核对" in review and "按平台能力约束生成" in review
     report = json.loads((pkg / "validation_report.json").read_text(encoding="utf-8"))

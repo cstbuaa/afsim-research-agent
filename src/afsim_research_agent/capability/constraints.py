@@ -6,7 +6,11 @@ classes can do:
 
 - available (ready / composable / partial): listed normally;
 - unknown on the platform (confirm): listed with a "需确认" mark, prefer alternatives;
-- not on the platform (develop / not applicable to the platform class): not listed;
+- not implemented in the lab yet (an IR element nothing in the capability set maps to):
+  listed with a "工程未实现" mark; allowed, and it becomes a development gap, because gaps
+  only gate the AFSIM backend, never Falcon output or the 2D simulation;
+- not applicable to the platform class (an entry exists but not for this class, or the
+  class lists the element as ``not_applicable`` in ``groups.toml``): not listed, refused;
 - coarse drafts (``granularity.py``): detail items are not listed, and items outside the
   core groups that are missing or unconfirmed are listed plainly (they are simplified).
 
@@ -33,7 +37,7 @@ from afsim_research_agent.capability.granularity import CapabilityPolicy
 if TYPE_CHECKING:
     from afsim_research_agent.ir.catalog import Catalog
 
-Tier = Literal["available", "confirm", "unavailable", "hidden"]
+Tier = Literal["available", "confirm", "develop", "unavailable", "hidden"]
 _TIER: dict[str, Tier] = {
     "ready": "available",
     "composable": "available",
@@ -69,7 +73,7 @@ class VocabularyConstraints:
         tier = self.tier(name)
         if tier in ("unavailable", "hidden"):
             return None
-        suffix = "【需确认】" if tier == "confirm" else ""
+        suffix = {"confirm": "【需确认】", "develop": "【工程未实现】"}.get(tier, "")
         if name in self.only_for:
             suffix += f"【仅 {'/'.join(self.only_for[name])}】"
         return suffix
@@ -89,6 +93,9 @@ class VocabularyConstraints:
 
     def element_for(self, contract: str) -> str | None:
         """The vocabulary element implementing a catalog reference, if any is listed."""
+        if contract.startswith("ir:"):  # gap on an IR element nothing implements yet
+            name = contract[3:]
+            return name if name in self.tiers and self.tier(name) != "unavailable" else None
         for name, refs in self.refs.items():
             if contract in refs and self.tier(name) != "unavailable":
                 return name
@@ -102,6 +109,7 @@ class VocabularyConstraints:
             "platform_classes": list(self.platform_classes),
             "catalog_version": self.catalog_version,
             "confirm": self.names("confirm"),
+            "develop": self.names("develop"),
             "unavailable": self.names("unavailable"),
             "hidden": self.names("hidden"),
             **(self.policy or {}),
@@ -127,6 +135,9 @@ def vocabulary_constraints(
 
     An element no class has is left out; one only some classes have is listed with the
     classes that may use it (roles are not assigned to elements yet when prompts are built)."""
+    from afsim_research_agent.capability.granularity import GroupTable
+
+    table = policy.table if policy is not None else GroupTable.default()
     classes = tuple(sorted(set(platform_classes)))
     result = VocabularyConstraints(
         classes, catalog.content_hash, policy=policy.summary() if policy else None
@@ -149,6 +160,21 @@ def vocabulary_constraints(
         result.refs[name] = tuple(
             dict.fromkeys([*mapping.uses, *(r for alt in mapping.any_of for r in alt)])
         )
+        if mapping.kind == "unmapped":
+            # nothing in the set implements it: listed as not yet implemented, unless no
+            # target class can ever have it
+            excluded = {c for c in per_class if c and name in table.not_applicable(c)}
+            having = {c: v for c, v in per_class.items() if c not in excluded}
+            if not having:
+                result.conclusions[name] = "develop"
+                result.tiers[name] = "unavailable"
+                continue
+            worst = max(having.values(), key=RANK.__getitem__)
+            result.conclusions[name] = worst
+            result.tiers[name] = "develop" if worst == "develop" else _TIER[worst]
+            if len(having) < len(per_class):
+                result.only_for[name] = tuple(c for c in having if c)
+            continue
         having = {c: v for c, v in per_class.items() if v != "develop"}
         worst = max((having or per_class).values(), key=RANK.__getitem__)
         result.conclusions[name] = worst
@@ -192,6 +218,8 @@ def _details(catalog: CapabilityCatalog, mapping: object, verdict: object) -> di
 CONSTRAINT_NOTE = (
     "平台能力约束（由能力目录生成）：只使用下面列出的动作、操作数与函数；"
     "标【需确认】的平台支持尚未确认，有等效写法时优先用其他条目，确需使用时照常写，"
-    "生成后会列为待确认缺口。未列出的条目平台不具备，不要使用（编译时会拒绝）；"
+    "生成后会列为待确认缺口。标【工程未实现】的条目装甲车工程尚未实现，确需使用时照常写，"
+    "生成后会列为开发缺口（只影响导出 AFSIM，不影响二维仿真）。"
+    "未列出的条目平台不具备，不要使用（编译时会拒绝）；"
     "需要表中没有的能力时，在 ```yaml needs``` 中登记，树里用替代写法。"
 )

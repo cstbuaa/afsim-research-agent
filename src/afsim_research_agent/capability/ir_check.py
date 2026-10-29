@@ -333,8 +333,11 @@ def _check_element(
     if kind == "dependency":
         binding = name.split(":", 1)[1]
         uses = map_binding(binding, aliases)
+        static = binding in (aliases or Aliases.default()).static_bindings
 
         def judge(cls: str | None) -> tuple[None, Verdict]:
+            if static:
+                return None, Verdict("ready", reasons=["由行为模型运行时提供"])
             if not uses:
                 if policy is not None and policy.simplifies(None, cls, True):
                     return None, Verdict("simplified", reasons=[policy.simplification(None, True)])
@@ -342,7 +345,7 @@ def _check_element(
             return None, assess(catalog, uses, (), cls, policy=policy)
 
         _, verdict = _worst_verdict(catalog, classes, judge)
-        mapping = "alias" if uses else "unmapped"
+        mapping = "static" if static else ("alias" if uses else "unmapped")
         refs, any_of = list(uses), []
     else:
         found, verdict = _worst_verdict(

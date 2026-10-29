@@ -10,6 +10,19 @@ import pytest
 from afsim_research_agent.web import fetch
 
 
+@pytest.fixture(scope="session")
+def capability_set():
+    """The local capability set (exported from the lab project, never committed).
+
+    Tests that need it are skipped on machines without it."""
+    from afsim_research_agent.capability import CapabilityCatalog, CatalogError
+
+    try:
+        return CapabilityCatalog.load()
+    except CatalogError:
+        pytest.skip("本机没有能力集（见 datasets/platform_capabilities/README.md）")
+
+
 @pytest.fixture
 def public_dns(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Pretend every hostname resolves to a public address; record checked URLs."""
@@ -22,7 +35,6 @@ def public_dns(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(fetch, "resolve_public_ips", resolve)
     monkeypatch.setattr(fetch, "pinned_dns", lambda *args: contextlib.nullcontext())
     return checked
-
 
 
 _ISOLATED_PREFIXES = (

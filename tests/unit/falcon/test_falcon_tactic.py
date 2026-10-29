@@ -34,8 +34,8 @@ from afsim_research_agent.falcon.pipeline import run_draft
 from afsim_research_agent.falcon.tactic import CROW_GAPS_FILE, SELECTED_FILE, load_selection
 from afsim_research_agent.ir.pipeline import build_package
 
-URBAN = "terrain_classification:environment_state.terrain_class"
-SEND = "message_exchange:communication_action.send_message"
+URBAN = "ir:terrain_value.class"
+SEND = "ir:send_message"
 REFERENCE = "参考值（第 2 版，无依据，可调整）：跃进距离 300 m"
 
 
@@ -242,7 +242,9 @@ def test_stale_or_wrong_selection_is_refused(tmp_path: Path, tactics: Path) -> N
 
 
 # ---------------------------------------------------------------------- end to end
-def test_draft_implements_the_selected_tactic(tmp_path: Path, tactics: Path) -> None:
+def test_draft_implements_the_selected_tactic(
+    tmp_path: Path, tactics: Path, capability_set
+) -> None:
     model = ScriptedModel(_script())
     result = asyncio.run(run_draft(_request(tmp_path), model))
     pkg = result.package_dir
@@ -289,7 +291,9 @@ def test_draft_implements_the_selected_tactic(tmp_path: Path, tactics: Path) -> 
     assert report["capability"]["crow_source"] == "tactics#tc_01+tc_02"
 
 
-def test_user_requirement_and_platforms_take_precedence(tmp_path: Path, tactics: Path) -> None:
+def test_user_requirement_and_platforms_take_precedence(
+    tmp_path: Path, tactics: Path, capability_set
+) -> None:
     _select(tactics, ["tc_01"], note="")
     platforms = [{"role_hint": "leader", "capability_class": "ground_vehicle", "count": 1}]
     path = _request(

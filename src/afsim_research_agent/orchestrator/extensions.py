@@ -268,6 +268,10 @@ def get_registry(*, load: bool = True) -> ExtensionRegistry:
         _REGISTRY = ExtensionRegistry()
         if load:
             _REGISTRY.load()
+            # built-in defaults fill only the slots nothing else registered
+            from afsim_research_agent.capability.libraries import setup_defaults
+
+            setup_defaults(_REGISTRY)
     return _REGISTRY
 
 

@@ -15,6 +15,9 @@ Gap registry and development queue (K5, design capability-catalog-integration-v1
   merge    ID... --into ID --by NAME    same capability under different wording
   recheck  DIR [--out DIR]              judge a Crow tactics dir or a model package again
                                         against the current catalog (no model call)
+  export-lab --lab DIR [--out DIR] [--check]
+                                        export the public capability set (动作集 / 战术集)
+                                        from the vehicle lab project; --check only compares
 """
 
 from __future__ import annotations
@@ -70,6 +73,10 @@ def _parser() -> argparse.ArgumentParser:
     mrg.add_argument("--into", required=True)
     mrg.add_argument("--by", required=True)
     mrg.add_argument("--note", default="")
+    exp = sub.add_parser("export-lab")
+    exp.add_argument("--lab", type=Path, required=True, help="装甲车工程目录（主版本）")
+    exp.add_argument("--out", type=Path, help="输出目录（默认仓库内能力集）")
+    exp.add_argument("--check", action="store_true", help="只比较，不写入；有差异时返回 1")
     chk = sub.add_parser("recheck")
     chk.add_argument("directory", type=Path)
     chk.add_argument("--out", type=Path, help="Crow 目录的输出目录（默认原目录）")
@@ -79,8 +86,53 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _export_lab(args: argparse.Namespace) -> int:
+    from afsim_research_agent.capability.catalog import default_catalog_root
+    from afsim_research_agent.capability.lab_export import LabExporter, scan_tree, write_export
+
+    out = args.out or args.capability_catalog or default_catalog_root()
+    exporter = LabExporter(args.lab)
+    result = exporter.export()
+    print(exporter.report.render())
+    with tempfile.TemporaryDirectory() as tmp:
+        staged = Path(tmp) / "set"
+        write_export(result, staged)
+        hits = scan_tree(staged)
+        if hits:
+            for name, reason, line in hits:
+                print(f"[{reason}] {name}: {line[:100]}", file=sys.stderr)
+            print("导出结果仍含受限内容，未写入", file=sys.stderr)
+            return 2
+        changed = []
+        for path in sorted(staged.rglob("*.yaml")):
+            rel = path.relative_to(staged)
+            old = out / rel
+            new_text = path.read_text(encoding="utf-8")
+
+            # the export date alone is not a change
+            def body(text: str) -> str:
+                return "\n".join(x for x in text.splitlines() if "exported_on:" not in x)
+
+            if not old.exists() or body(old.read_text(encoding="utf-8")) != body(new_text):
+                changed.append(rel.as_posix())
+        if args.check:
+            print("与仓库能力集一致" if not changed else f"有差异：{', '.join(changed)}")
+            return 1 if changed else 0
+        if not changed:
+            print("能力集无变化")
+            return 0
+        for rel in changed:
+            target = out / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(staged / rel, target)
+        print(f"已更新 {len(changed)} 个文件：{out}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "export-lab":
+        return _export_lab(args)
     path = registry_path(args.registry)
     registry = GapRegistry.load(path)
     try:

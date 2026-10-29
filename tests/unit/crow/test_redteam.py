@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from afsim_research_agent.capability import CapabilityCatalog
 from afsim_research_agent.capability.registry import GapRegistry
 from afsim_research_agent.crow.annotate import load_package, load_result
 from afsim_research_agent.crow.capability_annotation import CapabilityAnnotator
@@ -201,8 +200,8 @@ def test_red_team_failure_is_reported_and_others_continue() -> None:
     assert len(result.candidates) == 2  # C5 never removes candidates
 
 
-def test_revised_candidates_are_annotated_again() -> None:
-    catalog = CapabilityCatalog.load()
+def test_revised_candidates_are_annotated_again(capability_set) -> None:
+    catalog = capability_set
     red, prop = scripted()
     cap = ScriptedModel(
         {
@@ -213,7 +212,7 @@ def test_revised_candidates_are_annotated_again() -> None:
                             "need": "先行侦察城区入口",
                             "source": "steps[1].do",
                             "group": "maneuver",
-                            "maps_to": ["point_navigation:mobility_action.go_to_location"],
+                            "maps_to": ["movement.move_to_point"],
                         }
                     ]
                 }
@@ -280,9 +279,9 @@ def test_files_report_and_selection(tmp_path: Path) -> None:
         build_selection(load_result(tmp_path), ["tc_01"], rejected=["tc_01"], note="", by="u")
 
 
-def test_select_command_writes_selection_and_queues_gaps(tmp_path: Path) -> None:
-    catalog = CapabilityCatalog.load()
-    terrain = "terrain_classification:environment_state.terrain_class"
+def test_select_command_writes_selection_and_queues_gaps(tmp_path: Path, capability_set) -> None:
+    catalog = capability_set
+    terrain = "城区判断"  # the lab has no terrain judgment
     cap = ScriptedModel(
         {
             "capability": [
@@ -292,7 +291,7 @@ def test_select_command_writes_selection_and_queues_gaps(tmp_path: Path) -> None
                             "need": "判断是否进入城区",
                             "source": "steps[1].until",
                             "group": "terrain",
-                            "maps_to": [terrain],
+                            "missing": terrain,
                         }
                     ]
                 }
@@ -380,21 +379,19 @@ def test_self_assessment_and_new_numbers_are_handled() -> None:
     assert "30 秒" in ref and "80%" in ref and "50" not in ref
 
 
-def test_merged_sources_are_accepted() -> None:
+def test_merged_sources_are_accepted(capability_set) -> None:
     from afsim_research_agent.crow.capability_annotation import judge_need
     from afsim_research_agent.crow.proposal_models import NeedDraft
 
     draft = NeedDraft(
         need="保持编队", source="geometry[0], geometry[1]", maps_to=["formation_change"]
     )
-    need, _ = judge_need(
-        draft, CapabilityCatalog.load(), ["ground_vehicle"], {"geometry[0]", "geometry[1]"}
-    )
+    need, _ = judge_need(draft, capability_set, ["ground_vehicle"], {"geometry[0]", "geometry[1]"})
     assert not any("不是战术要素路径" in n for n in need.notes)
 
 
-def test_reannotation_keeps_granularity() -> None:
-    catalog = CapabilityCatalog.load()
+def test_reannotation_keeps_granularity(capability_set) -> None:
+    catalog = capability_set
     red, prop = scripted()
     cap = ScriptedModel({"capability": [{"needs": []}], "capability_review": [{"items": []}]})
     result = result_with(card())
@@ -445,34 +442,35 @@ def test_self_assessment_variants() -> None:
     assert text == NARRATIVE and removed
 
 
-def test_group_prefixes_and_missing_groups_in_annotation() -> None:
+def test_group_prefixes_and_missing_groups_in_annotation(capability_set) -> None:
     from afsim_research_agent.capability.granularity import CapabilityPolicy
     from afsim_research_agent.crow.capability_annotation import judge_need
     from afsim_research_agent.crow.proposal_models import NeedDraft
 
-    catalog = CapabilityCatalog.load()
+    catalog = capability_set
     policy = CapabilityPolicy.make()
-    # "formation:formation_change" → formation_change
+    # "formation:<id>" → <id>
     need, _ = judge_need(
         NeedDraft(
             need="变换队形",
             source="steps[1].do",
             group="formation",
-            maps_to=["formation:formation_change"],
+            maps_to=["formation:hierarchical_formation.publish_formation_commands"],
         ),
         catalog,
         ["ground_vehicle"],
         None,
         policy,
     )
-    assert need.maps_to == ["formation_change"] and need.status != "develop"
+    assert need.maps_to == ["hierarchical_formation.publish_formation_commands"]
+    assert need.status != "develop"
     # the missing part belongs to fires (a supporting group): simplified, not development
     need, _ = judge_need(
         NeedDraft(
             need="跃进不超出掩护火力纵深",
             source="steps[3].do",
             group="maneuver",
-            maps_to=["own_kinematic_state:platform_state.position"],
+            maps_to=["movement.read_position"],
             missing="fires:火力扇区几何",
         ),
         catalog,
@@ -497,11 +495,11 @@ def test_group_prefixes_and_missing_groups_in_annotation() -> None:
     assert need.status == "develop" and need.missing == "隐蔽位置识别"
 
 
-def test_feasibility_change_from_revision_is_reported() -> None:
+def test_feasibility_change_from_revision_is_reported(capability_set) -> None:
     from afsim_research_agent.crow.proposal_models import FeasibilityInfo
     from afsim_research_agent.crow.selection_report import render_report
 
-    catalog = CapabilityCatalog.load()
+    catalog = capability_set
     red, prop = scripted()
     cap = ScriptedModel(
         {

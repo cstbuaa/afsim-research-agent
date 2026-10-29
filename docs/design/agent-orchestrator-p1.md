@@ -90,6 +90,8 @@ def setup(registry):
 # 3. 包的 entry point，组名 afsim_research_agent.extensions
 ```
 
+**内置默认（2026-10-29）**：动作集与战术集默认由装甲车能力集提供（`capability/libraries.py`，见 `capability-catalog-integration-v1.md` §14）。`get_registry()` 在加载完用户钩子之后只填空槽位，用户注册的实现优先。
+
 `ExtensionRegistry.check()` 检查已注册的实现是否满足接口，`python -m afsim_research_agent.orchestrator tools` 会列出接入情况和问题。`CatalogActionLibrary` 把现有 `ir/catalog/actions.toml` 适配成动作集接口，作为对照和示例，不会自动注册。
 
 ## 5. 检查方法

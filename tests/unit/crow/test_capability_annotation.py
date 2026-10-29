@@ -28,16 +28,18 @@ from afsim_research_agent.crow.proposal_report import render_markdown, write_pro
 from afsim_research_agent.falcon.llm import ModelRunner, ScriptedModel
 from afsim_research_agent.falcon.models import CrowRef, EvidencePackage
 
-SEND = "message_exchange:communication_action.send_message"
-RECEIVE = "message_exchange:communication_message.received_type"
-GO = "point_navigation:mobility_action.go_to_location"
-POSITION = "own_kinematic_state:platform_state.position"
-URBAN = "terrain_classification:environment_state.terrain_class"
+GO = "movement.move_to_point"
+REPORT = "target_sharing.publish_local_tracks"
+STANDOFF = "formation.command_standoff"  # tactic step: partial
+SLOT = "hierarchical_formation.move_to_formation_slot"
+POSITION = "movement.read_position"
+SUCCESSION = "hierarchical_formation.elect_replacement_leader"  # no IR element uses it
+URBAN = "城区判断"  # nothing in the lab provides terrain judgment
 
 
 @pytest.fixture(scope="module")
-def catalog() -> CapabilityCatalog:
-    return CapabilityCatalog.load()
+def catalog(capability_set) -> CapabilityCatalog:
+    return capability_set
 
 
 def profile():
@@ -85,11 +87,12 @@ def test_judge_need_statuses(catalog: CapabilityCatalog) -> None:
     ready, _ = judge_need(need("跃进到位置", "steps[0].do", [GO]), catalog, ["ground_vehicle"])
     assert ready.status == "ready" and not ready.gaps
 
-    confirm, _ = judge_need(need("报告到位", "steps[0].until", [SEND]), catalog, ["ground_vehicle"])
-    assert confirm.status == "confirm" and confirm.gap_type == "confirm"
-    assert confirm.gaps == [gap_id(SEND)]
+    partial, _ = judge_need(
+        need("与目标保持距离", "steps[0].do", [STANDOFF]), catalog, ["ground_vehicle"]
+    )
+    assert partial.status == "partial" and not partial.gaps
 
-    # nothing in the catalog fits: the need itself is the gap
+    # nothing in the set fits: the need itself is the gap
     missing, _ = judge_need(need("投放烟幕", "exceptions[0].then"), catalog, ["ground_vehicle"])
     assert missing.status == "develop" and missing.gaps == [gap_id("投放烟幕")]
     assert "目录中没有对应能力" in missing.notes
@@ -97,7 +100,7 @@ def test_judge_need_statuses(catalog: CapabilityCatalog) -> None:
 
 def test_invalid_refs_are_dropped_not_trusted(catalog: CapabilityCatalog) -> None:
     result, _ = judge_need(
-        need("跃进", "steps[0].do", ["made_up_capability", GO, "point_navigation:nope"]),
+        need("跃进", "steps[0].do", ["made_up_capability", GO, "movement.nope"]),
         catalog,
         ["ground_vehicle"],
     )
@@ -109,37 +112,30 @@ def test_invalid_refs_are_dropped_not_trusted(catalog: CapabilityCatalog) -> Non
 def test_substitutable_takes_best_alternative(catalog: CapabilityCatalog) -> None:
     result, _ = judge_need(
         need(
-            "读取领车位置",
+            "跟随领车",
             "geometry[0]",
-            [SEND, RECEIVE],
+            [STANDOFF],
             necessity="substitutable",
-            alternatives=[("固定偏移跟随", ["formation_following"])],
+            alternatives=[("按队形槽位跟随", [SLOT])],
         ),
         catalog,
         ["ground_vehicle"],
     )
-    assert result.chosen == "固定偏移跟随" and result.status == "partial"
-    assert [a.status for a in result.alternatives] == ["confirm", "partial"]
+    assert result.chosen == "按队形槽位跟随" and result.status == "ready"
+    assert [a.status for a in result.alternatives] == ["partial", "ready"]
     # substitutable without a valid alternative is treated as required
     lone, _ = judge_need(
-        need("读取领车位置", "geometry[0]", [SEND], necessity="substitutable"),
+        need("跟随领车", "geometry[0]", [STANDOFF], necessity="substitutable"),
         catalog,
         ["ground_vehicle"],
     )
-    assert lone.necessity == "required" and lone.status == "confirm"
+    assert lone.necessity == "required" and lone.status == "partial"
 
 
 def test_platform_class_is_respected(catalog: CapabilityCatalog) -> None:
-    # altitude control does not apply to ground vehicles
-    result, _ = judge_need(
-        need("爬升到指定高度", "steps[0].do", ["altitude_control:mobility_action.go_to_altitude"]),
-        catalog,
-        ["ground_vehicle"],
-    )
-    assert result.status in {"ready", "develop"}
-    cap = catalog.get("altitude_control")
-    if cap.platform_classes and "ground_vehicle" not in cap.platform_classes:
-        assert result.status == "develop"
+    # the lab set is for ground vehicles only
+    result, _ = judge_need(need("机动到位置", "steps[0].do", [GO]), catalog, ["air_vehicle"])
+    assert result.status == "develop"
 
 
 # ---------------------------------------------------------------------- annotator
@@ -167,11 +163,11 @@ def test_annotator_builds_feasibility_and_shared_gaps(catalog: CapabilityCatalog
         {
             "tc_01": [
                 need("跃进到位置", "steps[0].do", [GO]),
-                need("报告到位", "steps[0].until", [SEND]),
-                need("判断是否在城区", "steps[1].do", [URBAN]),
+                need("报告到位", "steps[0].until", [REPORT]),
+                need("判断是否在城区", "steps[1].do", missing=URBAN),
             ],
             "tc_02": [
-                need("前锋报告敌情", "steps[0].until", [SEND]),
+                need("前锋判断是否进入城区", "steps[0].until", missing=URBAN),
                 need("投放烟幕", "exceptions[0].then", necessity="enhancing"),
             ],
         }
@@ -183,26 +179,20 @@ def test_annotator_builds_feasibility_and_shared_gaps(catalog: CapabilityCatalog
     # C4b never reorders or rescores candidates
     assert [(c.id, c.score.total) for c in result.candidates] == before
     first, second = result.candidates
-    assert first.feasibility.level == "needs_confirmation"
-    assert set(first.feasibility.blocking_gaps) == {gap_id(SEND), gap_id(URBAN)}
-    assert first.required_capabilities == [
-        "message_exchange",
-        "point_navigation",
-        "terrain_classification",
-    ]
+    assert first.feasibility.level == "needs_development"
+    assert set(first.feasibility.blocking_gaps) == {gap_id(URBAN)}
+    assert first.required_capabilities == [GO, REPORT]
     # an enhancing need never blocks, but is still listed as a gap
-    assert second.feasibility.level == "needs_confirmation"
     assert gap_id("投放烟幕") not in second.feasibility.blocking_gaps
     by_id = {g.id: g for g in gaps}
-    send = by_id[gap_id(SEND)]
-    assert send.candidates_count == 2 and send.gap_type == "confirm"
-    assert [u.candidate for u in send.used_by] == ["tc_01", "tc_02"]
+    urban = by_id[gap_id(URBAN)]
+    assert urban.candidates_count == 2 and urban.gap_type == "develop"
+    assert [u.candidate for u in urban.used_by] == ["tc_01", "tc_02"]
     assert by_id[gap_id("投放烟幕")].gap_type == "develop"
-    assert gaps[0].gap_type == "develop"  # develop first
     assert result.catalog_version == catalog.content_hash
     # prompts carry the formal layer only
     _, prompt = model.calls[0]
-    assert "_local/" not in prompt and ".local." not in prompt and SEND in prompt
+    assert "_local/" not in prompt and ".local." not in prompt and GO in prompt
 
 
 def test_annotation_failure_is_reported_not_raised(catalog: CapabilityCatalog) -> None:
@@ -222,8 +212,7 @@ def test_annotation_failure_is_reported_not_raised(catalog: CapabilityCatalog) -
 
 def test_prompt_and_digest(catalog: CapabilityCatalog) -> None:
     digest = catalog_digest(catalog, ["ground_vehicle"])
-    assert "weapon_tools" not in digest and "launch_envelope_generation" not in digest
-    assert "comm_device_control" in digest
+    assert GO in digest and REPORT in digest and "定点机动" in digest
     prompt = annotation_prompt(card("tc_01", "交替跃进"), digest, ["ground_vehicle"])
     assert "steps[0]：phase=跃进" in prompt and "maps_to 留空" in prompt
 
@@ -233,7 +222,7 @@ def annotated(catalog: CapabilityCatalog) -> ProposalResult:
     result = two_candidates()
     model = scripted(
         {
-            "tc_01": [need("报告到位", "steps[0].until", [SEND])],
+            "tc_01": [need("判断是否在城区", "steps[1].do", missing=URBAN)],
             "tc_02": [need("跃进到位置", "steps[0].do", [GO])],
         }
     )
@@ -249,9 +238,9 @@ def empty_package() -> EvidencePackage:
 
 def test_report_shows_feasibility_separately(catalog: CapabilityCatalog) -> None:
     text = render_markdown(annotated(catalog), empty_package())
-    assert "| 平台可行性 |" in text and "| 需确认 |" in text and "| 可实现 |" in text
-    assert "**平台能力（需确认）**：需确认 1 项（报告到位）" in text
-    assert "## 平台能力缺口" in text and gap_id(SEND) in text
+    assert "| 平台可行性 |" in text and "| 需开发 |" in text and "| 可实现 |" in text
+    assert "**平台能力（需开发）**：需开发 1 项（判断是否在城区）" in text
+    assert "## 平台能力缺口" in text and gap_id(URBAN) in text
     assert "不影响候选排序" in text
 
 
@@ -260,9 +249,9 @@ def test_files_round_trip_and_annotate_command(catalog: CapabilityCatalog, tmp_p
     paths = write_proposal(result, empty_package(), tmp_path, None)
     gaps = yaml.safe_load(paths["capability_gaps"].read_text(encoding="utf-8"))
     assert gaps["catalog_version"] == catalog.content_hash
-    assert gaps["gaps"][0]["id"] == gap_id(SEND) and gaps["gaps"][0]["selected"] is False
+    assert gaps["gaps"][0]["id"] == gap_id(URBAN) and gaps["gaps"][0]["selected"] is False
     reloaded = load_result(tmp_path)
-    assert reloaded.candidates[0].feasibility.level == "needs_confirmation"
+    assert reloaded.candidates[0].feasibility.level == "needs_development"
 
     # re-annotating an existing run (offline replay path) overwrites the annotation only
     model = scripted({"tc_01": [need("跃进到位置", "steps[0].do", [GO])], "tc_02": []})
@@ -283,13 +272,12 @@ def test_files_round_trip_and_annotate_command(catalog: CapabilityCatalog, tmp_p
 
 
 # ---------------------------------------------------------------------- online-run fixes
-ZONE = "zone_membership:environment_state.in_zone"
-
-
 def test_ir_extension_does_not_make_crow_level_development(catalog: CapabilityCatalog) -> None:
-    # zone membership exists on the platform but IR 1.0 cannot express it yet
+    # leader succession exists in the lab but IR 1.0 cannot express it yet
     result = two_candidates()
-    model = scripted({"tc_01": [need("判断是否进入城区", "steps[1].until", [ZONE])], "tc_02": []})
+    model = scripted(
+        {"tc_01": [need("排长车受损后由僚车接替指挥", "steps[1].until", [SUCCESSION])], "tc_02": []}
+    )
     gaps = asyncio.run(
         CapabilityAnnotator(ModelRunner(model), catalog, policy=FINE).annotate(result, profile())
     )
@@ -314,7 +302,7 @@ def test_invalid_source_and_why_are_kept_for_review(catalog: CapabilityCatalog) 
 
 def test_report_shows_mapping_reason(catalog: CapabilityCatalog) -> None:
     result = two_candidates()
-    draft = need("报告到位", "steps[0].until", [SEND])
+    draft = need("报告到位", "steps[0].until", [REPORT])
     draft.why = "报告即发送消息"
     model = scripted({"tc_01": [draft], "tc_02": []})
     asyncio.run(
@@ -330,7 +318,7 @@ def test_prompt_separates_alternatives_and_forbids_evidence_ids(catalog) -> None
 
 
 # ---------------------------------------------------------------------- mapping review
-COVERAGE = "sensor_coverage_assessment:sensing_coverage.total_covered_time"
+COVERAGE = "engagement.score_weapon_candidates"
 
 
 def test_review_drops_cross_purpose_mapping(catalog: CapabilityCatalog) -> None:
@@ -365,7 +353,7 @@ def test_review_failure_keeps_mapping(catalog: CapabilityCatalog) -> None:
     model = ScriptedModel(
         {
             "capability:tc_01": [
-                {"needs": [need("报告到位", "steps[0].until", [SEND]).model_dump()]}
+                {"needs": [need("报告到位", "steps[0].until", [REPORT]).model_dump()]}
             ],
             "capability:tc_02": [{"needs": []}],
             "capability_review": [RuntimeError("down")],
@@ -377,7 +365,7 @@ def test_review_failure_keeps_mapping(catalog: CapabilityCatalog) -> None:
         )
     )
     first = result.candidates[0]
-    assert first.capability_needs[0].maps_to == [SEND]
+    assert first.capability_needs[0].maps_to == [REPORT]
     assert any("映射复核失败" in n for n in first.notes)
 
 
@@ -426,21 +414,22 @@ def test_coarse_judges_core_groups_and_simplifies_the_rest(catalog: CapabilityCa
         {
             "tc_01": [
                 need("跃进到位置", "steps[0].do", [GO]),
-                need("向排长报告", "steps[0].until", [SEND]),
-                need("判断是否进入城区", "steps[1].until", [URBAN]),
+                need("向排长请求支援", "steps[0].until", missing="请求支援消息"),
+                need("判断是否进入城区", "steps[1].until", missing=URBAN),
             ],
             "tc_02": [need("判断火力扇区覆盖", "steps[0].do", missing="火力扇区几何")],
         }
     )
     # the model is asked for coarse, grouped needs
     model.script["capability:tc_01"][0]["needs"][1]["group"] = "comms"
+    model.script["capability:tc_01"][0]["needs"][2]["group"] = "terrain"
     model.script["capability:tc_02"][0]["needs"][0]["group"] = "fires"
     annotator = CapabilityAnnotator(ModelRunner(model), catalog)  # coarse by default
     gaps = asyncio.run(annotator.annotate(result, profile()))
     first, second = result.candidates
     by_need = {n.need: n for n in first.capability_needs}
-    assert by_need["向排长报告"].status == "simplified" and not by_need["向排长报告"].gaps
-    assert by_need["判断是否进入城区"].status == "confirm"  # terrain is a core group
+    assert by_need["向排长请求支援"].status == "simplified" and not by_need["向排长请求支援"].gaps
+    assert by_need["判断是否进入城区"].status == "develop"  # terrain is a core group
     assert first.feasibility.blocking_gaps == [gap_id(URBAN)]
     # a supporting group's missing piece is simplified, not a development gap
     assert second.feasibility.level == "ready"
@@ -449,20 +438,22 @@ def test_coarse_judges_core_groups_and_simplifies_the_rest(catalog: CapabilityCa
     assert result.capability_granularity == {"granularity": "coarse", "refine": []}
     prompt = next(p for s, p in model.calls if s == "capability:tc_01")
     assert "粗粒度" in prompt and "group: maneuver" in prompt and "【核心：逐项核对】" in prompt
-    assert "fuel_status_monitoring" not in prompt
+    assert "engagement.collect_weapon_status" not in prompt  # detail entries are left out
     text = render_markdown(result, empty_package())
     assert "简化处理" in text and "按粗粒度判定" in text
 
 
 def test_refined_group_is_judged_precisely(catalog: CapabilityCatalog) -> None:
     result = two_candidates()
-    model = scripted({"tc_01": [need("向排长报告", "steps[0].until", [SEND])], "tc_02": []})
+    draft = need("向排长请求支援", "steps[0].until", missing="请求支援消息")
+    draft.group = "comms"
+    model = scripted({"tc_01": [draft], "tc_02": []})
     policy = CapabilityPolicy.make("coarse", ["comms"])
     asyncio.run(
         CapabilityAnnotator(ModelRunner(model), catalog, policy=policy).annotate(result, profile())
     )
-    assert result.candidates[0].capability_needs[0].status == "confirm"
-    assert result.candidates[0].feasibility.blocking_gaps == [gap_id(SEND)]
+    assert result.candidates[0].capability_needs[0].status == "develop"
+    assert result.candidates[0].feasibility.blocking_gaps == [gap_id("请求支援消息")]
 
 
 def test_unconfirmable_numbers_are_reference_values(catalog: CapabilityCatalog) -> None:

@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from afsim_research_agent.capability import CapabilityCatalog
 from afsim_research_agent.capability.constraints import vocabulary_constraints
 from afsim_research_agent.capability.ir_check import check_ir
 from afsim_research_agent.falcon.models import FalconRequest, RequirementClause
@@ -31,8 +30,8 @@ RQ = [RequirementClause(id=f"rq_0{i}", text="t", kind="behavior") for i in range
 
 
 @pytest.fixture(scope="module")
-def catalogs():
-    return load_catalog(), CapabilityCatalog.load()
+def catalogs(capability_set):
+    return load_catalog(), capability_set
 
 
 def _compile(text: str, catalog, **kw):
@@ -299,7 +298,7 @@ def test_block_kinds_for_python_trees_and_needs() -> None:
 
 
 # ---------------------------------------------------------------------- drafting
-def test_v2_python_draft_repairs_python_blocks_and_writes_needs(tmp_path) -> None:
+def test_v2_python_draft_repairs_python_blocks_and_writes_needs(tmp_path, capability_set) -> None:
     import asyncio
     import json
 
@@ -352,7 +351,7 @@ def test_v2_python_draft_repairs_python_blocks_and_writes_needs(tmp_path) -> Non
     assert any(g["source"] == "falcon_sheet" for g in rebuilt["gaps"]), build
 
 
-def test_falcon_compile_keeps_the_closed_vocabulary(tmp_path) -> None:
+def test_falcon_compile_keeps_the_closed_vocabulary(tmp_path, capability_set) -> None:
     import asyncio
     import json
 
@@ -412,9 +411,9 @@ def test_needs_for_vocabulary_items_and_test_inputs_are_refused(catalogs) -> Non
     constraints = _ground(catalogs)
     terrain = {
         "id": "cap-gap-4935405097",
-        "contract": "terrain_classification:environment_state.terrain_class",
-        "display_name": "地形类别 · 当前地形类别",
-        "gap_type": "confirm",
+        "contract": "ir:terrain_value.class",
+        "display_name": "当前地形类别",
+        "gap_type": "develop",
     }
     assert constraints.element_for(terrain["contract"]) == "terrain_value.class"
     needs = (
