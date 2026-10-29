@@ -421,7 +421,7 @@ def _spec(**over: Any) -> dict:
             {
                 "id": "go_starts_driving",
                 "given": {"role": "car", "state": "WAIT", "events": ["go"]},
-                "expect": {"next_state": "DRIVE", "issued_actions": ["nav.stop"]},
+                "expect": {"next_state": "DRIVE", "issued_actions": ["nav.stop", "nav.goto"]},
             },
             {
                 "id": "drive_runs",
@@ -499,7 +499,7 @@ def test_tactic_mission_in_the_simulation(contracts: Contracts) -> None:
     assert result.passed, result.render()
     times = dict((s, t) for t, s in result.states["vehicle_0"])
     assert times["TRACKING"] == 5.0  # target appears at 5; picked and transitioned that update
-    assert times["SHUTDOWN"] == 22.0  # lost at 20, loss declared 2 s later
+    assert times["SHUTDOWN"] == 24.0  # gone at 20, track stale at 22, loss declared 2 s later
 
 
 def test_unmodelled_actions_and_triggers_are_reported(contracts: Contracts) -> None:

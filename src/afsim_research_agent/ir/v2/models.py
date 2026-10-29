@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from afsim_research_agent.ir.models import (
     Assumption,
@@ -123,17 +123,29 @@ class Subtree(_Strict):
 
 
 # --------------------------------------------------------------------- layer 7
+def _yaml_on(data: Any) -> Any:
+    """YAML 1.1 reads an unquoted ``on:`` key as the boolean true."""
+    if isinstance(data, dict) and True in data and "on" not in data:
+        data = dict(data)
+        data["on"] = data.pop(True)
+    return data
+
+
 class Transition(_Strict):
     from_state: str = Field(alias="from")
     to: str
     on: str
     priority: int = 0
 
+    _on = model_validator(mode="before")(_yaml_on)
+
 
 class GlobalTransition(_Strict):
     to: str
     on: str
     priority: int = 0
+
+    _on = model_validator(mode="before")(_yaml_on)
 
 
 class Mission(_Strict):

@@ -31,6 +31,12 @@ Commands
   v2-simulate (<behavior_spec.yaml> | --tactic MISSION) [--scenario-file F] [--scenario ID]
             [--capability-set DIR]
                                  IR 2.0 L3: scenarios in the 2D simulation
+  v2-afsim compile (<behavior_spec.yaml> | --tactic MISSION) --binding B.toml --run R.toml ...
+            --out NEW_DIR [--capability-set DIR]
+                                 compile to AFSIM 2.9 (state machine + advanced behavior trees)
+  v2-afsim run <package> [--mission EXE]
+                                 run every run file with mission.exe and judge the evidence
+  v2-afsim judge <package>       judge consoles already saved under <package>/output
 """
 
 from __future__ import annotations
@@ -206,6 +212,47 @@ def _v2_simulate(args) -> int:
     return 0 if not failed else 1
 
 
+def _v2_afsim(args) -> int:
+    from afsim_research_agent.ir.v2.afsim import (
+        Binding,
+        CompileError,
+        Compiler,
+        RunConfig,
+        judge_package,
+        run_package,
+    )
+
+    if args.afsim_command == "compile":
+        contracts = _contracts(args.capability_set)
+        if contracts is None:
+            return 2
+        model, _raw = _v2_model(args, contracts)
+        if model is None:
+            return 1
+        try:
+            compiler = Compiler(model, contracts, Binding.load(args.binding))
+            package = compiler.package([RunConfig.load(r) for r in args.run])
+            written = compiler.write(package, args.out)
+        except CompileError as exc:
+            print(f"compile failed: {exc}")
+            return 1
+        for path in written:
+            print(f"wrote {path}")
+        return 0
+    if args.afsim_command == "run":
+        import os
+
+        mission = args.mission or os.environ.get("AFSIM_MISSION") or "mission"
+        results = run_package(args.package, mission)
+    else:
+        results = judge_package(args.package)
+    for r in results:
+        print(r.render())
+    failed = sum(not r.passed for r in results)
+    print(f"{len(results) - failed}/{len(results)} AFSIM runs passed")
+    return 0 if not failed else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m afsim_research_agent.ir")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -297,8 +344,24 @@ def main(argv: list[str] | None = None) -> int:
     v2s.add_argument("--scenario-file", type=Path)
     v2s.add_argument("--scenario")
     v2s.add_argument("--capability-set", type=Path)
+    v2a = sub.add_parser("v2-afsim")
+    v2a_sub = v2a.add_subparsers(dest="afsim_command", required=True)
+    v2ac = v2a_sub.add_parser("compile")
+    v2ac.add_argument("spec", type=Path, nargs="?")
+    v2ac.add_argument("--tactic")
+    v2ac.add_argument("--binding", type=Path, required=True)
+    v2ac.add_argument("--run", type=Path, action="append", required=True)
+    v2ac.add_argument("--out", type=Path, required=True)
+    v2ac.add_argument("--capability-set", type=Path)
+    v2ar = v2a_sub.add_parser("run")
+    v2ar.add_argument("package", type=Path)
+    v2ar.add_argument("--mission", help="mission executable (default: $AFSIM_MISSION or mission)")
+    v2aj = v2a_sub.add_parser("judge")
+    v2aj.add_argument("package", type=Path)
     args = parser.parse_args(argv)
 
+    if args.command == "v2-afsim":
+        return _v2_afsim(args)
     if args.command == "v2-test":
         return _v2_test(args)
     if args.command == "v2-simulate":

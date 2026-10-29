@@ -1,9 +1,9 @@
 """Execution of the IR 2.0 internal model with AFSIM 2.9 native node semantics.
 
-One :class:`Instance` runs one role instance: every update it ticks the tree of the
-current state once, then evaluates the mission state machine (one transition at most, by
-priority); the new state's tree first runs at the next update. This is the order AFSIM
-2.9 shows (a probe's tree output and the next state's entry appear in the same update).
+One :class:`Instance` runs one role instance. Every update follows AFSIM 2.9's
+``STATE_MACHINE.Evaluate`` (probes t01 / t02): tick the current state's tree, check its
+transitions in priority order, and on a transition run exit / entry and continue with the
+new state (its tree, its transitions) in the same update until a state stays.
 Node semantics follow AFSIM 2.9 as confirmed by probes (design §7):
 
 - sequence / selector are memoryless; ``*_with_memory`` resume at the running child;
@@ -83,17 +83,23 @@ class Instance:
         self.tree_status = None
 
     def step(self, now: float) -> None:
+        """One update, as WSF_STATE_MACHINE.Evaluate does it: tick the current state's tree,
+        check its transitions, and on a transition exit, enter and continue with the new
+        state in the same update, until a state stays (probes t01 / t02)."""
         self.now = now
         self.issued = []
-        tree = self.role_model["states"].get(self.state, {}).get("tree")
-        if tree is not None and self.state not in self.mission["terminal"]:
-            self.tree_status = self.tick(tree)
-        fired = self._transition()
-        if fired is not None:
+        for _ in range(len(self.mission["states"]) + 1):
+            tree = self.role_model["states"].get(self.state, {}).get("tree")
+            if tree is not None and self.state not in self.mission["terminal"]:
+                self.tree_status = self.tick(tree)
+            fired = self._transition()
+            if fired is None:
+                return
             old = self.state
             self._exit(old)
             self.enter(fired["to"], now)
             self.trace.append({"t": now, "from": old, "to": fired["to"], "on": fired["on"]})
+        self.unresolved.add(f"transition chain did not settle at t={now:g}")
 
     @property
     def time_in_state(self) -> float:

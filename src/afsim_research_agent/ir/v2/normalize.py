@@ -401,7 +401,12 @@ class _Normalizer:
                     if leaf["type"] != "action":
                         continue
                     contract = self.c.actions.get(leaf["action"])
-                    exclusive = sorted(contract.exclusive) if contract else []
+                    # resources this request owns: exclusive ones it acquires itself
+                    exclusive = sorted(
+                        r["resource"]
+                        for r in (contract.resources if contract else ())
+                        if r.get("mode") == "exclusive" and r.get("acquire") is not False
+                    )
                     # ownership the contract keeps after the action ends (e.g. a selected
                     # target), or the model holds into the next state, is not released on exit
                     kept = sorted(

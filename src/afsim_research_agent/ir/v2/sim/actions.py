@@ -231,19 +231,25 @@ class SensorSwitch(ActionModel):
 
 
 class UpdateTracks(ActionModel):
+    """Refresh the local track picture. Tracks persist after the last detection until
+    they are older than ``track_timeout_s`` (option, default 2.5 s), as track lists do."""
+
     def update(self, ctx: ActionContext) -> Status:
         sensor = _sensor(ctx)
         if sensor is None or not sensor.operational:
             return FAILURE, "TRACK_SOURCE_UNAVAILABLE"
-        tracks = ctx.world.visible(ctx.vehicle)
-        ctx.shared["tracks"] = {t["id"]: t for t in tracks}
+        timeout = float(ctx.options.get("track_timeout_s", 2.5))
+        memory = ctx.shared.setdefault("track_memory", {})
+        for t in ctx.world.visible(ctx.vehicle):
+            memory[t["id"]] = (t, ctx.now)
+        tracks = {tid: t for tid, (t, seen) in memory.items() if ctx.now - seen <= timeout}
+        ctx.shared["tracks"] = tracks
         ctx.shared["snapshot_time"] = ctx.now
-        enemies = [t for t in tracks if t["affiliation"] == "ENEMY"]
+        enemies = [t for t in tracks.values() if t["affiliation"] == "ENEMY"]
         ctx.write("tracks.snapshot_time", ctx.now)
         ctx.write("tracks.raw_count", len(tracks))
         ctx.write("tracks.enemy_count", len(enemies))
-        if sensor.on:
-            ctx.write("search.scan_count", int(ctx.read("search.scan_count", 0) or 0) + 1)
+        ctx.write("search.scan_count", int(ctx.read("search.scan_count", 0) or 0) + 1)
         return SUCCESS, None
 
 
