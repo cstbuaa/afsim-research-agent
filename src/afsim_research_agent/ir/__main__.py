@@ -26,6 +26,11 @@ Commands
                                  IR 2.0 normalization and L1 against a capability set
   v2-from-tactic (<mission id> ... | --all) [--capability-set DIR] [--out DIR] [-v]
                                  convert tactic-set missions to IR 2.0 (no model) and check them
+  v2-test   <behavior_spec.yaml> [--capability-set DIR]
+                                 IR 2.0 L2 single-step tests (the spec's tests)
+  v2-simulate (<behavior_spec.yaml> | --tactic MISSION) [--scenario-file F] [--scenario ID]
+            [--capability-set DIR]
+                                 IR 2.0 L3: scenarios in the 2D simulation
 """
 
 from __future__ import annotations
@@ -135,6 +140,72 @@ def _v2_from_tactic(args) -> int:
     return 0 if not failed else 1
 
 
+def _v2_model(args, contracts):
+    import yaml
+
+    from afsim_research_agent.ir.v2 import mission_to_ir, normalize
+
+    if getattr(args, "tactic", None):
+        raw = mission_to_ir(contracts, args.tactic)
+    else:
+        if args.spec is None:
+            print("name a behavior spec or --tactic")
+            return None, None
+        raw = yaml.safe_load(args.spec.read_text(encoding="utf-8"))
+    result = normalize(raw, contracts)
+    if not result.ok:
+        _print_diagnostics(result.diagnostics, verbose=False)
+        print("IR 2.0 L1 failed")
+        return None, raw
+    return result.model, raw
+
+
+def _v2_test(args) -> int:
+    from afsim_research_agent.ir.v2.sim import run_l2
+
+    contracts = _contracts(args.capability_set)
+    if contracts is None:
+        return 2
+    model, raw = _v2_model(args, contracts)
+    if model is None:
+        return 1
+    checks = run_l2(model, contracts, raw.get("tests") or [])
+    for c in checks:
+        print(f"[{'ok' if c.passed else 'FAIL'}] {c.id}: {c.detail}")
+    failed = sum(not c.passed for c in checks)
+    print(f"{len(checks) - failed}/{len(checks)} L2 tests passed")
+    return 0 if not failed else 1
+
+
+def _v2_simulate(args) -> int:
+    import yaml
+
+    from afsim_research_agent.ir.v2.sim import simulate
+
+    contracts = _contracts(args.capability_set)
+    if contracts is None:
+        return 2
+    model, raw = _v2_model(args, contracts)
+    if model is None:
+        return 1
+    scenarios = list(raw.get("scenarios") or [])
+    if args.scenario_file:
+        doc = yaml.safe_load(args.scenario_file.read_text(encoding="utf-8")) or {}
+        scenarios = list(doc.get("scenarios") or []) if isinstance(doc, dict) else list(doc)
+    if args.scenario:
+        scenarios = [s for s in scenarios if s.get("id") == args.scenario]
+    if not scenarios:
+        print("no scenarios to run")
+        return 2
+    failed = 0
+    for sc in scenarios:
+        result = simulate(model, contracts, sc)
+        print(result.render())
+        failed += not result.passed
+    print(f"{len(scenarios) - failed}/{len(scenarios)} scenarios passed")
+    return 0 if not failed else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m afsim_research_agent.ir")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -217,8 +288,21 @@ def main(argv: list[str] | None = None) -> int:
     v2t.add_argument("--capability-set", type=Path)
     v2t.add_argument("--out", type=Path)
     v2t.add_argument("-v", "--verbose", action="store_true")
+    v2l2 = sub.add_parser("v2-test")
+    v2l2.add_argument("spec", type=Path)
+    v2l2.add_argument("--capability-set", type=Path)
+    v2s = sub.add_parser("v2-simulate")
+    v2s.add_argument("spec", type=Path, nargs="?")
+    v2s.add_argument("--tactic")
+    v2s.add_argument("--scenario-file", type=Path)
+    v2s.add_argument("--scenario")
+    v2s.add_argument("--capability-set", type=Path)
     args = parser.parse_args(argv)
 
+    if args.command == "v2-test":
+        return _v2_test(args)
+    if args.command == "v2-simulate":
+        return _v2_simulate(args)
     if args.command == "v2-check":
         return _v2_check(args)
     if args.command == "v2-from-tactic":

@@ -1,6 +1,6 @@
 # 战术行为模型中间表示 IR 2.0（七层分层）设计稿
 
-> 状态：**已确认**（2026-10-29）；第 1、2 步已实现（`src/afsim_research_agent/ir/v2/`）
+> 状态：**已确认**（2026-10-29）；第 1–3 步已实现（`src/afsim_research_agent/ir/v2/`）
 > 基于：`tactical-behavior-ir-v1.md`、`capability-catalog-integration-v1.md` §14（动作集 / 战术集）、装甲车工程的七层结构
 > 已确认的决定（2026-10-29）：
 > - IR 借鉴七层结构；
@@ -208,6 +208,31 @@ python -m afsim_research_agent.ir v2-check <behavior_spec.yaml> [--capability-se
 python -m afsim_research_agent.ir v2-from-tactic (<任务 ID> … | --all) [--capability-set DIR] [--out 新目录]
 ```
 
+### 4.2 运行时与二维仿真（第 3 步）
+
+| 模块 | 内容 |
+| --- | --- |
+| `ir/v2/runtime.py` | 每个角色实例：先执行当前状态的树，再求值转换（一拍最多一次，按优先级）；节点语义按 §7；动作叶节点按契约申请、续用、释放资源，失败的请求不保留所有权 |
+| `ir/v2/sim/world.py` | 平面二维世界：车辆运动学（加速度、转向率）、传感器（开关延迟一拍、理想探测）、敌方目标出现 / 消失 |
+| `ir/v2/sim/actions.py` | 通用动作模型：到点、沿路线、保持位置、定速、停车、转向；开 / 关传感器、更新航迹、选最近目标、维持目标、清除目标。完成判据取自契约的 `success` |
+| `ir/v2/sim/run.py` | L3 想定（车辆、敌方、外部事件、故障、期望）与 L2 单步测试 |
+
+仓库代码不含平台名称。能力集与通用模型的对应写在本机对照表中：
+
+- `[sim."<动作 ID>"]`：用哪个通用模型；
+- `[sim_fields]`：模型的通用键对应哪个黑板字段；
+- `[tactic_condition."<名称>"]`：战术集条件的含义；
+- `[event."<任务 ID>"]`：任务触发条件的含义，可以是外部事件、黑板表达式、当前树的结果或计时。
+
+没有模型的动作按理想化处理（立即成功），没有含义的触发不会生效，两者都会在结果中列出。
+
+命令行：
+
+```text
+python -m afsim_research_agent.ir v2-test <behavior_spec.yaml>
+python -m afsim_research_agent.ir v2-simulate (<behavior_spec.yaml> | --tactic <任务 ID>) [--scenario-file F] [--scenario ID]
+```
+
 ## 5. AFSIM 后端（方案 B）
 
 | IR 2.0 | AFSIM 2.9 |
@@ -280,8 +305,8 @@ request  请求编号字段（平台.状态.叶节点）
 | `priority_selector` / `weighted_random` | 子节点前置条件返回的数值即优先级 / 权重 |
 | `parallel` | 每拍重跑全部子节点（含已成功的）；达到成功策略即成功，全部结束仍未达到即失败；默认 `succeed_on_one`；没有失败策略 |
 | `inverter` | 成功、失败互换 |
-| `succeeder` / `negator` | 恒成功 / 恒失败 |
-| `repeat count` | 每拍执行一次子节点，n 次后成功；子节点失败也计数 |
+| `succeeder` / `negator` | 恒成功 / 恒失败，实测**不执行**子节点 |
+| `repeat count` | 每拍执行一次子节点，n 次后成功；子节点失败也计数；完成后保持成功，不再执行子节点 |
 | `repeat until_done` | 子节点返回成功或失败即结束，返回成功 |
 | `repeat duration_s` | 时长内每拍执行子节点，到时成功 |
 | 树根 | 默认 parallel，可用 `root_node_type` 改 |
@@ -289,7 +314,7 @@ request  请求编号字段（平台.状态.叶节点）
 其他结论：
 
 - 叶节点：`precondition` 返回布尔或数值；`execute` 返回 Running / Success / Failure；`on_new_execute` 在每次新激活时执行一次；叶节点私有变量跨拍保留。没有可靠的中断回调，取消放在状态的 `on_exit`。
-- 状态机：每个状态内挂一棵树；`next_state` 按书写顺序求值，第一个为真者生效；状态机在处理器 `on_update` 中每拍求值一次，树在同一拍执行。
+- 状态机：每个状态内挂一棵树；`next_state` 按书写顺序求值，第一个为真者生效。同一拍内先执行当前状态的树，再求值转换；新状态的树从下一拍开始执行（探针中树的输出与新状态的 `on_entry` 出现在同一拍）。
 - **内部仿真须改为原生语义**：IR v1 运行时的 negator（等同 inverter）、succeeder（透传 Running）、repeat_count / repeat_for_duration（子节点失败即失败）、repeat_until_done（带条件和次数上限）、parallel（记住已成功子节点、有失败策略）与原生不同。第 3 步统一到上表，v1 模型由 `ir migrate` 转换，原生无法表达的写法给出迁移错误。
 
 ## 8. 实施步骤
@@ -298,7 +323,7 @@ request  请求编号字段（平台.状态.叶节点）
 | --- | --- | --- |
 | 1 | 读工程原生行为树写法，提取模板，写入 `_local` | 已完成（2026-10-29）：§7 有结论，模板说明在 `_local` |
 | 2 | IR 2.0 schema、规范化、错误码；对照表新增 `blackboard` 键 | 已完成（2026-10-29）：单元测试；6 个任务状态机无模型转换后全部通过 L1 |
-| 3 | 内部模型上的 L2，运动、感知的二维仿真语义；运行时节点语义改为原生（§7） | 现有 L2 测试迁移通过；单车感知任务的 L3 通过；节点语义测试与探针结果一致 |
+| 3 | 内部模型上的 L2，运动、感知的二维仿真语义；运行时节点语义改为原生（§7） | 已完成（2026-10-29）：节点语义测试逐条复现探针输出；单车感知任务 3 个 L3 想定全部通过，无理想化动作、无未定义触发 |
 | 4 | AFSIM 编译器与通用叶节点模板（运动 + 感知）、运行器、评测器 | 单车感知回归与手写版一致 |
 | 5 | 三车与目标保持距离：战术集回归，再由需求经 Falcon 生成 | 两条路径都与手写版一致 |
 | 6 | Falcon 战术稿 v3（命名空间调用、战术集引用、按切片检索）；`ir migrate` | 装甲排在线生成通过 |

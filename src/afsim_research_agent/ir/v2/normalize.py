@@ -41,7 +41,11 @@ IDENT = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 STATE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 FIELD_PATH = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$")
 COMPARE_OPS = ("eq", "ne", "lt", "lte", "gt", "gte")
-FUNCTIONS: dict[str, dict[str, str]] = {"time_in_state_gte": {"duration": "time"}}
+FUNCTIONS: dict[str, dict[str, str]] = {
+    "time_in_state_gte": {"duration": "time"},
+    # seconds since the time stored in a blackboard field (false while the field is empty)
+    "elapsed_since_gte": {"field": "field", "duration": "time"},
+}
 V1_OPERANDS = (
     "self_value",
     "platform_value",
@@ -126,7 +130,7 @@ class _Normalizer:
                     self.used_slices.add(fld.slice)
         imported = self.c.slice_fields(self.used_slices)
         blackboard = {
-            p: {"type": f.type, "dimension": f.dimension, "slice": f.slice}
+            p: {"type": f.type, "dimension": f.dimension, "slice": f.slice, "default": f.default}
             for p, f in sorted({**imported, **self.declared}.items())
         }
         return {
@@ -196,7 +200,7 @@ class _Normalizer:
                 dim = infer_dimension(decl.unit)
                 if dim is None:
                     self.d.error("UNIT001", f"{p}.unit", f"unknown unit '{decl.unit}'")
-            self.declared[path] = BBField(path, decl.type, dim, None)
+            self.declared[path] = BBField(path, decl.type, dim, None, default=decl.default)
 
     # ------------------------------------------------------------------ parameters
     def _parameters(self) -> dict[str, Any]:
@@ -947,6 +951,11 @@ class _Normalizer:
         for name, kind in args_spec.items():
             if name not in args:
                 self.d.error("IR002", f"{path}.arguments.{name}", "missing argument")
+                continue
+            if kind == "field":
+                got = self._bb(args[name], f"{path}.arguments.{name}")
+                if got is not None and got != "time":
+                    self.d.error("UNIT001", f"{path}.arguments.{name}", "expected a time field")
                 continue
             got = self._operand(args[name], f"{path}.arguments.{name}")
             if got is not None and not T.comparable(kind, got)[0]:
