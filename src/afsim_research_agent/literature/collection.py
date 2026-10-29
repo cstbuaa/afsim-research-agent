@@ -34,6 +34,7 @@ from functools import cache
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from afsim_research_agent.config import Settings
 from afsim_research_agent.domain.doctrine import DoctrineCatalog, find_designations
@@ -832,7 +833,8 @@ class SourceCollector:
     def _materialize_library(
         self, candidate: SourceCandidate
     ) -> tuple[PaperQADocument, SourceReference]:
-        path = Path(urlparse(candidate.url).path)
+        # file:///C:/... on Windows: url2pathname drops the leading slash before the drive
+        path = Path(url2pathname(urlparse(candidate.url).path))
         body = path.read_bytes()
         content_hash = hashlib.sha256(body).hexdigest()
         source_id = f"lib:{content_hash[:16]}"

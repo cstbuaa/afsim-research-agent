@@ -50,8 +50,9 @@ def test_build_settings_configures_dashscope_openai_compatibility() -> None:
     assert settings.answer.evidence_k == 4
     assert settings.answer.answer_max_sources == 2
     assert settings.answer.max_concurrent_requests == 1
-    assert settings.agent.index.index_directory == "/tmp/afsim-research-data/index/paperqa"
-    assert settings.agent.index.paper_directory == "/tmp/afsim-research-data/raw/paperqa"
+    data = Path("/tmp/afsim-research-data")  # separators follow the OS (Windows: backslashes)
+    assert settings.agent.index.index_directory == str(data / "index" / "paperqa")
+    assert settings.agent.index.paper_directory == str(data / "raw" / "paperqa")
 
 
 def test_embedding_metadata_supports_lmi_truncation() -> None:
