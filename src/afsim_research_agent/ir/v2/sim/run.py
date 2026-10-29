@@ -129,7 +129,7 @@ class SimResult:
         for c in self.checks:
             lines.append(f"  [{'ok' if c.passed else 'FAIL'}] {c.id}: {c.detail}")
         for name, seq in self.states.items():
-            path = " → ".join(f"{s}@{t:g}" for t, s in seq)
+            path = " -> ".join(f"{s}@{t:g}" for t, s in seq)
             lines.append(f"  {name}: {path}")
         if self.idealized:
             lines.append(f"  idealized actions (no model): {sorted(self.idealized)}")
