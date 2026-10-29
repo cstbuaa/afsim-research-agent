@@ -20,7 +20,12 @@ Commands
                                  single-tick conformance pack for native backends
   judge     <pkg> --scenario ID --trace FILE.jsonl
                                  judge a recorded run (e.g. a native lab-engine run) with L3
-  schema    [--out PATH]         write the JSON Schema of behavior_spec.yaml
+  schema    [--out PATH] [--ir-version 2.0]
+                                 write the JSON Schema of behavior_spec.yaml
+  v2-check  <behavior_spec.yaml> [--capability-set DIR] [--out FILE.json] [-v]
+                                 IR 2.0 normalization and L1 against a capability set
+  v2-from-tactic (<mission id> ... | --all) [--capability-set DIR] [--out DIR] [-v]
+                                 convert tactic-set missions to IR 2.0 (no model) and check them
 """
 
 from __future__ import annotations
@@ -49,6 +54,85 @@ def schema_text() -> str:
     schema["$id"] = "https://afsim-research-agent.local/schema/behavior_spec-1.0.json"
     schema["title"] = "Tactical Behavior IR 1.0 (behavior_spec.yaml)"
     return json.dumps(schema, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def schema_text_v2() -> str:
+    from afsim_research_agent.ir.v2 import json_schema
+
+    schema = json_schema()
+    schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
+    schema["$id"] = "https://afsim-research-agent.local/schema/behavior_spec-2.0.json"
+    return json.dumps(schema, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+
+
+def _contracts(root: Path | None):
+    from afsim_research_agent.capability import CatalogError, default_catalog_root
+    from afsim_research_agent.ir.v2 import Contracts
+
+    try:
+        return Contracts.load(root or default_catalog_root())
+    except CatalogError as exc:
+        print(f"capability set: {exc}")
+        return None
+
+
+def _v2_check(args) -> int:
+    import yaml
+
+    from afsim_research_agent.ir.v2 import normalize
+
+    contracts = _contracts(args.capability_set)
+    if contracts is None:
+        return 2
+    raw = yaml.safe_load(args.spec.read_text(encoding="utf-8"))
+    result = normalize(raw, contracts)
+    _print_diagnostics(result.diagnostics, verbose=args.verbose)
+    if result.ok and args.out:
+        if args.out.exists():
+            print(f"{args.out} exists; not overwritten")
+            return 1
+        args.out.write_text(
+            json.dumps(result.model, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    print("IR 2.0 L1 passed" if result.ok else "IR 2.0 L1 failed")
+    return 0 if result.ok else 1
+
+
+def _v2_from_tactic(args) -> int:
+    import yaml
+
+    from afsim_research_agent.ir.v2 import mission_to_ir, normalize
+
+    contracts = _contracts(args.capability_set)
+    if contracts is None:
+        return 2
+    ids = args.missions or []
+    if args.all:
+        ids = sorted(e.id for e in contracts.tactics.values() if e.section == "missions")
+    if not ids:
+        print("name tactic-set missions, or use --all")
+        return 2
+    if args.out:
+        if args.out.exists() and any(args.out.iterdir()):
+            print(f"{args.out} is not empty; choose a new directory")
+            return 1
+        args.out.mkdir(parents=True, exist_ok=True)
+    failed = 0
+    for mission_id in ids:
+        raw = mission_to_ir(contracts, mission_id)
+        result = normalize(raw, contracts)
+        _print_diagnostics(result.diagnostics, verbose=args.verbose)
+        roles = ", ".join(raw["missions"])
+        print(f"{'PASS' if result.ok else 'FAIL'} {mission_id} ({roles})")
+        failed += not result.ok
+        if args.out:
+            name = raw["model"]["id"]
+            (args.out / f"{name}.behavior_spec.yaml").write_text(
+                yaml.safe_dump(raw, allow_unicode=True, sort_keys=False), encoding="utf-8"
+            )
+    print(f"{len(ids) - failed}/{len(ids)} missions pass IR 2.0 L1")
+    return 0 if not failed else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -121,7 +205,24 @@ def main(argv: list[str] | None = None) -> int:
     judge.add_argument("--trace", type=Path, required=True)
     schema = sub.add_parser("schema")
     schema.add_argument("--out", type=Path)
+    schema.add_argument("--ir-version", choices=("1.0", "2.0"), default="1.0")
+    v2c = sub.add_parser("v2-check")
+    v2c.add_argument("spec", type=Path)
+    v2c.add_argument("--capability-set", type=Path)
+    v2c.add_argument("--out", type=Path)
+    v2c.add_argument("-v", "--verbose", action="store_true")
+    v2t = sub.add_parser("v2-from-tactic")
+    v2t.add_argument("missions", nargs="*")
+    v2t.add_argument("--all", action="store_true")
+    v2t.add_argument("--capability-set", type=Path)
+    v2t.add_argument("--out", type=Path)
+    v2t.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+
+    if args.command == "v2-check":
+        return _v2_check(args)
+    if args.command == "v2-from-tactic":
+        return _v2_from_tactic(args)
 
     if args.command == "cosim":
         return _cosim(args)
@@ -160,7 +261,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if passed == len(results) else 1
 
     if args.command == "schema":
-        text = schema_text()
+        text = schema_text_v2() if args.ir_version == "2.0" else schema_text()
         if args.out:
             args.out.write_text(text, encoding="utf-8")
         else:

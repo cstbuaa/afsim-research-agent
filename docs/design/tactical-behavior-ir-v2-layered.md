@@ -1,6 +1,6 @@
 # 战术行为模型中间表示 IR 2.0（七层分层）设计稿
 
-> 状态：**设计稿，待确认**（2026-10-29）
+> 状态：**已确认**（2026-10-29）；第 1、2 步已实现（`src/afsim_research_agent/ir/v2/`）
 > 基于：`tactical-behavior-ir-v1.md`、`capability-catalog-integration-v1.md` §14（动作集 / 战术集）、装甲车工程的七层结构
 > 已确认的决定（2026-10-29）：
 > - IR 借鉴七层结构；
@@ -78,12 +78,13 @@ blackboard:
 conditions:
   - id: target_in_band
     expression: {all: [{bb: perception.selected_target.valid},
-                       {compare: {left: {bb: perception.selected_target.range_m}, op: lte,
-                                  right: {param: range_band_max}}}]}
+                       {compare: {left: {bb: perception.selected_target.range_m}, operator: lte,
+                                  right: {parameter_ref: range_band_max}}}]}
 ```
 
 - **v1 操作数的兼容**：`track_value.current_target_valid` 这类 v1 操作数通过对照表（`ir_alignment.toml` 新增 `blackboard` 键）换成对应的黑板字段。没有对应字段的，按能力缺口处理。
-- **函数**（`time_in_state_gte` 等）保留，由运行时提供。
+- **函数**：首期只保留 `time_in_state_gte`，由运行时提供。
+- **事件**：不是黑板条件的转换触发写在 `events`，来源为 `tactic`（战术集任务状态机发出，带原文 `text`）、`timer`（`after_s`）、`message` 或 `external`（如外部取消）。转换的 `on` 只能引用条件或事件。
 
 ### 2.4 第 4 层 `arbitration`（程序推导）
 
@@ -127,7 +128,7 @@ state_trees:
     STANDOFF_TRACK: line_follow
 ```
 
-- 每个状态映射到一个子树：本模型子树或战术集子树。
+- 按角色写：`state_trees.<角色>.<状态>`。每个状态映射到一个子树：本模型子树，或战术集的子树 / 状态树。
 - 一个状态没有映射时，规范化给出错误；终止状态不需要映射。
 
 ### 2.7 第 7 层 `missions`
@@ -148,7 +149,8 @@ missions:
   - `on` 引用条件或事件（计时、消息、外部取消）；
   - 一个状态有多条转换时按 `priority` 排序。
 - **必须有安全终止路径**：每个非终止状态都要能到达 `SHUTDOWN` 或等效的安全状态，否则规范化报错。
-- **可以整体引用战术集的任务状态机**：`missions.leader: {tactic: formation_standoff.formation_standoff_tracking}`，只覆盖参数。
+- **安全状态**：`safe` 默认取 `SHUTDOWN`（存在时）；`global` 转换对所有非终止状态生效。
+- **可以整体引用战术集的任务状态机**：`missions.leader: {tactic: <战术集任务 ID>, role: <战术集角色>, params: {…}}`，只能覆盖该任务公开的参数。展开后的状态树映射可在 `state_trees` 中补充或替换。
 
 ### 2.8 角色与协同
 
@@ -183,6 +185,28 @@ missions:
 - **Falcon 战术稿**：
   - Python 行为树写法保留，叶节点改为带命名空间的调用，如 `movement.move_to_point(latitude_deg=…, …)`，战术集子树用 `tactic("perception.track_selected_target")`；
   - 提示词按需求检索相关切片的条目和候选战术，不再列出 IR 自有的 25 个命令。
+
+### 4.1 实现（第 2 步）
+
+| 模块 | 内容 |
+| --- | --- |
+| `ir/v2/models.py` | 结构模型；`ir schema --ir-version 2.0` 生成 `ir/schema/behavior_spec_v2.schema.json` |
+| `ir/v2/contracts.py` | 从能力集取动作契约、战术集条目、切片黑板与资源；读取对照表的 `[blackboard]` 键 |
+| `ir/v2/normalize.py` | 规范化与 L1：契约与单位、战术集展开、黑板读取、租约推导、并行资源冲突、状态机安全路径 |
+| `ir/v2/from_tactic.py` | 战术集任务状态机 → IR 2.0：按 `role == X` 拆角色，按显式、按角色或按名称找状态树，触发条件转为 `tactic` 事件 |
+
+内部模型的要点：
+
+- 节点编号为"角色.状态.路径"，即动作叶节点的请求编号。
+- 每个状态列出租约：独占资源、退出时释放的资源，以及保留的资源。契约写明终止后不释放的资源（如已选目标）会被保留，模型用 `arbitration.hold` 声明的也会保留。
+- 战术集内容按原样展开，并标出来源。其中的 `timeout` 等工程写法只在战术集内部出现，不是 IR 节点；编译时按工程原生实现处理。
+
+命令行：
+
+```text
+python -m afsim_research_agent.ir v2-check <behavior_spec.yaml> [--capability-set DIR] [--out normalized.json]
+python -m afsim_research_agent.ir v2-from-tactic (<任务 ID> … | --all) [--capability-set DIR] [--out 新目录]
+```
 
 ## 5. AFSIM 后端（方案 B）
 
@@ -241,7 +265,9 @@ request  请求编号字段（平台.状态.叶节点）
 | `BB001` | 条件读取了未导入、也未声明的黑板字段 |
 | `ARB001` | 并行分支争用同一独占资源 |
 | `FSM001` | 非终止状态没有到达安全状态的路径 |
-| `FSM002` | 状态没有对应的状态树 |
+| `FSM002` | 状态没有对应的状态树，或状态树映射了不存在的状态 |
+
+沿用 IR 1.0 的 `IR001`/`IR002`（版本、结构）、`ID001`、`REF001`（条件、事件、子树、参数引用）、`TYPE001`、`UNIT001`、`TREE001`（子节点数、递归、重复设置）、`ROLE001`。
 
 ## 7. AFSIM 2.9 行为树语义（已用本机文档和探针确认）
 
@@ -271,7 +297,7 @@ request  请求编号字段（平台.状态.叶节点）
 | 步 | 内容 | 验收 |
 | --- | --- | --- |
 | 1 | 读工程原生行为树写法，提取模板，写入 `_local` | 已完成（2026-10-29）：§7 有结论，模板说明在 `_local` |
-| 2 | IR 2.0 schema、规范化、错误码；对照表新增 `blackboard` 键 | 单元测试；战术集的 6 个任务状态机都能无模型转成 IR 2.0 并通过 L1 |
+| 2 | IR 2.0 schema、规范化、错误码；对照表新增 `blackboard` 键 | 已完成（2026-10-29）：单元测试；6 个任务状态机无模型转换后全部通过 L1 |
 | 3 | 内部模型上的 L2，运动、感知的二维仿真语义；运行时节点语义改为原生（§7） | 现有 L2 测试迁移通过；单车感知任务的 L3 通过；节点语义测试与探针结果一致 |
 | 4 | AFSIM 编译器与通用叶节点模板（运动 + 感知）、运行器、评测器 | 单车感知回归与手写版一致 |
 | 5 | 三车与目标保持距离：战术集回归，再由需求经 Falcon 生成 | 两条路径都与手写版一致 |

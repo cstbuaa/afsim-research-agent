@@ -209,6 +209,8 @@ class CapabilityCatalog:
         self.domains = domains or {}
         self.overrides = list(overrides or [])
         self.tactics: dict[str, dict[str, Any]] = {}  # slice → tactic set (战术集)
+        # slice → shared contract data of its action file (blackboard, resources, parameters)
+        self.slices: dict[str, dict[str, Any]] = {}
         self.source: dict[str, Any] = {}
         self._by_ir_v1: dict[str, list[Interface | Capability]] = {}
         for cap in self.capabilities.values():
@@ -244,6 +246,7 @@ class CapabilityCatalog:
         caps: dict[str, Capability] = {}
         domains: dict[str, str] = {}
         tactics: dict[str, dict[str, Any]] = {}
+        slice_data: dict[str, dict[str, Any]] = {}
         for sl in index.get("slices") or []:
             sid = sl["id"]
             domains[sid] = sl.get("display_name", sid)
@@ -251,6 +254,9 @@ class CapabilityCatalog:
             data = _read_yaml(action_path)
             files.append(action_path)
             info = data.get("slice") or {}
+            slice_data[sid] = {
+                key: data.get(key) or {} for key in ("blackboard", "resources", "parameters")
+            }
             caps[sid] = _entry_capability(
                 {"id": sid, "kind": "slice", "description": info.get("description", "")},
                 sid,
@@ -294,6 +300,7 @@ class CapabilityCatalog:
             overrides=overrides,
         )
         catalog.tactics = tactics
+        catalog.slices = slice_data
         catalog.source = dict(index.get("source") or {})
         return catalog
 
