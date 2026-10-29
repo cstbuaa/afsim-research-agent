@@ -43,12 +43,20 @@ class Workspace:
         text = str(path).replace("\\", "/").strip()
         if not text:
             raise WorkspaceError("路径为空")
+        # "/runs/x" is workspace-relative on every OS. On Windows it has no drive, so it
+        # is not absolute and joining it to the root would jump to the drive root: strip
+        # the leading slashes. Real absolute paths (C:/... on Windows, /home/... on POSIX)
+        # are accepted only when they already point inside the root.
         candidate = Path(text)
         if candidate.is_absolute():
-            try:  # tolerate absolute paths that already point inside the root
+            try:
                 candidate = candidate.resolve().relative_to(self.root)
             except ValueError:
-                candidate = Path(text.lstrip("/"))
+                if not text.startswith("/"):  # e.g. C:/elsewhere
+                    raise WorkspaceError(f"路径超出工作区：{text}") from None
+                candidate = Path(text.lstrip("/"))  # POSIX: "/runs/x" meant the workspace
+        else:
+            candidate = Path(text.lstrip("/"))
         if ".." in candidate.parts:
             raise WorkspaceError(f"路径不能包含 '..'：{text}")
         if PROTECTED_PART in candidate.parts:
