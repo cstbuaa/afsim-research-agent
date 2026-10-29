@@ -107,7 +107,11 @@ subtrees:
         - {type: action, action: formation.target_line_slots}
 ```
 
-- **节点类型**：`sequence`、`selector`、`parallel`（带成功/失败策略）、`timeout`、`repeat`、`until`、`condition`、`action`、`tactic`（引用战术集子树）、`subtree`（引用本模型子树）。
+- **节点类型**与 AFSIM 2.9 原生节点一一对应（语义以原生为准，见 §7）：
+  - 组合：`sequence`、`sequence_with_memory`、`selector`、`selector_with_memory`、`priority_selector`、`weighted_random`、`parallel`（只有成功策略：`one` / `all` / `threshold`）；
+  - 装饰：`inverter`、`succeeder`、`negator`、`repeat`（`count` / `until_done` / `duration_s` 三选一）；
+  - 叶：`condition`、`action`；引用：`tactic`（战术集子树）、`subtree`（本模型子树）。
+- 原生没有的写法（超时、失败策略、带条件的重复）不进 IR；需要时用条件节点加 selector 表达。
 - **优先引用战术集**：生成前先用 `find_tactics` 检索；引用时只能覆盖战术集子树公开的参数，不能改结构。
 - **新建子树**只能由动作、条件、战术集子树和本模型子树组成，不能嵌入脚本。
 
@@ -186,7 +190,7 @@ missions:
 | --- | --- |
 | `missions.<role>` | 每个角色实例一个 `WSF_STATE_MACHINE` 处理器；转换按优先级生成 |
 | `state_trees` + `subtrees` | 每个状态一棵 `advanced_behavior_tree`；战术集子树按引用展开 |
-| 组合节点 | 原生 sequence / selector / parallel 及装饰节点（需按 2.9 语法确认，见 §7） |
+| 组合与装饰节点 | 同名原生节点；`repeat` → `decorator repeater repeat <n> / until_done / for <时长>`；`parallel` → `success_policy` |
 | 动作叶节点 | 通用叶节点模板生成的 `advanced_behavior`（§5.1）；运动切片直接用工程已有的原生叶节点 |
 | 条件叶节点 | 只读取绑定黑板字段的条件叶节点 |
 | 黑板 | 按工程绑定换成平台辅助数据的名称 |
@@ -239,22 +243,36 @@ request  请求编号字段（平台.状态.叶节点）
 | `FSM001` | 非终止状态没有到达安全状态的路径 |
 | `FSM002` | 状态没有对应的状态树 |
 
-## 7. 待确认的 AFSIM 细节
+## 7. AFSIM 2.9 行为树语义（已用本机文档和探针确认）
 
-以下需要读工程编队 V1 和运动叶节点的原生写法后确定，结论写入 `_local` 的模板说明，不进仓库：
+2026-10-29 在本机 2.9 上用 mission.exe 跑了四轮通用语法探针（只含通用节点，不含工程名称），结论如下。工程叶节点的具体写法和绑定写入 `_local` 的模板说明，不进仓库。
 
-- `advanced_behavior_tree` 在 2.9 中的组合节点、装饰节点和计时写法；
-- 叶节点返回运行 / 成功 / 失败的方式，以及中断回调；
-- 状态机与行为树的组合方式：状态内挂树，还是树内判断状态；
-- 树在每个更新周期的执行顺序，与处理器更新间隔的关系。
+| 节点 | 原生语义 |
+| --- | --- |
+| `sequence` / `selector` | 无记忆，每拍从第一个子节点重来；前置条件为假视为失败 |
+| `*_with_memory` | 从上拍 Running 的子节点继续 |
+| `priority_selector` / `weighted_random` | 子节点前置条件返回的数值即优先级 / 权重 |
+| `parallel` | 每拍重跑全部子节点（含已成功的）；达到成功策略即成功，全部结束仍未达到即失败；默认 `succeed_on_one`；没有失败策略 |
+| `inverter` | 成功、失败互换 |
+| `succeeder` / `negator` | 恒成功 / 恒失败 |
+| `repeat count` | 每拍执行一次子节点，n 次后成功；子节点失败也计数 |
+| `repeat until_done` | 子节点返回成功或失败即结束，返回成功 |
+| `repeat duration_s` | 时长内每拍执行子节点，到时成功 |
+| 树根 | 默认 parallel，可用 `root_node_type` 改 |
+
+其他结论：
+
+- 叶节点：`precondition` 返回布尔或数值；`execute` 返回 Running / Success / Failure；`on_new_execute` 在每次新激活时执行一次；叶节点私有变量跨拍保留。没有可靠的中断回调，取消放在状态的 `on_exit`。
+- 状态机：每个状态内挂一棵树；`next_state` 按书写顺序求值，第一个为真者生效；状态机在处理器 `on_update` 中每拍求值一次，树在同一拍执行。
+- **内部仿真须改为原生语义**：IR v1 运行时的 negator（等同 inverter）、succeeder（透传 Running）、repeat_count / repeat_for_duration（子节点失败即失败）、repeat_until_done（带条件和次数上限）、parallel（记住已成功子节点、有失败策略）与原生不同。第 3 步统一到上表，v1 模型由 `ir migrate` 转换，原生无法表达的写法给出迁移错误。
 
 ## 8. 实施步骤
 
 | 步 | 内容 | 验收 |
 | --- | --- | --- |
-| 1 | 读工程原生行为树写法，提取模板，写入 `_local` | 模板说明完成，§7 各项有结论 |
+| 1 | 读工程原生行为树写法，提取模板，写入 `_local` | 已完成（2026-10-29）：§7 有结论，模板说明在 `_local` |
 | 2 | IR 2.0 schema、规范化、错误码；对照表新增 `blackboard` 键 | 单元测试；战术集的 6 个任务状态机都能无模型转成 IR 2.0 并通过 L1 |
-| 3 | 内部模型上的 L2，以及运动、感知的二维仿真语义 | 现有 L2 测试迁移通过；单车感知任务的 L3 通过 |
+| 3 | 内部模型上的 L2，运动、感知的二维仿真语义；运行时节点语义改为原生（§7） | 现有 L2 测试迁移通过；单车感知任务的 L3 通过；节点语义测试与探针结果一致 |
 | 4 | AFSIM 编译器与通用叶节点模板（运动 + 感知）、运行器、评测器 | 单车感知回归与手写版一致 |
 | 5 | 三车与目标保持距离：战术集回归，再由需求经 Falcon 生成 | 两条路径都与手写版一致 |
 | 6 | Falcon 战术稿 v3（命名空间调用、战术集引用、按切片检索）；`ir migrate` | 装甲排在线生成通过 |
