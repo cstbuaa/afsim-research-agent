@@ -25,7 +25,7 @@ from afsim_research_agent.orchestrator.workspace import Workspace
 def base(tmp_path):
     root = tmp_path / "data"
     (root / "runs" / "r1").mkdir(parents=True)
-    (root / "runs" / "r1" / "a.yaml").write_text("x: 1\n", encoding="utf-8")
+    (root / "runs" / "r1" / "a.yaml").write_bytes(b"x: 1\n")  # no CRLF on Windows
     (root / "runs" / "_local").mkdir()
     ws = Workspace(root.resolve())
     store = ThreadStore(DemoRunner(), tmp_path / "threads.json")
