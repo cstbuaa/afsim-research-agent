@@ -11,6 +11,7 @@ Binding (TOML)::
     model_root = "<project directory>"        # added to file_path of every run
     includes = ["<file>", ...]                 # include_once'd by the behavior file
     base_platform_type = "<type>"              # each role's platform type derives from it
+    scripts = "<helper scripts>"               # written after the includes
 
     [blackboard.files]                         # slice → YAML file with a `blackboard` map
     <slice> = "<path relative to model_root>"
@@ -32,6 +33,13 @@ Binding (TOML)::
     inputs = "<script>"                        # {request} is a fresh id per activation
     done = "<expression>"                      # true once {request} has finished
     cancel = "<script>"
+    exit = "<script>"                          # on_exit of states using it, always
+    enter = "<script>"                         # on_entry of states using it
+    # {p:<name>} writes a parameter; {p?:<name>} falls back to the platform's
+    # auxiliary data ir_param_<name> when the leaf gives none (tactic-set leaves)
+
+    [external]                                 # event id → extra raising condition
+    <event id> = "<expression>"
 
     [resource."<resource>"]
     release = "<script>"                       # {platform} {request} {resource}
@@ -77,6 +85,7 @@ class Meta(_Strict):
     includes: list[str] = Field(default_factory=list)
     base_platform_type: str
     update_interval_s: float = 1.0
+    scripts: str = ""  # helper scripts written after the includes
 
 
 class BlackboardBinding(_Strict):
@@ -98,6 +107,8 @@ class ActionBinding(_Strict):
     inputs: str = ""
     done: str = ""
     cancel: str = ""
+    exit: str = ""  # run in on_exit of every state using the action, running or not
+    enter: str = ""  # run in on_entry of every state using the action
 
 
 class ResourceBinding(_Strict):
@@ -110,6 +121,8 @@ class Binding(_Strict):
     instance: InstanceBinding = Field(default_factory=InstanceBinding)
     action: dict[str, ActionBinding] = Field(default_factory=dict)
     resource: dict[str, ResourceBinding] = Field(default_factory=dict)
+    # external event id → extra script condition that also raises it (e.g. a project flag)
+    external: dict[str, str] = Field(default_factory=dict)
 
     # filled by load(): slice → field → auxiliary-data key
     aux: dict[str, dict[str, str]] = Field(default_factory=dict, exclude=True)

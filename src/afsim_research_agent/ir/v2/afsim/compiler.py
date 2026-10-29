@@ -78,6 +78,20 @@ def lit(value: Any) -> str:
     return f'"{text}"'
 
 
+def _traced(lines: list[str]) -> list[str]:
+    """Debug build: every leaf writes IR_TICK|<time>|<leaf> when it is evaluated."""
+    out: list[str] = []
+    name = ""
+    for line in lines:
+        if line.startswith("advanced_behavior "):
+            name = line.split()[1]
+        tick = f'writeln("IR_TICK|", TIME_NOW, "|{name}");'
+        if line.startswith("   precondition ") and line.endswith(" end_precondition"):
+            line = line.replace("   precondition ", f"   precondition {tick} ", 1)
+        out.append(line)
+    return out
+
+
 def subst(text: str, **values: str) -> str:
     """Replace ``{key}`` for the given keys only (scripts contain other braces)."""
     for key, value in values.items():
@@ -96,6 +110,8 @@ class _Leaf:
     kind: str
     request: str  # script expression of the request id
     cancel: str
+    exit: str = ""
+    enter: str = ""
 
 
 @dataclass
@@ -113,7 +129,15 @@ class Package:
 
 
 class Compiler:
-    def __init__(self, model: dict[str, Any], contracts: Contracts, binding: Binding) -> None:
+    def __init__(
+        self,
+        model: dict[str, Any],
+        contracts: Contracts,
+        binding: Binding,
+        *,
+        trace: bool = False,
+    ) -> None:
+        self.trace = trace
         self.m = model
         self.c = contracts
         self.b = binding
@@ -137,8 +161,10 @@ class Compiler:
             "",
             *[f"include_once {inc}" for inc in self.b.meta.includes],
             "",
+            *([self.b.meta.scripts.strip(), ""] if self.b.meta.scripts.strip() else []),
         ]
-        behavior = "\n".join([*head, *self.scripts, *self.behaviors, *processors]) + "\n"
+        behaviors = _traced(self.behaviors) if self.trace else self.behaviors
+        behavior = "\n".join([*head, *self.scripts, *behaviors, *processors]) + "\n"
         name = f"{self.P}_behavior.txt"
         run_files = {f"run_{ident(r.id)}.txt": self._run(r, name) for r in runs}
         manifest = {
@@ -236,6 +262,11 @@ class Compiler:
             f'writeln("IR_STATE|", TIME_NOW, "|", PLATFORM.Name(), "|{s}");',
             *subst(self.b.instance.state_entry, state=s).strip().splitlines(),
         ]
+        seen: list[str] = []
+        for leaf in st.leaves:
+            if leaf.enter.strip() and leaf.enter not in seen:
+                seen.append(leaf.enter)
+                entry += leaf.enter.strip().splitlines()
         out = [
             f"   state {s}",
             "      on_entry",
@@ -281,6 +312,8 @@ class Compiler:
         lines: list[str] = []
         for leaf in st.leaves:
             if not leaf.cancel.strip():
+                if leaf.kind == "native_leaf":
+                    lines.append(f'         PLATFORM.SetAuxData("{leaf.name}_req", "");')
                 continue
             if leaf.kind == "script":
                 lines += [f'         if (PLATFORM.AuxDataBool("{leaf.name}_run"))', "         {"]
@@ -298,6 +331,12 @@ class Compiler:
                     f'            PLATFORM.SetAuxData("{leaf.name}_req", "");',
                     "         }",
                 ]
+        exits: list[str] = []
+        for leaf in st.leaves:
+            if leaf.exit.strip() and leaf.exit not in exits:
+                exits.append(leaf.exit)
+        for text in exits:
+            lines += indent(text, "         ")
         released: set[str] = set()
         for lease in info.get("leases", []):
             released.update(lease.get("release_on_exit", []))
@@ -334,7 +373,7 @@ class Compiler:
         consume = [f'PLATFORM.SetAuxData("{flag}", false);']
         source = ev.get("source")
         if source == "external":
-            return f'PLATFORM.AuxDataBool("{flag}")', consume
+            return self._external(name, flag), consume
         if source == "timer":
             return (
                 f'(TIME_NOW - PLATFORM.AuxDataDouble("ir_entered_s")) >= {num(ev["after_s"])}',
@@ -347,7 +386,7 @@ class Compiler:
                     f"tactic event '{ev.get('text')}' of {ev.get('tactic')} has no semantics"
                 )
             if sem.get("external"):
-                return f'PLATFORM.AuxDataBool("{flag}")', consume
+                return self._external(name, flag), consume
             if "tree" in sem:
                 return f'PLATFORM.AuxDataString("{self.P}_tree") == "{sem["tree"]}"', []
             if "after_s" in sem:
@@ -363,6 +402,11 @@ class Compiler:
                     f'PLATFORM.SetAuxData("{other}", false);'
                 ]
         raise CompileError(f"{source} event '{name}' cannot be compiled yet")
+
+    def _external(self, name: str, flag: str) -> str:
+        extra = self.b.external.get(name)
+        cond = f'PLATFORM.AuxDataBool("{flag}")'
+        return f"({cond} || ({extra.strip()}))" if extra else cond
 
     # ------------------------------------------------------------------ expressions
     def _expr(self, e: Any) -> str:
@@ -429,7 +473,20 @@ class Compiler:
         kind = n["type"]
         kids = n.get("children") or []
         if kind in ("tactic", "subtree"):
-            return self._node(kids[0], pad, weight) if kids else []
+            inner = (
+                self._node(kids[0], pad + ("   " if n.get("failure_as_running") else ""), weight)
+                if kids
+                else []
+            )
+            if not n.get("failure_as_running"):
+                return inner
+            # keep running instead of failing: the subtree, or a leaf that reports running
+            return [
+                f"{pad}selector",
+                *inner,
+                f"{pad}   behavior_node {self._running_leaf()}",
+                f"{pad}end_selector",
+            ]
         if kind in ("action", "condition"):
             names = self._leaf(n, weight)
             if len(names) == 1:
@@ -511,6 +568,19 @@ class Compiler:
             f"{pad}end_selector",
         ]
 
+    def _running_leaf(self) -> str:
+        name = f"{self.P}_running"
+        if not getattr(self, "_has_running", False):
+            self._has_running = True
+            self.behaviors += [
+                f"advanced_behavior {name}",
+                "   precondition return Success(); end_precondition",
+                '   execute return Running("running"); end_execute',
+                "end_advanced_behavior",
+                "",
+            ]
+        return name
+
     def _new_name(self, suffix: str = "") -> str:
         count = getattr(self, "_count", 0) + 1
         self._count = count
@@ -562,6 +632,8 @@ class Compiler:
             self.behaviors += [
                 f"advanced_behavior {name}",
                 f"   precondition {body} end_precondition",
+                # a node with only a precondition never lets a sequence continue (probe w01)
+                "   execute return Success(); end_execute",
                 "end_advanced_behavior",
                 "",
             ]
@@ -604,6 +676,8 @@ class Compiler:
                     "script",
                     self.req,
                     self._fmt(ab.cancel, platform="PLATFORM", action=action, params=params, leaf=n),
+                    self._fmt(ab.exit, platform="PLATFORM", action=action, params=params, leaf=n),
+                    self._fmt(ab.enter, platform="PLATFORM", action=action, params=params, leaf=n),
                 )
             )
             return [name]
@@ -648,6 +722,8 @@ class Compiler:
                     leaf=n,
                     request="req",
                 ),
+                self._fmt(ab.exit, platform="PLATFORM", action=action, params=params, leaf=n),
+                self._fmt(ab.enter, platform="PLATFORM", action=action, params=params, leaf=n),
             )
         )
         return [f"{name}_in", ab.leaf]
@@ -688,6 +764,19 @@ class Compiler:
 
         def sub(match: re.Match[str]) -> str:
             key = match.group(1)
+            if key.startswith("p?:"):
+                name = key[3:]
+                if name in resolved:
+                    return lit(resolved[name])
+                spec = self._param_spec(leaf or {}, name)
+                getter = {
+                    "number": "AuxDataDouble",
+                    "integer": "AuxDataInt",
+                    "boolean": "AuxDataBool",
+                }
+                return (
+                    f'{platform}.{getter.get(spec.get("type"), "AuxDataString")}("ir_param_{name}")'
+                )
             if key.startswith("p:"):
                 name = key[2:]
                 if name not in resolved:
@@ -697,7 +786,12 @@ class Compiler:
                 return str(values[key])
             raise CompileError(f"unknown placeholder {{{key}}} in binding")
 
-        return re.sub(r"\{([a-z_]+(?::[A-Za-z0-9_]+)?)\}", sub, template)
+        return re.sub(r"\{([a-z_]+\??(?::[A-Za-z0-9_]+)?)\}", sub, template)
+
+    def _param_spec(self, leaf: dict[str, Any], name: str) -> dict[str, Any]:
+        contract = self.c.actions.get(str(leaf.get("action")))
+        spec = contract.parameters.get(name) if contract else None
+        return spec if isinstance(spec, dict) else {}
 
     def _params(self, leaf: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
         contract = self.c.actions.get(str(leaf.get("action")))

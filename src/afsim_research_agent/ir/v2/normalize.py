@@ -593,7 +593,7 @@ class _Normalizer:
             )
         self.used_slices.add(entry.slice)
         built = self._tactic_node(entry.raw["root"], entry, node_id, (*stack, ref))
-        return {
+        out = {
             "type": "tactic",
             "node_id": node_id,
             "origin": "model",
@@ -601,12 +601,23 @@ class _Normalizer:
             "params": dict(node.params),
             "children": [built],
         }
+        if _failure_as_running(entry.raw):
+            out["failure_as_running"] = True
+        return out
 
     def _tactic_node(
         self, raw: dict[str, Any], entry: TacticEntry, node_id: str, stack: tuple[str, ...]
     ) -> dict[str, Any]:
-        """Tactic-set content is implemented and tested in the lab; it is expanded as written."""
+        """Tactic-set content is implemented and tested in the lab; it is expanded as written,
+        with two readings of the lab's tree vocabulary (design §5.4):
+
+        - ``sequence`` / ``selector`` are the usual behavior-tree nodes that resume at a
+          running child (AFSIM ``*_with_memory``): a lab action spans several updates, and
+          restarting the sequence would issue it again every update;
+        - a subtree marked ``no_target_result: RUNNING`` keeps running instead of failing.
+        """
         kind = str(raw.get("type"))
+        kind = TACTIC_NODES.get(kind, kind)
         out: dict[str, Any] = {"type": kind, "node_id": node_id, "origin": entry.id}
         if kind == "action":
             out["action"] = raw.get("action")
@@ -633,6 +644,8 @@ class _Normalizer:
             out["children"] = [
                 self._tactic_node(sub.raw["root"], sub, f"{node_id}.{ref}", (*stack, ref))
             ]
+            if _failure_as_running(sub.raw):
+                out["failure_as_running"] = True
             return out
         if kind == "timeout":
             out["duration_s"] = raw.get("duration_s")
@@ -966,6 +979,13 @@ class _Normalizer:
             if got is not None and not T.comparable(kind, got)[0]:
                 self.d.error("UNIT001", f"{path}.arguments.{name}", f"expected {kind}")
         return T.BOOL
+
+
+TACTIC_NODES = {"sequence": "sequence_with_memory", "selector": "selector_with_memory"}
+
+
+def _failure_as_running(raw: dict[str, Any]) -> bool:
+    return str(raw.get("no_target_result", "")).upper() == "RUNNING"
 
 
 T_PHYSICAL = ("distance", "speed", "time", "angle", "altitude", "mass", "frequency", "ratio")

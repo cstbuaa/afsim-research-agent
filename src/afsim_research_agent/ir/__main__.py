@@ -230,7 +230,7 @@ def _v2_afsim(args) -> int:
         if model is None:
             return 1
         try:
-            compiler = Compiler(model, contracts, Binding.load(args.binding))
+            compiler = Compiler(model, contracts, Binding.load(args.binding), trace=args.trace)
             package = compiler.package([RunConfig.load(r) for r in args.run])
             written = compiler.write(package, args.out)
         except CompileError as exc:
@@ -353,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
     v2ac.add_argument("--run", type=Path, action="append", required=True)
     v2ac.add_argument("--out", type=Path, required=True)
     v2ac.add_argument("--capability-set", type=Path)
+    v2ac.add_argument("--trace", action="store_true", help="leaves print IR_TICK lines")
     v2ar = v2a_sub.add_parser("run")
     v2ar.add_argument("package", type=Path)
     v2ar.add_argument("--mission", help="mission executable (default: $AFSIM_MISSION or mission)")

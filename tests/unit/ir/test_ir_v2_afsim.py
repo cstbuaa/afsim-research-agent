@@ -425,3 +425,83 @@ def test_runtime_chains_transitions_like_afsim(env) -> None:
     # IDLE's tree, the transition on GO, and SEARCHING's tree, all at t = 1
     assert inst.state == "DONE" and [t for t, _ in host.log] == [1.0, 1.0]
     assert [e["to"] for e in inst.trace] == ["SEARCHING", "DONE"]
+
+
+def test_binding_hooks_fallback_parameters_and_external_flags(env, tmp_path: Path) -> None:
+    contracts, binding, run, base = env
+    text = (base / "binding.toml").read_text(encoding="utf-8")
+    text = text.replace(
+        'base_platform_type = "DEMO_VEHICLE"',
+        'base_platform_type = "DEMO_VEHICLE"\nscripts = "script void Demo_Helper() end_script"',
+    )
+    text = text.replace("{p:latitude_deg}", "{p?:latitude_deg}")
+    text = text.replace(
+        "cancel = 'Demo_Stop({platform}, {request});'",
+        "cancel = 'Demo_Stop({platform}, {request});'\nexit = 'Demo_Leave({platform});'\nenter = 'Demo_Enter(PLATFORM);'",
+    )
+    text += "\n[external]\ngo = 'PLATFORM.AuxDataBool(\"demo_go\")'\n"
+    path = tmp_path / "hooks.toml"
+    path.write_text(text, encoding="utf-8")
+    hooked = Binding.load(path)
+    spec = mission_to_ir(contracts, "sense.watch")
+    spec["subtrees"] = [
+        {
+            "id": "go",
+            "root": {"type": "action", "action": "nav.goto", "params": {"latitude_deg": 31.0}},
+        }
+    ]
+    spec["state_trees"]["vehicle"]["SEARCHING"] = "go"
+    model = normalize(spec, contracts).model
+    pkg = Compiler(model, contracts, hooked).package([run])
+    text = pkg.behavior
+    assert "script void Demo_Helper() end_script" in text
+    assert 'PLATFORM.SetAuxData("demo_lat", 31.0);' in text  # given: the literal
+    searching = text.split("   state SEARCHING")[1].split("   end_state")[0]
+    assert "Demo_Enter(PLATFORM);" in searching and "Demo_Leave(PLATFORM);" in searching
+    idle = text.split("   state IDLE")[1].split("   end_state")[0]
+    assert '(PLATFORM.AuxDataBool("ir_ev_go") || (PLATFORM.AuxDataBool("demo_go")))' in idle
+    # a tactic-set leaf without the parameter reads the platform's ir_param_<name>
+    spec["subtrees"][0]["root"] = {"type": "tactic", "tactic": "sense.search"}
+    binding_fallback = Binding.load(path)
+    binding_fallback.action["sense.scan"].body = "return {p?:latitude_deg};"
+    contracts.actions["sense.scan"].parameters["latitude_deg"] = {"type": "number"}
+    try:
+        pkg = Compiler(normalize(spec, contracts).model, contracts, binding_fallback).package([run])
+    finally:
+        del contracts.actions["sense.scan"].parameters["latitude_deg"]
+    assert 'return aPlatform.AuxDataDouble("ir_param_latitude_deg");' in pkg.behavior
+
+
+def test_tactic_set_trees_resume_and_conditions_succeed(env) -> None:
+    pkg = _compile(env)
+    text = pkg.behavior
+    # lab sequences/selectors resume at a running child; condition leaves have an execute
+    assert "sequence_with_memory" in text and "selector_with_memory" in text
+    cond = text.split("_cond\n")[1].split("end_advanced_behavior")[0]
+    assert "execute return Success(); end_execute" in cond
+
+
+def test_failure_as_running_and_trace(env, tmp_path: Path) -> None:
+    contracts, binding, run, base = env
+    sets = base / "set" / "tactic_set" / "sense.yaml"
+    data = yaml.safe_load(sets.read_text(encoding="utf-8"))
+    data["subtrees"][0]["no_target_result"] = "RUNNING"
+    sets.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    fresh = Contracts.load(base / "set")
+    model = normalize(mission_to_ir(fresh, "sense.watch"), fresh).model
+    text = Compiler(model, fresh, binding, trace=True).package([run]).behavior
+    assert "behavior_node ir_sense_watch_running" in text
+    assert 'execute return Running("running"); end_execute' in text
+    assert 'writeln("IR_TICK|", TIME_NOW, "|' in text
+    tree = model["roles"]["vehicle"]["states"]["SEARCHING"]["tree"]
+    assert tree["failure_as_running"] is True
+
+    class Failing:
+        def tick(self, inst, leaf, new):
+            return "failure", "X"
+
+        def cancel(self, inst, leaf):
+            return None
+
+    inst = Instance("v", "vehicle", 0, model, fresh, Failing())
+    assert inst.tick(tree) == "running"

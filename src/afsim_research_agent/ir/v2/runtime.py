@@ -174,7 +174,10 @@ class Instance:
             cond = self.model["conditions"].get(node.get("condition"))
             return SUCCESS if cond is not None and self.eval(cond) else FAILURE
         if kind in ("tactic", "subtree"):
-            return self.tick(kids[0]) if kids else FAILURE
+            status = self.tick(kids[0]) if kids else FAILURE
+            if status == FAILURE and node.get("failure_as_running"):
+                return RUNNING
+            return status
         if kind == "sequence":
             for kid in kids:
                 status = self.tick(kid)
