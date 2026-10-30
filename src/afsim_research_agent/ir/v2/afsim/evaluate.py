@@ -168,6 +168,9 @@ def run_package(package: Path, mission: str, timeout_s: float = 300.0) -> list[R
         console = proc.stdout + proc.stderr
         (out / f"{Path(run_file).stem}_console.log").write_text(console, encoding="utf-8")
         results.append(_judge_saved(package, run, console))
+    for rec in (manifest.get("recordings") or {}).values():
+        path = package / rec
+        print(f"replay: {path.resolve() if path.exists() else str(path) + ' (not written)'}")
     _report(package, results)
     return results
 

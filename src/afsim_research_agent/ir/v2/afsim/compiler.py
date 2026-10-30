@@ -15,6 +15,8 @@ Conventions of the generated input (all names start with ``ir_`` / ``IR_``):
 - every ``on_entry`` writes ``IR_STATE|<time>|<platform>|<state>`` for the evaluator, and
   the first execution of each action leaf in a state writes ``IR_ACT|<time>|<platform>|<action>``
   (requirement obligations are judged on these);
+- every run writes an event-pipe recording ``output/<run>.aer`` for replay in mystic
+  (``record = false`` in the run config turns it off);
 - external events are auxiliary data ``ir_ev_<id>`` set by the run file and consumed by
   the transition that fires on them.
 """
@@ -200,6 +202,11 @@ class Compiler:
             "model_root": self.b.meta.model_root,
             "behavior_file": name,
             "runs": {f: r.model_dump() for f, r in zip(run_files, runs, strict=True)},
+            "recordings": {
+                f: f"output/{ident(r.id)}.aer"
+                for f, r in zip(run_files, runs, strict=True)
+                if r.record
+            },
             "obligations": list(obligations or []),
             "sha256": {
                 name: hashlib.sha256(behavior.encode()).hexdigest(),
@@ -894,6 +901,9 @@ class Compiler:
                 for t in targets
             ]
             lines += ["end_execute"]
+        if run.record and "event_pipe" not in f"{run.preamble}\n{run.extra}":
+            # recording for replay in mystic, next to the console and the event log
+            lines += ["event_pipe", "   file output/$(CASE).aer", "end_event_pipe"]
         lines += [
             f"random_seed {run.random_seed}",
             f"start_time {run.start_time}",

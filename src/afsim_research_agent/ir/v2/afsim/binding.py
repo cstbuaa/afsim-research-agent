@@ -195,6 +195,8 @@ class RunConfig(_Strict):
     # model parameters the scenario supplies (e.g. a route name), replacing placeholders
     parameters: dict[str, bool | int | float | str] = Field(default_factory=dict)
     expect: RunExpect = Field(default_factory=RunExpect)
+    # write an event-pipe recording (output/<run>.aer) that mystic replays
+    record: bool = True
     reference: Reference | None = None
 
     @classmethod
