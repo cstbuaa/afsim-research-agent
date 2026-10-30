@@ -270,6 +270,7 @@ class SheetCompiler:
             for t in m["transitions"] + m["global"]
         }
         self._mission_ref_names(spec)
+        self._condition_usage(spec)
         if self.scenario_events and not self.pending_triggers:
             external = {e["id"] for e in spec["events"] if e["source"] == "external"}
             for eid in sorted(external - set(self.scenario_events)):
@@ -321,12 +322,61 @@ class SheetCompiler:
                     if block == "conditions"
                     else self.mlines.get(name)
                 )
-                self.fail(
-                    block,
-                    line,
+                message = (
                     f"'{name}' 与引用的战术集任务 {entry.id} 的触发条件同名，会替换它；"
-                    "引用任务时不要为它的转换写条件或事件",
+                    "引用任务时不要为它的转换写条件或事件"
                 )
+                if name in self._used_names(spec):
+                    self.fail(block, line, message)
+                    continue
+                # unused by the model's own transitions and trees: drop it, the mission's
+                # own trigger applies
+                spec["conditions"] = [c for c in spec["conditions"] if c["id"] != name]
+                spec["events"] = [e for e in spec["events"] if e["id"] != name]
+                self.warn(block, line, message + "（未被使用，已删去）")
+
+    def _used_names(self, spec: dict[str, Any]) -> set[str]:
+        """Conditions and events the model's transitions and trees use (with references)."""
+        used: set[str] = set()
+        for m in spec["missions"].values():
+            if "tactic" not in m:
+                used |= {t["on"] for t in m["transitions"] + m["global"]}
+
+        def walk(node: dict[str, Any]) -> None:
+            if node.get("type") == "condition":
+                used.add(str(node.get("condition")))
+            for kid in node.get("children") or []:
+                walk(kid)
+
+        for sub in spec["subtrees"]:
+            walk(sub["root"])
+        exprs = {c["id"]: c["expression"] for c in spec["conditions"]}
+        todo = list(used)
+        while todo:
+            name = todo.pop()
+            for ref in _condition_refs(exprs.get(name)):
+                if ref not in used:
+                    used.add(ref)
+                    todo.append(ref)
+        return used
+
+    def _condition_usage(self, spec: dict[str, Any]) -> None:
+        """Problems of conditions nothing uses are warnings (the condition is left out);
+        those of used conditions are errors. A transition naming an undefined condition is
+        also filed under the conditions block, so the control repair can define it."""
+        used = self._used_names(spec)
+        for name, line, message, candidates in getattr(self, "cond_issues", []):
+            if name in used or self.pending_triggers:
+                self.fail("conditions", line, message, candidates)
+            else:
+                self.warn("conditions", line, message + "（该条件未被使用，已忽略）")
+        for name, line in getattr(self, "missing_triggers", []):
+            self.fail(
+                "conditions",
+                line,
+                f"状态图使用的触发 '{name}' 没有定义：在这里写 {name} = 表达式"
+                "（计时写 time_in_state() >= 2 * s），或在 model 的 events 中声明它",
+            )
 
     def _slices(self, model: dict[str, Any]) -> list[str]:
         known = K.slices(self.c)
@@ -518,6 +568,7 @@ class SheetCompiler:
         block = self.out.blocks.get("conditions")
         if block is None:
             return []
+        self.cond_issues: list[tuple[str, int, str, list[str]]] = []
         try:
             module = ast.parse(block.text)
         except SyntaxError as exc:
@@ -544,16 +595,21 @@ class SheetCompiler:
             try:
                 expr = self.expr.compile_node(stmt.value)
             except ExprError as exc:
-                self.fail("conditions", line + exc.line_offset, f"{name}: {exc}", exc.candidates)
+                self.cond_issues.append(
+                    (name, line + exc.line_offset, f"{name}: {exc}", exc.candidates)
+                )
                 continue
             if _refers(expr, name):
-                self.fail("conditions", line, f"条件 {name} 引用了它自己")
+                self.cond_issues.append((name, line, f"条件 {name} 引用了它自己", []))
                 continue
             if "literal" in expr:
-                self.fail(
-                    "conditions",
-                    line,
-                    f"条件 {name} 是常量；外部请求写成 external 事件，不需要的条件删去",
+                self.cond_issues.append(
+                    (
+                        name,
+                        line,
+                        f"条件 {name} 是常量；外部请求写成 external 事件，不需要的条件删去",
+                        [],
+                    )
                 )
                 continue
             self.at(f"conditions[{len(out)}]", "conditions", line)
@@ -680,6 +736,9 @@ class SheetCompiler:
         except ExprError as exc:
             if self.pending_triggers:
                 return label
+            if IDENT.match(label) and label not in self.c.blackboard:
+                self.missing_triggers = getattr(self, "missing_triggers", [])
+                self.missing_triggers.append((label, line))
             self.fail(
                 key,
                 line,
@@ -795,6 +854,17 @@ class SheetCompiler:
             self.at(path, key, first + node["_line"])
         for i, kid in enumerate(node.get("children") or []):
             self._map_nodes(f"{path}.children[{i}]", kid, key, first)
+
+
+def _condition_refs(expr: Any) -> list[str]:
+    if isinstance(expr, dict):
+        out = [str(expr["condition_ref"])] if "condition_ref" in expr else []
+        for v in expr.values():
+            out += _condition_refs(v)
+        return out
+    if isinstance(expr, list):
+        return [r for v in expr for r in _condition_refs(v)]
+    return []
 
 
 def _refers(expr: Any, name: str) -> bool:

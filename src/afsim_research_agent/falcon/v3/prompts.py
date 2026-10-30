@@ -227,8 +227,20 @@ def control_prompt(
     details: str,
     roles_needing_trees: list[str],
     states: dict[str, list[str]],
+    pending: list[str] | None = None,
+    mission_refs: list[str] | None = None,
 ) -> str:
     need = "；".join(f"{r}: {', '.join(states.get(r, []))}" for r in roles_needing_trees)
+    if pending:
+        need += (
+            "\n状态图用到、还没有定义的触发（每个都要在 python conditions 中定义）："
+            + ", ".join(pending)
+        )
+    if mission_refs:
+        need += (
+            "\n角色 " + ", ".join(mission_refs) + " 引用了战术集任务：任务的转换与触发已自带，"
+            "不要为它们写条件；只在需要替换某状态的树时写该状态函数"
+        )
     return f"""{RULES}
 
 ## 需求

@@ -279,6 +279,20 @@ class Drafter:
             self.notes.append("结构稿没有给出 slices，控制稿展示全部切片")
         return compiled.slices
 
+    def _pending(self, compiled: Compiled) -> list[str]:
+        spec = compiled.spec or {}
+        known = {e["id"] for e in spec.get("events") or []} | {
+            c["id"] for c in spec.get("conditions") or []
+        }
+        out: list[str] = []
+        for m in (spec.get("missions") or {}).values():
+            if "tactic" in m:
+                continue
+            for t in m["transitions"] + m["global"]:
+                if t["on"] not in known and t["on"] not in out:
+                    out.append(t["on"])
+        return out
+
     def _states(self, compiled: Compiled) -> dict[str, list[str]]:
         spec = compiled.spec or {}
         out: dict[str, list[str]] = {}
@@ -298,6 +312,12 @@ class Drafter:
             K.details(self.c, self.slices),
             roles,
             states,
+            pending=self._pending(structure.compiled),
+            mission_refs=[
+                r
+                for r, m in ((structure.compiled.spec or {}).get("missions") or {}).items()
+                if "tactic" in m
+            ],
         )
         await self.ask("v3:control", prompt, CONTROL_KINDS)
         check = self.check()

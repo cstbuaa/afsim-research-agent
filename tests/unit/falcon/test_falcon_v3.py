@@ -457,9 +457,13 @@ def test_conditions_are_checked_against_the_chosen_slices(contracts: Contracts) 
         '  lost_timeout: {after: "20 s"}\n  spare: {source: external}',
     )
     out = _compile(contracts, text)
-    messages = " | ".join(p.message for p in out.errors)
-    assert "SEARCH, TRACK" in messages and "接口字段" in messages and "引用了它自己" in messages
-    assert "事件 spare 没有被任何转换使用" in messages
+    errors = " | ".join(p.message for p in out.errors)
+    everything = " | ".join(p.message for p in out.problems)
+    assert "SEARCH, TRACK" in errors  # target_seen is used by a transition: an error
+    # busy and loop are used by nothing: reported, left out, not sent for repair
+    assert "接口字段" in everything and "引用了它自己" in everything
+    assert "接口字段" not in errors and "引用了它自己" not in errors
+    assert "事件 spare 没有被任何转换使用" in errors
     # a field of a slice the sheet did not choose
     only_nav = SHEET.replace("slices: [nav, sense]", "slices: [nav]")
     out = _compile(contracts, only_nav)
@@ -480,7 +484,15 @@ cancelled = sense.target.valid
 ```
 """
     out = _compile(contracts, text)
-    assert any("同名" in p.message and p.block == "conditions" for p in out.errors)
+    # unused by the model's own transitions and trees: dropped with a warning
+    assert not out.errors
+    assert any("同名" in p.message and p.severity == "warning" for p in out.problems)
+    assert out.spec["conditions"] == []
+    text = text.replace(
+        "```python conditions",
+        "```python scout\ndef SEARCHING():\n    assert cancelled\n    nav.hold()\n```\n\n```python conditions",
+    )
+    assert any("同名" in p.message for p in _compile(contracts, text).errors)
 
 
 def test_a_state_never_left_in_the_simulation_goes_back_to_the_model(contracts: Contracts) -> None:
@@ -522,3 +534,10 @@ def test_scenario_events_constants_and_nested_verification(contracts: Contracts)
     nested = nested.replace(body, indented)
     out = _compile(contracts, nested)
     assert len(out.spec["tests"]) == 1 and len(out.spec["scenarios"]) == 1
+
+
+def test_undefined_triggers_are_filed_for_the_conditions_block(contracts: Contracts) -> None:
+    text = SHEET.replace("MOVE --> OBSERVE : target_seen", "MOVE --> OBSERVE : seen_timer")
+    out = _compile(contracts, text)
+    keys = {p.block for p in out.errors if "seen_timer" in p.message}
+    assert keys == {"mermaid:scout", "conditions"}
