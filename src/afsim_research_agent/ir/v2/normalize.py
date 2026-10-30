@@ -145,7 +145,8 @@ class _Normalizer:
             "parameters": self._parameters(),
             "blackboard": blackboard,
             "conditions": conditions,
-            "events": {e.id: e.model_dump(exclude_none=True) for e in self.spec.events},
+            # with the events a referenced tactic-set mission brings
+            "events": {eid: e.model_dump(exclude_none=True) for eid, e in self.events.items()},
             "roles": {
                 rid: {
                     "role": self.roles[rid].model_dump(),

@@ -320,6 +320,8 @@ def SEARCHING():
     assert result.ok, [d.render() for d in result.diagnostics]
     states = result.model["roles"]["scout"]["states"]
     assert states["SEARCHING"]["tree_ref"] == "scout_searching"
+    # the referenced mission's triggers are part of the normalized model
+    assert result.model["events"]["cancelled"]["source"] == "tactic"
     assert states["SHUTDOWN"]["tree_ref"] == "sense.shutdown_state"
     refused = _compile(contracts, text, allow_mission_ref=False)
     assert any("不允许整体引用" in p.message for p in refused.errors)

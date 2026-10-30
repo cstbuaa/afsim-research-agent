@@ -92,7 +92,7 @@ tests:            # L2 单步测试：给定状态、黑板、事件，执行一
   - id: 英文ID
     given: {role: 角色, state: 状态, time_in_state_s: 0, blackboard: {字段: 值}, events: [事件ID],
             actions: {动作ID: success|failure|running}}   # actions 指定动作本次的结果，默认 success
-    expect: {next_state: 状态, tree_status: success|failure|running}
+    expect: {next_state: 状态}   # 一般只写 next_state；tree_status 只在确实要检查树的结果时写
 scenarios:        # L3 二维仿真：平面坐标（米），x 向东、y 向北
   - id: 英文ID
     environment: {origin_deg: [纬度, 经度], duration_s: 200, step_s: 1, routes: {路线名: [[x, y], …]}}
