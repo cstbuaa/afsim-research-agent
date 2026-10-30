@@ -476,6 +476,21 @@ def test_l2_single_steps(contracts: Contracts) -> None:
     assert "SHUTDOWN" in checks[2].detail
 
 
+def test_l2_next_state_is_the_first_hop(contracts: Contracts) -> None:
+    """Fields a test does not give keep their defaults; transitions they allow later in the
+    same tick do not make the first one wrong."""
+    spec = _spec()
+    given = {"role": "car", "state": "WAIT", "events": ["go"], "blackboard": {"nav.range_m": 1.0}}
+    cases = [
+        {"id": "first", "given": given, "expect": {"next_state": "DRIVE"}},
+        {"id": "final", "given": given, "expect": {"next_state": "SHUTDOWN"}},
+        {"id": "neither", "given": given, "expect": {"next_state": "WAIT"}},
+    ]
+    checks = run_l2(normalize(spec, contracts).model, contracts, cases)
+    assert [c.passed for c in checks] == [True, True, False]
+    assert "WAIT -> DRIVE -> SHUTDOWN" in checks[2].detail
+
+
 def test_gap_placeholder_runs_its_stub(contracts: Contracts) -> None:
     spec = _spec()
     spec["blackboard"] = {"mission.cleared": {"type": "bool", "default": False}}

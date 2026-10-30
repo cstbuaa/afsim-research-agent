@@ -323,7 +323,9 @@ class Compiler:
         if exit_lines:
             out += ["      on_exit", *exit_lines, "      end_on_exit"]
         if s not in mission["terminal"]:
-            local = [t for t in mission["transitions"] if t["from"] == s]
+            # a state "transitions to itself" by staying (the last next_state below); AFSIM
+            # refuses a second next_state to the same state
+            local = [t for t in mission["transitions"] if t["from"] == s and t["to"] != s]
             globals_ = [g for g in mission["global"] if g["to"] != s]
             ordered = sorted(local + globals_, key=lambda t: -int(t.get("priority", 0)))
             # AFSIM allows one next_state per target: transitions to the same state are

@@ -866,6 +866,15 @@ def test_rings_of_field_transitions_are_refused(set_root: Path) -> None:
     assert not any("状态环" in m for m in msgs), msgs
 
 
+def test_self_transitions_are_refused(set_root: Path) -> None:
+    contracts = _annotate(set_root)
+    loop = SHEET.replace(
+        "  OBSERVE --> MOVE : lost_timeout\n", "  OBSERVE --> OBSERVE : lost_timeout\n"
+    )
+    msgs = [p.message for p in _compile(contracts, loop).errors]
+    assert any("自环" in m for m in msgs), msgs
+
+
 def test_ring_contradictions() -> None:
     from afsim_research_agent.falcon.v3.compiler import _atoms, _contradict
 

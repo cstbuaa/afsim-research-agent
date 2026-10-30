@@ -413,8 +413,15 @@ def run_l2(model: dict[str, Any], contracts: Contracts, tests: list[dict[str, An
             inst.raise_event(_event_name(inst, name))
         inst.step(0.0)
         problems = []
-        if case.expect.next_state is not None and inst.state != case.expect.next_state:
-            problems.append(f"state {inst.state}, expected {case.expect.next_state}")
+        # the state the given one leaves for; further transitions in the same tick follow
+        # from fields the test did not give (they keep their defaults), so the first one
+        # counts as "next" — the final one is accepted too
+        hops = [t["to"] for t in inst.trace]
+        first = hops[0] if hops else inst.state
+        expected = case.expect.next_state
+        if expected is not None and expected not in (first, inst.state):
+            chain = " -> ".join([g.state, *hops]) if hops else g.state
+            problems.append(f"state {first} (this tick: {chain}), expected {expected}")
         if case.expect.tree_status is not None and inst.tree_status != case.expect.tree_status:
             problems.append(f"tree {inst.tree_status}, expected {case.expect.tree_status}")
         if case.expect.issued_actions is not None and inst.issued != case.expect.issued_actions:

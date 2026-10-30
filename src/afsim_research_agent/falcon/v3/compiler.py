@@ -561,14 +561,32 @@ class SheetCompiler:
                 if _contradict(atoms):
                     continue  # e.g. leave on "not seen", come back on "seen": cannot both hold
                 states = " -> ".join([*(s for s, _ in ring), ring[0][0]])
-                block, line = self.out.locate(f"missions.{rid}.transitions[{ring[0][1]}]")
+                # the example: a transition out of a waiting / holding state if there is one
+                pick = next(
+                    ((s, i) for s, i in ring if re.search(r"HOLD|WAIT|IDLE|STANDBY", s)),
+                    ring[0],
+                )
+                tr = mission["transitions"][pick[1]]
+                named = not re.match(r".+_t\d+$", tr["on"])
+                cond = tr["on"] if named else "原条件"
+                example = (
+                    f"例如把 {tr['from']} --> {tr['to']} 的条件改为 "
+                    f"`{cond} and time_in_state() >= 2 * s`"
+                    + (
+                        f"（在 conditions 中改 {cond} 的定义，或在状态图里直接写这个表达式）"
+                        if named
+                        else ""
+                    )
+                )
+                block, line = self.out.locate(f"missions.{rid}.transitions[{pick[1]}]")
                 self.fail(
                     block,
                     line,
                     f"状态环 {states} 的转换全是字段条件：这些字段一旦同时成立（如分配完成后"
-                    "一直为真的计数），状态会在同一次更新内不停打转。让环上至少一个转换等待："
-                    "用树事件（本状态的树完成，events 中声明 {source: tree, result: success}）、"
-                    "计时（time_in_state() >= …）或外部事件；或把整条流水线放在一个状态的树里",
+                    "一直为真的计数、仍然有效的任务），状态会在同一次更新内不停打转。让环上至少"
+                    f"一个转换等待。{example}；也可以用树事件（本状态的树完成，events 中声明 "
+                    "{source: tree, result: success}）或外部事件；或把整条流水线放在一个状态的"
+                    "树里。只改一处即可，不要删掉需求要求的状态",
                 )
 
     # ------------------------------------------------------------------ termination
@@ -1033,6 +1051,15 @@ class SheetCompiler:
         self.at(f"missions.{rid}", key, block.line)
         events = {e["id"] for e in spec["events"]}
         for t in own:
+            if rename[t.source] == rename[t.target]:
+                self.fail(
+                    key,
+                    t.line,
+                    f"{rename[t.source]} --> {rename[t.target]} 是自环：AFSIM 不能从一个状态转到它"
+                    "自己。要重复本状态的工作，在树里用 repeat / 反应式结构；要重新开始，"
+                    "经过另一个状态再回来",
+                )
+                continue
             index = len(mission["transitions"])
             on = self._trigger(rid, t.label, key, t.line, spec, events)
             if on is None:
