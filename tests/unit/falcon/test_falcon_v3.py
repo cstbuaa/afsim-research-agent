@@ -463,7 +463,7 @@ def test_conditions_are_checked_against_the_chosen_slices(contracts: Contracts) 
     # busy and loop are used by nothing: reported, left out, not sent for repair
     assert "接口字段" in everything and "引用了它自己" in everything
     assert "接口字段" not in errors and "引用了它自己" not in errors
-    assert "事件 spare 没有被任何转换使用" in errors
+    assert "事件 spare 没有被任何转换使用" in everything
     # a field of a slice the sheet did not choose
     only_nav = SHEET.replace("slices: [nav, sense]", "slices: [nav]")
     out = _compile(contracts, only_nav)

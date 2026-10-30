@@ -269,6 +269,16 @@ class SheetCompiler:
             if "tactic" not in m
             for t in m["transitions"] + m["global"]
         }
+        unused = [e["id"] for e in spec["events"] if e["id"] not in used]
+        if unused and not self.pending_triggers:
+            # left out with a warning: a scenario event the model must use is checked next
+            spec["events"] = [e for e in spec["events"] if e["id"] not in unused]
+            for eid in unused:
+                self.warn(
+                    "model",
+                    self.mlines.get(eid),
+                    f"事件 {eid} 没有被任何转换使用，已忽略",
+                )
         self._mission_ref_names(spec)
         self._condition_usage(spec)
         if self.scenario_events and not self.pending_triggers:
@@ -288,13 +298,6 @@ class SheetCompiler:
                         self.mlines.get("events"),
                         f"想定会发出外部事件 {eid}（{self.scenario_events[eid]}），模型没有声明和使用它",
                     )
-        for e in spec["events"]:
-            if e["id"] not in used and not self.pending_triggers:
-                self.fail(
-                    "model",
-                    self.mlines.get(e["id"]),
-                    f"事件 {e['id']} 没有被任何转换使用：转换写成 `A --> B : {e['id']}`，或删去该事件",
-                )
         self.out.spec = spec
         return self.out
 

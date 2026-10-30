@@ -341,10 +341,14 @@ class Drafter:
             # the model, not the test: a state is never left in the 2D simulation
             problems = [SheetProblem(key, None, line) for key, line in stuck]
             fake = Check(check.compiled, check.model, check.diagnostics, problems)
+            saved = self._snapshot()
             if await self.repair(fake, STRUCTURE_KINDS + CONTROL_KINDS, "behavior"):
                 again = self.check(verify=True)
                 if again.l1_ok:
                     check = again
+                else:  # the repair broke L1: keep the sheet that passed
+                    self.blocks = saved
+                    self.notes.append("行为修复后 L1 不通过，已恢复修复前的战术稿")
         failed = [t for t in check.l2 if not t["passed"]] + [s for s in check.l3 if not s["passed"]]
         if failed and check.l1_ok:
             lines = [
@@ -368,10 +372,19 @@ class Drafter:
                     ),
                     TextAnswer,
                 )
+                saved = self._snapshot()
                 self.notes += merge(self.blocks, answer.text, ("verification",), target=block)
                 self.rounds.append({"stage": "verification", "blocks": {block.key: len(failed)}})
-                check = self.check(verify=True)
+                again = self.check(verify=True)
+                if again.l1_ok:
+                    check = again
+                else:
+                    self.blocks = saved
+                    self.notes.append("验证稿修复后 L1 不通过，已恢复修复前的验证稿")
         return check
+
+    def _snapshot(self) -> list[Block]:
+        return [Block(b.kind, b.role, b.text, b.line, b.info) for b in self.blocks]
 
     def _stuck(self, check: Check) -> list[tuple[str, str]]:
         """Failed scenarios where a role stays in a non-terminal state for the last half of
@@ -398,7 +411,9 @@ class Drafter:
                     if x["from"] == state
                 ]
                 spec_m = (check.compiled.spec or {}).get("missions", {}).get(role, {})
-                key = "model" if "tactic" in spec_m else f"mermaid:{role}"
+                if "tactic" in spec_m:
+                    continue  # a referenced mission: its triggers are not the model's to fix
+                key = f"mermaid:{role}"
                 out.append(
                     (
                         key,
@@ -408,8 +423,7 @@ class Drafter:
                         "能用计时事件或战术集任务的触发含义表达的，照它写",
                     )
                 )
-                if key != "model":
-                    out.append(("conditions", out[-1][1]))
+                out.append(("conditions", out[-1][1]))
         return out
 
     def _summary(self, check: Check) -> str:
