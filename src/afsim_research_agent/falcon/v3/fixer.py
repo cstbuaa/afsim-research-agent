@@ -550,7 +550,12 @@ def _history(records: list[dict[str, Any]]) -> str:
         latest = r is records[-1]
         lines.append(
             f"第 {r['step']} 步 {r['action']} {_clip(json.dumps(r['args'], ensure_ascii=False), 300)}\n"
-            f"想法：{r['thought'][:200]}\n结果：{_clip(r['result'], RESULT_LIMIT if latest else 500)}"
+            f"想法：{r['thought'][:200]}\n结果："
+            # what was shown stays readable a few steps on (it was re-shown again and again
+            # when only 500 characters of it remained)
+            + _clip(
+                r["result"], RESULT_LIMIT if latest else (2500 if r["action"] == "show" else 500)
+            )
         )
     return "\n\n".join(lines)
 
@@ -628,6 +633,20 @@ async def fix_sheet(drafter: Any, run: ModelRunner, max_steps: int = 20) -> FixO
             result = fixer.edit(a.get("changes"), reason)
         else:
             result = fixer.revert(str(a.get("block", "")), reason)
+        if action.action == "show":
+            same = [r["step"] for r in records if r["action"] == "show" and r["args"] == a]
+            if same:
+                result += f"\n（与第 {same[-1]} 步看过的内容相同，战术稿没有变化）"
+        idle = 0
+        for r in reversed(records):
+            if r["action"] in ("edit", "revert"):
+                break
+            idle += 1
+        if action.action not in ("edit", "revert", "finish", "ask_human") and idle >= 3:
+            result += (
+                f"\n（已连续 {idle + 1} 步没有修改。信息已经够用：下一步用 edit 改战术稿，"
+                "改错了可以 revert；不要再重复查看同一段）"
+            )
         records.append(
             {
                 "step": step,

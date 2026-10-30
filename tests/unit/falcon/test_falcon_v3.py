@@ -762,6 +762,13 @@ def test_fix_loop_stops_reading_and_cannot_write_the_verification_block(
     )
     assert outcome.steps == STALL
     assert any("连续查看" in r["result"] for r in outcome.log)
+    assert any("没有修改" in r["result"] for r in outcome.log)
+    # the same range shown twice is said to be unchanged
+    again = [{"action": "show", "args": {"block": "pytree:scout", "start": 40}}] * 3
+    outcome = asyncio.run(
+        fix_sheet(drafter, ModelRunner(ScriptedModel({"fix:v3:step": again})), max_steps=3)
+    )
+    assert "内容相同" in outcome.log[1]["result"]
 
 
 def test_tree_events_end_a_state_when_its_tree_succeeds(contracts: Contracts) -> None:
