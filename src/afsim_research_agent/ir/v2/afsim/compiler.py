@@ -34,6 +34,7 @@ from afsim_research_agent.ir.units import infer_dimension, to_canonical
 from afsim_research_agent.ir.v2.afsim.binding import Binding, RunConfig
 from afsim_research_agent.ir.v2.contracts import Contracts
 from afsim_research_agent.ir.v2.from_tactic import event_id
+from afsim_research_agent.ir.v2.obligations import event_actions
 
 AUX_GET = {
     "bool": "AuxDataBool",
@@ -172,6 +173,7 @@ class Compiler:
         self.params = {k: v.get("value") for k, v in model["parameters"].items()}
         self.missing: set[str] = set()
         self.role_actions: dict[str, set[str]] = {}  # role → actions its trees run
+        self.state_actions: dict[str, dict[str, set[str]]] = {}  # role → state → actions
 
     # ------------------------------------------------------------------ package
     def package(self, runs: list[RunConfig], obligations: list[dict] | None = None) -> Package:
@@ -213,6 +215,16 @@ class Compiler:
             },
             "obligations": list(obligations or []),
             "role_actions": {r: sorted(a) for r, a in sorted(self.role_actions.items())},
+            # role → external event → actions of the states the event leads to (and after)
+            "event_actions": {
+                r: {e: sorted(a) for e, a in sorted(per.items())}
+                for r, per in sorted(
+                    event_actions(
+                        {rid: role["mission"] for rid, role in self.m["roles"].items()},
+                        self.state_actions,
+                    ).items()
+                )
+            },
             "sha256": {
                 name: hashlib.sha256(behavior.encode()).hexdigest(),
                 **{f: hashlib.sha256(t.encode()).hexdigest() for f, t in run_files.items()},
@@ -704,6 +716,7 @@ class Compiler:
             return [name]
         action = str(n.get("action"))
         self.role_actions.setdefault(self.rid, set()).add(action)
+        self.state_actions.setdefault(self.rid, {}).setdefault(self.sname, set()).add(action)
         ab = self.b.action.get(action)
         if ab is None:
             self.missing.add(f"action {action}")

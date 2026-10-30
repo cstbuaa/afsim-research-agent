@@ -86,3 +86,39 @@ def test_role_actions_follow_subtrees_and_tactics() -> None:
         "lib.u": {"root": {"type": "sequence", "children": [{"type": "action", "action": "x.b"}]}},
     }
     assert role_actions(spec, tactics) == {"r": {"x.a", "x.b"}}
+
+
+def test_responses_are_judged_where_the_event_leads() -> None:
+    """A role that has the responding action only in a state the event does not lead to is
+    not judged on that response (e.g. a member that expires its task while holding)."""
+    from afsim_research_agent.ir.v2.obligations import event_actions
+
+    missions = {
+        "m": {
+            "states": ["WORK", "HOLD", "SHUTDOWN", "DONE"],
+            "transitions": [
+                {"from": "WORK", "to": "HOLD", "on": "lost"},
+                {"from": "SHUTDOWN", "to": "DONE", "on": "stopped"},
+            ],
+            "global": [{"to": "SHUTDOWN", "on": "end"}],
+        }
+    }
+    per_state = {"m": {"WORK": {"fire"}, "HOLD": {"expire"}, "SHUTDOWN": {"cease"}}}
+    after = event_actions(missions, per_state)
+    assert after["m"]["end"] == {"cease"}
+    assert after["m"]["lost"] == {"expire", "cease"}  # HOLD, then SHUTDOWN on "end"
+    expire = Obligation(
+        id="expire_on_end", kind="response", on_event="end", action="expire", within_s=5
+    )
+    capable = {"m1": {"fire", "expire", "cease"}}
+    (v,) = check([expire], [(21, "m1", "cease")], [(20.0, "end")], end_s=40, capable=capable)
+    assert not v.passed
+    (v,) = check(
+        [expire],
+        [(21, "m1", "cease")],
+        [(20.0, "end")],
+        end_s=40,
+        capable=capable,
+        after_event={"m1": after["m"]},
+    )
+    assert v.passed and not v.judged

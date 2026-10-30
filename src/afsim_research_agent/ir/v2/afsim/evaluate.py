@@ -92,6 +92,7 @@ def judge(
     reference_console: str | None,
     obligations: list[dict[str, Any]] | None = None,
     role_actions: dict[str, list[str]] | None = None,  # role → actions its trees run
+    event_actions: dict[str, dict[str, list[str]]] | None = None,  # role → event → actions
 ) -> RunJudgement:
     j = RunJudgement(run=run["id"], completed="Simulation complete" in console)
     j.errors = [m.group(0) for m in ERRORS.finditer(console)]
@@ -156,8 +157,20 @@ def judge(
                 for p in run.get("platforms") or []
                 if "role" in p
             }
+        after = None
+        if event_actions:
+            after = {
+                p["name"]: {e: set(a) for e, a in event_actions.get(p["role"], {}).items()}
+                for p in run.get("platforms") or []
+                if "role" in p
+            }
         verdicts = check(
-            obs, acts, events, end_s=float(run.get("end_time_s") or 0) or None, capable=capable
+            obs,
+            acts,
+            events,
+            end_s=float(run.get("end_time_s") or 0) or None,
+            capable=capable,
+            after_event=after,
         )
         j.obligations = [asdict(v) for v in verdicts]
         for v in verdicts:
@@ -219,6 +232,7 @@ def _judge_saved(package: Path, run: dict[str, Any], console: str) -> RunJudgeme
         ref_text,
         manifest.get("obligations") or [],
         role_actions=manifest.get("role_actions"),
+        event_actions=manifest.get("event_actions"),
     )
 
 

@@ -74,9 +74,9 @@ def _slack(span: float, step_s: float) -> float:
     return max(step_s, 0.1 * span)
 
 
-def role_actions(spec: dict[str, Any], tactics: dict[str, Any]) -> dict[str, set[str]]:
-    """The actions each role's state trees can run (through subtrees and tactic-set trees).
-    ``tactics``: tactic-set id → its raw entry (with ``root``)."""
+def state_actions(spec: dict[str, Any], tactics: dict[str, Any]) -> dict[str, dict[str, set[str]]]:
+    """The actions each state's tree can run, per role (through subtrees and tactic-set
+    trees). ``tactics``: tactic-set id → its raw entry (with ``root``)."""
     subs = {s["id"]: s.get("root") for s in spec.get("subtrees") or [] if "id" in s}
 
     def walk(node: Any, acc: set[str], seen: set[str]) -> None:
@@ -100,12 +100,56 @@ def role_actions(spec: dict[str, Any], tactics: dict[str, Any]) -> dict[str, set
             if isinstance(value, dict | list):
                 walk(value, acc, seen)
 
-    out: dict[str, set[str]] = {}
+    out: dict[str, dict[str, set[str]]] = {}
     for rid, trees in (spec.get("state_trees") or {}).items():
-        acc: set[str] = set()
-        for ref in (trees or {}).values():
+        per: dict[str, set[str]] = {}
+        for state, ref in (trees or {}).items():
+            acc: set[str] = set()
             walk({"tactic": ref} if isinstance(ref, str) else ref, acc, set())
-        out[rid] = acc
+            per[state] = acc
+        out[rid] = per
+    return out
+
+
+def role_actions(spec: dict[str, Any], tactics: dict[str, Any]) -> dict[str, set[str]]:
+    """The actions each role's state trees can run."""
+    return {
+        rid: set().union(*per.values()) if per else set()
+        for rid, per in state_actions(spec, tactics).items()
+    }
+
+
+def event_actions(
+    missions: dict[str, Any], per_state: dict[str, dict[str, set[str]]]
+) -> dict[str, dict[str, set[str]]]:
+    """Per role and event: the actions of the states the event leads to and every state
+    reachable from them — what a response to that event can run on this role."""
+    out: dict[str, dict[str, set[str]]] = {}
+    for rid, mission in (missions or {}).items():
+        if not isinstance(mission, dict) or "transitions" not in mission:
+            continue
+        trans = list(mission.get("transitions") or [])
+        glob = list(mission.get("global") or [])
+        nxt: dict[str, set[str]] = {}
+        for t in trans:
+            nxt.setdefault(t["from"], set()).add(t["to"])
+        for g in glob:
+            for s in mission.get("states") or []:
+                nxt.setdefault(s, set()).add(g["to"])
+        starts: dict[str, set[str]] = {}
+        for t in [*trans, *glob]:
+            starts.setdefault(str(t["on"]), set()).add(t["to"])
+        acts = per_state.get(rid, {})
+        per: dict[str, set[str]] = {}
+        for event, targets in starts.items():
+            seen, todo = set(targets), list(targets)
+            while todo:
+                for n in nxt.get(todo.pop(), set()):
+                    if n not in seen:
+                        seen.add(n)
+                        todo.append(n)
+            per[event] = set().union(*(acts.get(s, set()) for s in seen)) if seen else set()
+        out[rid] = per
     return out
 
 
@@ -117,11 +161,14 @@ def check(
     step_s: float = 1.0,
     end_s: float | None = None,
     capable: dict[str, set[str]] | None = None,  # platform → actions its model can run
+    after_event: dict[str, dict[str, set[str]]] | None = None,  # platform → event → actions
 ) -> list[Verdict]:
     """With ``capable``, an obligation is judged on a platform only when the platform's model
     runs the constrained action. An ordering between actions of different platforms (e.g. the
     leader's broadcast before a member's adoption) is not judged: action starts carry no
-    causality across vehicles (a member polls for its task from the start)."""
+    causality across vehicles (a member polls for its task from the start). With
+    ``after_event``, a response is judged on a platform only when the states the event
+    leads to (and those after them) run the action."""
     by_platform: dict[str, dict[str, list[float]]] = {}
     for t, platform, action in activations:
         by_platform.setdefault(platform, {}).setdefault(action, []).append(float(t))
@@ -132,6 +179,8 @@ def check(
         verdicts = []
         for platform, own in sorted(by_platform.items()):
             caps = None if capable is None else capable.get(platform)
+            if ob.kind == "response" and after_event and platform in after_event:
+                caps = after_event[platform].get(str(ob.on_event), set())
             subject = ob.then if ob.kind == "precedes" else ob.action
             if caps is not None and subject not in caps:
                 continue

@@ -38,7 +38,7 @@ from afsim_research_agent.falcon.v3.compiler import Compiled, compile_sheet
 from afsim_research_agent.falcon.v3.fixer import fix_sheet, render_fix
 from afsim_research_agent.ir.diagnostics import Diagnostic
 from afsim_research_agent.ir.v2 import Contracts, normalize
-from afsim_research_agent.ir.v2.obligations import Obligation, role_actions
+from afsim_research_agent.ir.v2.obligations import Obligation, event_actions, state_actions
 from afsim_research_agent.ir.v2.obligations import check as check_obligations
 from afsim_research_agent.ir.v2.obligations import render as render_obligations
 from afsim_research_agent.ir.v2.sim import run_l2, simulate
@@ -204,12 +204,18 @@ class Drafter:
                 for c in run_l2(model, self.c, spec.get("tests") or [])
             ]
             covered: set[str] = set()
-            per_role = role_actions(spec, {k: t.raw for k, t in self.c.tactics.items()})
-            capable = {
-                f"{rid}_{i}": per_role.get(rid, set())
+            per_state = state_actions(spec, {k: t.raw for k, t in self.c.tactics.items()})
+            per_event = event_actions(spec.get("missions") or {}, per_state)
+            instances = [
+                (f"{rid}_{i}", rid)
                 for rid, role in model["roles"].items()
                 for i in range(int(role["role"].get("count", 1)))
+            ]
+            capable = {
+                name: set().union(*per_state.get(rid, {}).values()) if per_state.get(rid) else set()
+                for name, rid in instances
             }
+            after = {name: per_event.get(rid, {}) for name, rid in instances}
             for raw in spec.get("scenarios") or []:
                 res = simulate(model, self.c, raw)
                 verdicts = check_obligations(
@@ -219,6 +225,7 @@ class Drafter:
                     step_s=res.step_s,
                     end_s=res.duration_s,
                     capable=capable,
+                    after_event=after,
                 )
                 covered |= {v.id for v in verdicts if v.judged}
                 broken = [v for v in verdicts if v.judged and not v.passed]
