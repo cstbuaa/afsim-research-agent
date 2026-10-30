@@ -149,3 +149,9 @@ def test_not_before_times_the_first_start_after_the_anchor() -> None:
     assert v.passed and "6 s" in v.detail
     (v,) = check([again], acts[:2] + [(7, "p", "a.assess")], [], end_s=20)
     assert not v.passed
+
+
+def test_periodic_starts_in_one_update_are_one_round() -> None:
+    every = Obligation(id="every_5s", kind="not_before", action="a.x", after="a.x", min_s=5)
+    (v,) = check([every], [(0, "p", "a.x"), (0, "p", "a.x"), (6, "p", "a.x")], [], end_s=20)
+    assert v.passed

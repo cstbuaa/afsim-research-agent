@@ -78,7 +78,7 @@ def test_a_failed_run_stays_failed_until_the_sheet_changes(contracts) -> None:  
     assert base.verified
     drafter.afsim_note = AfsimNote(sheet_hash(drafter.sheet), "afsim: FAIL\n  问题：x")
     held = drafter.check(verify=True)
-    assert not held.verified and held.l3[-1]["id"] == "afsim"
+    assert not held.verified and held.l3[0]["id"] == "afsim"
     drafter.blocks = split_sheet(SLOWER)[0]
     assert drafter.check(verify=True).verified
 
@@ -112,7 +112,7 @@ def test_rounds_repair_and_rerun(contracts, tmp_path: Path, monkeypatch) -> None
 
     async def fake_fix(d, run, steps):  # noqa: ANN001, ANN202
         # the repair loop sees the AFSIM check failing, then edits the sheet
-        assert d.check(verify=True).l3[-1]["id"] == "afsim"
+        assert d.check(verify=True).l3[0]["id"] == "afsim"
         d.blocks = split_sheet(SLOWER)[0]
         return Fix()
 

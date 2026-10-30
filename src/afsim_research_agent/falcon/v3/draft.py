@@ -308,7 +308,7 @@ class Drafter:
         if verify and out.l1_ok and note is not None and sheet_hash(self.sheet) == note.sheet_hash:
             # the last AFSIM run of this very sheet failed; once the sheet changes, the next
             # AFSIM round judges it again
-            out.l3.append(note_entry(note))
+            out.l3.insert(0, note_entry(note))  # shown first to the repair loop
         return out
 
     async def ask(

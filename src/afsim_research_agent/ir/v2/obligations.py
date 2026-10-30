@@ -231,7 +231,9 @@ def _first(starts: dict[str, list[float]], action: str | None, since: float = fl
 def _one(ob, platform, starts, events, step_s, end_s) -> Verdict:
     if ob.kind == "not_before" and ob.after == ob.action:
         # "repeat no more often than every min_s": consecutive starts of the same action
-        times = sorted(starts.get(ob.action or "", []))
+        # starts in the same update (e.g. two states entered back to back both run it) are
+        # one round
+        times = sorted(set(starts.get(ob.action or "", [])))
         if len(times) < 2:
             return Verdict(ob.id, True, f"{platform}: {ob.action} 只执行了一次", judged=False)
         need = float(ob.min_s or 0.0)
