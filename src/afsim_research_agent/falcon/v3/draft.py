@@ -230,13 +230,29 @@ class Drafter:
                 covered |= {v.id for v in verdicts if v.judged}
                 broken = [v for v in verdicts if v.judged and not v.passed]
                 render = res.render()
+                # actions the 2D simulation has no model for succeed at once and write
+                # nothing: a scenario that fails with them says nothing about the model
+                # (the AFSIM run checks it); requirement obligations are still judged
+                blind = self._blind_fields(spec, res.idealized)
+                inconclusive = not res.passed and bool(blind)
+                if inconclusive:
+                    head, _, rest = render.partition("\n")
+                    render = (
+                        f"{head}\n  （未判定：条件读取的 "
+                        + ", ".join(sorted(blind)[:6])
+                        + " 只由二维仿真没有模型的动作写入（"
+                        + ", ".join(sorted(res.idealized)[:6])
+                        + "，立即成功、不写字段）；本想定由 AFSIM 运行检验）\n"
+                        + rest
+                    )
                 lines = render_obligations(verdicts, self.obligations)
                 if lines:
                     render += "\n" + "\n".join(lines)
                 out.l3.append(
                     {
                         "id": res.scenario,
-                        "passed": res.passed and not broken,
+                        "passed": (res.passed or inconclusive) and not broken,
+                        "inconclusive": inconclusive,
                         "render": render,
                         "obligations": [v.__dict__ for v in verdicts],
                         "idealized": sorted(res.idealized),
@@ -309,6 +325,18 @@ class Drafter:
             record["blocks"][key] = len(problems)
         self.rounds.append(record)
         return True
+
+    def _blind_fields(self, spec: dict[str, Any], idealized: set[str]) -> set[str]:
+        """Fields the model's conditions read that only actions without a 2D model write."""
+        from afsim_research_agent.falcon.v3.compiler import _bb_reads
+
+        out: set[str] = set()
+        for c in spec.get("conditions") or []:
+            for path in _bb_reads(c.get("expression")):
+                f = self.c.blackboard.get(path)
+                if f is not None and f.written_by and set(f.written_by) <= idealized:
+                    out.add(path)
+        return out
 
     @property
     def obligations_text(self) -> str:
@@ -683,7 +711,8 @@ def _review(request: V3Request, drafter: Drafter, check: Check, status: str) -> 
         if not t["passed"]:
             lines.append(f"  - {t['id']}: {t['detail']}")
     for s in check.l3:
-        lines.append(f"- L3 {s['id']}：{'通过' if s['passed'] else '未通过'}")
+        word = "未判定" if s.get("inconclusive") else ("通过" if s["passed"] else "未通过")
+        lines.append(f"- L3 {s['id']}：{word}")
         lines += ["  " + x for x in s["render"].splitlines()[1:]]
     lines.append("")
     if check.model is not None:

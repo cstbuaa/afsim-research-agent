@@ -24,9 +24,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Kind = Literal["not_before", "precedes", "response"]
+_COMMON = {"id", "kind", "description", "clause"}
+_USES = {
+    "not_before": {"action", "after", "min_s"},
+    "precedes": {"first", "then"},
+    "response": {"on_event", "action", "within_s"},
+}
 
 
 class Obligation(BaseModel):
@@ -42,6 +48,15 @@ class Obligation(BaseModel):
     then: str | None = None  # precedes
     on_event: str | None = None  # response
     within_s: float | None = Field(default=None, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_unused(cls, data: Any) -> Any:
+        """Fields another kind uses are ignored (drafts often fill them with 0 or null)."""
+        if not isinstance(data, dict) or data.get("kind") not in _USES:
+            return data
+        used = _USES[data["kind"]]
+        return {k: v for k, v in data.items() if k in _COMMON or k in used}
 
     def actions(self) -> list[str]:
         return [a for a in (self.action, self.after, self.first, self.then) if a]

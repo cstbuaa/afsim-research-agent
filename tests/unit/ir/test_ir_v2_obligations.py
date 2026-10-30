@@ -133,3 +133,10 @@ def test_periodic_not_before_uses_consecutive_starts() -> None:
     assert not v.passed and "1 s" in v.detail
     (v,) = check([every], [(0, "p", "a.x")], [], end_s=20)
     assert not v.judged
+
+
+def test_fields_of_other_kinds_are_ignored() -> None:
+    ob = Obligation.model_validate(
+        {"id": "a_then_b", "kind": "precedes", "first": "a", "then": "b", "within_s": 0.0}
+    )
+    assert ob.within_s is None and ob.first == "a"

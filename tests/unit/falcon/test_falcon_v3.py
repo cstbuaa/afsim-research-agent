@@ -988,3 +988,16 @@ def test_tree_events_of_trees_that_never_finish_are_refused(set_root: Path) -> N
     )
     msgs = [p.message for p in _compile(contracts, sheet).errors]
     assert any("树事件 held" in m and "OBSERVE" in m for m in msgs), msgs
+
+
+def test_blind_fields_are_those_only_unmodelled_actions_write(set_root: Path) -> None:
+    from afsim_research_agent.falcon.llm import ModelRunner, ScriptedModel
+    from afsim_research_agent.falcon.v3.draft import Drafter, V3Request
+
+    contracts = _annotate(set_root)
+    drafter = Drafter(
+        V3Request(requirement="r", model_id="scout_demo"), contracts, ModelRunner(ScriptedModel({}))
+    )
+    spec = _compile(contracts).spec
+    assert drafter._blind_fields(spec, {"sense.scan"}) == {"sense.target.valid"}
+    assert drafter._blind_fields(spec, {"nav.goto"}) == set()
