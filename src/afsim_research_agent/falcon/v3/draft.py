@@ -75,6 +75,8 @@ class V3Request(BaseModel):
     roles: dict[str, RoleHint] = Field(default_factory=dict)
     scenario_parameters: dict[str, ScenarioParameter] = Field(default_factory=dict)
     allow_mission_ref: bool = True
+    # state names to use per role (e.g. to line up with an evaluation scenario)
+    state_names: dict[str, list[str]] = Field(default_factory=dict)
     slices: list[str] | None = None  # override the slices the structure names
     capability_set: Path | None = None  # default: the configured capability set
     max_repair: int = Field(default=3, ge=0, le=6)
@@ -240,6 +242,7 @@ class Drafter:
             {k: v.model_dump() for k, v in self.r.roles.items()},
             {k: v.model_dump() for k, v in self.r.scenario_parameters.items()},
             self.r.allow_mission_ref,
+            state_names=self.r.state_names,
         )
         await self.ask("v3:structure", prompt, STRUCTURE_KINDS)
         check = self.check(pending=True)
@@ -358,7 +361,11 @@ class Drafter:
             "参数："
             + ", ".join(f"{k}={v.get('value')}" for k, v in check.model["parameters"].items())
         )
-        fields = sorted(check.model["blackboard"])
+        fields = sorted(
+            f
+            for f in check.model["blackboard"]
+            if ".request." not in f and not f.startswith("execution.")
+        )
         lines.append("可在测试中设置的黑板字段：" + ", ".join(fields[:80]))
         used: set[str] = set()
 

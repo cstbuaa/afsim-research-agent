@@ -175,7 +175,13 @@ def structure_prompt(
     scenario: dict[str, Any],
     allow_mission_ref: bool,
     tactic_brief: str = "",
+    state_names: dict[str, list[str]] | None = None,
 ) -> str:
+    names = ""
+    if state_names:
+        names = "\n状态命名（自己写状态图时使用这些名称，可按需求增减）：" + "；".join(
+            f"{r}: {', '.join(v)}" for r, v in state_names.items()
+        )
     return f"""{RULES}
 
 ## 需求
@@ -185,7 +191,7 @@ def structure_prompt(
 {_clauses(clauses)}
 {tactic_brief}
 ## 约定
-{_hints(roles, scenario, allow_mission_ref)}
+{_hints(roles, scenario, allow_mission_ref)}{names}
 
 ## 能力集切片索引
 {index}
