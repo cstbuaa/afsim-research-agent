@@ -757,3 +757,31 @@ def test_l2_tests_may_name_tree_and_timer_events(contracts: Contracts) -> None:
     ]
     checks = run_l2(normalize(spec, contracts).model, contracts, cases)
     assert all(c.passed for c in checks), [c.detail for c in checks]
+
+
+def test_a_failed_sensor_loses_the_selected_target() -> None:
+    from afsim_research_agent.ir.v2.sim.actions import (
+        ActionContext,
+        MaintainSelected,
+        SelectNearest,
+        UpdateTracks,
+    )
+    from afsim_research_agent.ir.v2.sim.world import Hostile, Vehicle, World
+
+    car = Vehicle("car_0")
+    car.sensor.on = car.sensor.commanded_on = True
+    world = World(vehicles={"car_0": car}, hostiles=[Hostile("h1", 0.0, 500.0)])
+    bb: dict = {}
+    shared: dict = {}
+
+    def ctx() -> ActionContext:
+        return ActionContext(world, car, bb, {}, {}, {}, {}, shared)
+
+    assert UpdateTracks().update(ctx())[0] == "success"
+    assert SelectNearest().update(ctx())[0] == "success"
+    car.sensor.operational = False
+    for _ in range(5):
+        world.step(1.0)
+        UpdateTracks().update(ctx())
+    status, code = MaintainSelected().update(ctx())
+    assert (status, code) == ("failure", "TARGET_LOST") and bb["sim.selected.valid"] is False

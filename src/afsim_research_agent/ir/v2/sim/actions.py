@@ -249,10 +249,15 @@ class UpdateTracks(ActionModel):
 
     def update(self, ctx: ActionContext) -> Status:
         sensor = _sensor(ctx)
-        if sensor is None or not sensor.operational:
-            return FAILURE, "TRACK_SOURCE_UNAVAILABLE"
         timeout = float(ctx.options.get("track_timeout_s", 2.5))
         memory = ctx.shared.setdefault("track_memory", {})
+        if sensor is None or not sensor.operational:
+            # no new detections: the tracks already held still age out (before, the last
+            # picture stayed in place and a selected target was never lost)
+            ctx.shared["tracks"] = {
+                tid: t for tid, (t, seen) in memory.items() if ctx.now - seen <= timeout
+            }
+            return FAILURE, "TRACK_SOURCE_UNAVAILABLE"
         for t in ctx.world.visible(ctx.vehicle):
             memory[t["id"]] = (t, ctx.now)
         tracks = {tid: t for tid, (t, seen) in memory.items() if ctx.now - seen <= timeout}
