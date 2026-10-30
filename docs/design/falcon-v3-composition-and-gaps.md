@@ -288,3 +288,27 @@ v1 的生成路径保留到 v3 在线验证通过，用 `--ir-version` 切换。
 3. 子树 agent 和能力开发 agent 首期是否由人代办，只实现接口和验收？建议这样做。
 4. 能力开发 agent 使用什么模型：它会接触受控资料，只能是本地模型或由人完成。
 5. 是否允许 Falcon 整体引用战术集任务：允许的话生成会很稳，但测不出模型自己写状态机的能力。建议两种都测：D 阶段分别跑"可引用"和"禁止引用任务"两种。
+
+## 11. 实现说明（2026-10-30，A–C 阶段）
+
+| 模块 | 内容 |
+| --- | --- |
+| `ir/v2/models.py` | `gaps: {id: Gap}` 代替原来的 `needs`；`Gap` 的字段见 §4，`stub` 只能写 `result`、`success_after_s`、`failure_code`、`writes` |
+| `ir/v2/normalize.py` | `gap.<id>` 占位按缺口契约检查（参数、平台类别、黑板读写、资源、桩的写入）；每处占位报 GAP001 警告；能力缺口强制 `local_only: true`；`used_by` 由程序填写 |
+| `ir/v2/runtime.py`、`sim/run.py` | 占位按桩执行，占用缺口声明的资源；L2 可用 `actions` 指定占位的结果；仿真报告列出"理想化缺口" |
+| `ir/v2/afsim/compiler.py` | 有占位时报 GAP002，不生成；运行配置的 `[parameters]` 给出想定提供的参数取值 |
+| `falcon/v3/pyexpr.py`、`pytree.py` | 条件表达式与树函数 → IR 2.0 |
+| `falcon/v3/compiler.py` | 战术稿 v3 → `behavior_spec`（IR 2.0）与源码映射（IR 路径 → 块与行） |
+| `falcon/v3/catalog.py` | 提示词中的能力集：结构稿看切片索引，控制稿看选中切片的动作契约摘要、战术集条目与黑板字段（不含请求编号、执行状态等接口字段） |
+| `falcon/v3/prompts.py`、`draft.py` | 生成流程与模型包；`falcon draft3`、`falcon compile3` |
+
+战术稿 v3 的块：`yaml model`（含 `slices`、角色可引用战术集任务）、`mermaid <角色>`、`python conditions`、`python <角色>`、`yaml gaps`、`yaml verification`。树函数名与状态名相同的是状态树，小写函数是子树；只调用一个战术集条目或子树的状态函数直接映射到它。
+
+请求文件（`V3Request`）：`requirement`、`model_id`、`roles`、`scenario_parameters`（只把名称、类型和说明交给模型）、`allow_mission_ref`、`state_names`（与评测想定对齐时使用）、`slices`、`capability_set`、`max_repair`。
+
+离线门槛 B：按 IR 2.0 编写的三车编队模型改写成 v3 战术稿后，编译结果与原模型逐状态等价（SHUTDOWN 由包一层子树改为直接映射到战术集状态树，行为相同）。
+
+已知限制：
+
+- 二维仿真没有编队动作的模型，这些动作按立即成功处理，依赖编队几何字段的条件按默认值判断；验证稿的提示词会说明这一点。
+- 评测想定按状态名驱动目标（如进入保持距离状态后目标开始机动），所以模型自己写状态图时，用 `state_names` 给出与想定一致的状态名。
