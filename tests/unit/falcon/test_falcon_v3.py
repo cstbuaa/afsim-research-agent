@@ -1001,3 +1001,14 @@ def test_blind_fields_are_those_only_unmodelled_actions_write(set_root: Path) ->
     spec = _compile(contracts).spec
     assert drafter._blind_fields(spec, {"sense.scan"}) == {"sense.target.valid"}
     assert drafter._blind_fields(spec, {"nav.goto"}) == set()
+
+
+def test_negated_timer_transition_is_refused(set_root: Path) -> None:
+    contracts = _annotate(set_root)
+    sheet = SHEET.replace(
+        "  OBSERVE --> MOVE : lost_timeout\n", "  OBSERVE --> MOVE : not settled\n"
+    ).replace(
+        "stopped = self.speed_mps", "settled = time_in_state() >= 3 * s\nstopped = self.speed_mps"
+    )
+    msgs = [p.message for p in _compile(contracts, sheet).errors]
+    assert any("立即转出" in m for m in msgs), msgs

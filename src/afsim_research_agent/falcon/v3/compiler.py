@@ -545,6 +545,28 @@ class SheetCompiler:
                 return True
             return any(waits(r, (*stack, cid)) for r in _condition_refs(expr) if r not in stack)
 
+        def resolve(expr: Any, depth: int = 0) -> Any:
+            while isinstance(expr, dict) and "condition_ref" in expr and depth < 20:
+                expr, depth = exprs.get(str(expr["condition_ref"])), depth + 1
+            return expr
+
+        for rid, mission in spec["missions"].items():
+            if "tactic" in mission:
+                continue
+            for i, tr in enumerate(mission["transitions"]):
+                e = resolve(exprs.get(tr["on"]))
+                inner = resolve(e.get("not")) if isinstance(e, dict) and "not" in e else None
+                call = inner.get("function_call") if isinstance(inner, dict) else None
+                if isinstance(call, dict) and call.get("name") == "time_in_state_gte":
+                    block, line = self.out.locate(f"missions.{rid}.transitions[{i}]")
+                    self.fail(
+                        block,
+                        line,
+                        f'{tr["from"]} --> {tr["to"]} 的条件只是"本状态停留不到某时长"，进入 '
+                        f"{tr['from']} 的那一刻就成立，状态会立即转出，其他转换永远轮不到。"
+                        '表示"本状态的工作失败"用树事件（events 中声明 {source: tree, '
+                        "result: failure}），表示超时用 time_in_state() >= …",
+                    )
         for rid, mission in spec["missions"].items():
             if "tactic" in mission:
                 continue
