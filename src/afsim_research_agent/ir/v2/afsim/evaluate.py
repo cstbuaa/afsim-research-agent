@@ -91,6 +91,7 @@ def judge(
     console: str,
     reference_console: str | None,
     obligations: list[dict[str, Any]] | None = None,
+    role_actions: dict[str, list[str]] | None = None,  # role → actions its trees run
 ) -> RunJudgement:
     j = RunJudgement(run=run["id"], completed="Simulation complete" in console)
     j.errors = [m.group(0) for m in ERRORS.finditer(console)]
@@ -142,7 +143,16 @@ def judge(
         obs = [Obligation.model_validate(o) for o in obligations]
         acts = [(float(t), p, a.strip()) for t, p, a in IR_ACT.findall(console)]
         events = [(float(e["at_s"]), str(e["event"])) for e in run.get("events") or []]
-        verdicts = check(obs, acts, events, end_s=float(run.get("end_time_s") or 0) or None)
+        capable = None
+        if role_actions:
+            capable = {
+                p["name"]: set(role_actions.get(p["role"], []))
+                for p in run.get("platforms") or []
+                if "role" in p
+            }
+        verdicts = check(
+            obs, acts, events, end_s=float(run.get("end_time_s") or 0) or None, capable=capable
+        )
         j.obligations = [asdict(v) for v in verdicts]
         for v in verdicts:
             if v.judged and not v.passed:
@@ -197,7 +207,13 @@ def _judge_saved(package: Path, run: dict[str, Any], console: str) -> RunJudgeme
         path = path if path.is_absolute() else root / path
         if path.exists():
             ref_text = path.read_text(encoding="utf-8", errors="replace")
-    return judge(run, console, ref_text, manifest.get("obligations") or [])
+    return judge(
+        run,
+        console,
+        ref_text,
+        manifest.get("obligations") or [],
+        role_actions=manifest.get("role_actions"),
+    )
 
 
 def _report(package: Path, results: list[RunJudgement]) -> None:

@@ -20,7 +20,7 @@ compared with a tolerance of one update or 10 %, whichever is larger.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -74,6 +74,41 @@ def _slack(span: float, step_s: float) -> float:
     return max(step_s, 0.1 * span)
 
 
+def role_actions(spec: dict[str, Any], tactics: dict[str, Any]) -> dict[str, set[str]]:
+    """The actions each role's state trees can run (through subtrees and tactic-set trees).
+    ``tactics``: tactic-set id → its raw entry (with ``root``)."""
+    subs = {s["id"]: s.get("root") for s in spec.get("subtrees") or [] if "id" in s}
+
+    def walk(node: Any, acc: set[str], seen: set[str]) -> None:
+        if isinstance(node, list):
+            for n in node:
+                walk(n, acc, seen)
+            return
+        if not isinstance(node, dict):
+            return
+        if isinstance(node.get("action"), str):
+            acc.add(node["action"])
+        for key in ("tactic", "subtree"):
+            ref = node.get(key)
+            if isinstance(ref, str) and ref not in seen:
+                seen.add(ref)
+                root = subs.get(ref)
+                if root is None and ref in tactics:
+                    root = (tactics[ref] or {}).get("root")
+                walk(root, acc, seen)
+        for value in node.values():
+            if isinstance(value, dict | list):
+                walk(value, acc, seen)
+
+    out: dict[str, set[str]] = {}
+    for rid, trees in (spec.get("state_trees") or {}).items():
+        acc: set[str] = set()
+        for ref in (trees or {}).values():
+            walk({"tactic": ref} if isinstance(ref, str) else ref, acc, set())
+        out[rid] = acc
+    return out
+
+
 def check(
     obligations: list[Obligation],
     activations: list[tuple[float, str, str]],  # (time, platform / instance, action)
@@ -81,15 +116,37 @@ def check(
     *,
     step_s: float = 1.0,
     end_s: float | None = None,
+    capable: dict[str, set[str]] | None = None,  # platform → actions its model can run
 ) -> list[Verdict]:
+    """With ``capable``, an obligation is judged on a platform only when the platform's model
+    runs the constrained action. An ordering between actions of different platforms (e.g. the
+    leader's broadcast before a member's adoption) is not judged: action starts carry no
+    causality across vehicles (a member polls for its task from the start)."""
     by_platform: dict[str, dict[str, list[float]]] = {}
     for t, platform, action in activations:
         by_platform.setdefault(platform, {}).setdefault(action, []).append(float(t))
+    for platform in capable or {}:
+        by_platform.setdefault(platform, {})
     out = []
     for ob in obligations:
         verdicts = []
-        for platform, starts in sorted(by_platform.items()):
-            verdicts.append(_one(ob, platform, starts, events, step_s, end_s))
+        for platform, own in sorted(by_platform.items()):
+            caps = None if capable is None else capable.get(platform)
+            subject = ob.then if ob.kind == "precedes" else ob.action
+            if caps is not None and subject not in caps:
+                continue
+            prereq = ob.first if ob.kind == "precedes" else ob.after
+            if caps is not None and prereq and prereq not in caps:
+                verdicts.append(
+                    Verdict(
+                        ob.id,
+                        True,
+                        f"{platform}: {prereq} 由其他车辆执行，跨车先后不按开始时刻判定",
+                        judged=False,
+                    )
+                )
+                continue
+            verdicts.append(_one(ob, platform, own, events, step_s, end_s))
         judged = [v for v in verdicts if v.judged]
         if not judged:
             out.append(Verdict(ob.id, True, "本次运行没有出现约束的前提，未判定", judged=False))

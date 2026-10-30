@@ -52,3 +52,37 @@ def test_afsim_judge_reads_action_starts() -> None:
     assert "需求约束 scan_after_move" in j.render()
     ok = console.replace("IR_ACT|1|car|sense.scan", "IR_ACT|12|car|sense.scan")
     assert judge(run, ok, None, [DELAY.model_dump(exclude_none=True)]).passed
+
+
+def test_roles_judge_only_their_own_actions() -> None:
+    """With the actions each platform's model runs, an obligation is judged where its action
+    belongs; an ordering across vehicles is not judged on action starts."""
+    adopt = Obligation(id="adopt_after_send", kind="precedes", first="lead.send", then="mem.adopt")
+    stop = Obligation(
+        id="stop_on_end", kind="response", on_event="end", action="mem.stop", within_s=5
+    )
+    acts = [(2, "lead", "lead.send"), (3, "m1", "mem.adopt"), (21, "m1", "mem.stop")]
+    capable = {"lead": {"lead.send"}, "m1": {"mem.adopt", "mem.stop"}}
+    (v1, v2) = check([adopt, stop], acts, [(20.0, "end")], end_s=40, capable=capable)
+    assert v1.passed and not v1.judged
+    assert v2.passed and v2.judged  # the leader, which has no stop action, is not judged
+    late = [(2, "lead", "lead.send"), (21, "m1", "mem.adopt")]
+    (_, v2) = check([adopt, stop], late, [(20.0, "end")], end_s=40, capable=capable)
+    assert not v2.passed  # the member never stopped
+    # without the role map every platform is judged on its own starts
+    (v1, v2) = check([adopt, stop], acts, [(20.0, "end")], end_s=40)
+    assert not v1.passed and not v2.passed
+
+
+def test_role_actions_follow_subtrees_and_tactics() -> None:
+    from afsim_research_agent.ir.v2.obligations import role_actions
+
+    spec = {
+        "subtrees": [{"id": "s1", "root": {"type": "tactic", "tactic": "lib.t"}}],
+        "state_trees": {"r": {"A": "s1", "B": "lib.u"}},
+    }
+    tactics = {
+        "lib.t": {"root": {"type": "action", "action": "x.a"}},
+        "lib.u": {"root": {"type": "sequence", "children": [{"type": "action", "action": "x.b"}]}},
+    }
+    assert role_actions(spec, tactics) == {"r": {"x.a", "x.b"}}

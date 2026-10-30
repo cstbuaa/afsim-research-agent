@@ -168,6 +168,7 @@ class Compiler:
         self.behaviors: list[str] = []
         self.params = {k: v.get("value") for k, v in model["parameters"].items()}
         self.missing: set[str] = set()
+        self.role_actions: dict[str, set[str]] = {}  # role → actions its trees run
 
     # ------------------------------------------------------------------ package
     def package(self, runs: list[RunConfig], obligations: list[dict] | None = None) -> Package:
@@ -208,6 +209,7 @@ class Compiler:
                 if r.record
             },
             "obligations": list(obligations or []),
+            "role_actions": {r: sorted(a) for r, a in sorted(self.role_actions.items())},
             "sha256": {
                 name: hashlib.sha256(behavior.encode()).hexdigest(),
                 **{f: hashlib.sha256(t.encode()).hexdigest() for f, t in run_files.items()},
@@ -687,6 +689,7 @@ class Compiler:
             ]
             return [name]
         action = str(n.get("action"))
+        self.role_actions.setdefault(self.rid, set()).add(action)
         ab = self.b.action.get(action)
         if ab is None:
             self.missing.add(f"action {action}")
