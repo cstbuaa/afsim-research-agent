@@ -35,6 +35,7 @@ from afsim_research_agent.falcon.v3 import prompts as P
 from afsim_research_agent.falcon.v3.compare import compare as compare_tactics
 from afsim_research_agent.falcon.v3.compare import render as render_comparison
 from afsim_research_agent.falcon.v3.compiler import Compiled, compile_sheet
+from afsim_research_agent.falcon.v3.fixer import fix_sheet, render_fix
 from afsim_research_agent.ir.diagnostics import Diagnostic
 from afsim_research_agent.ir.v2 import Contracts, normalize
 from afsim_research_agent.ir.v2.sim import run_l2, simulate
@@ -87,6 +88,7 @@ class V3Request(BaseModel):
     slices: list[str] | None = None  # override the slices the structure names
     capability_set: Path | None = None  # default: the configured capability set
     max_repair: int = Field(default=3, ge=0, le=6)
+    fix_steps: int = Field(default=20, ge=0, le=60)  # self-checking repair loop budget
 
     @classmethod
     def load(cls, path: Path) -> V3Request:
@@ -582,7 +584,12 @@ def _review(request: V3Request, drafter: Drafter, check: Check, status: str) -> 
 
 
 def write_package(
-    staging: Path, request: V3Request, drafter: Drafter, check: Check, status: str
+    staging: Path,
+    request: V3Request,
+    drafter: Drafter,
+    check: Check,
+    status: str,
+    fixes: list[Any] | None = None,
 ) -> None:
     spec = check.compiled.spec or {}
     (staging / SHEET_FILE).write_text(drafter.sheet, encoding="utf-8")
@@ -620,9 +627,32 @@ def write_package(
     (staging / "validation_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    (staging / "falcon_review.md").write_text(
-        _review(request, drafter, check, status), encoding="utf-8"
-    )
+    review = _review(request, drafter, check, status)
+    for outcome in fixes or []:
+        review += "\n" + "\n".join(render_fix(outcome)) + "\n"
+    (staging / "falcon_review.md").write_text(review, encoding="utf-8")
+    if fixes:
+        (staging / "fix_log.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "solved": o.solved,
+                        "steps": o.steps,
+                        "score_start": o.score_start,
+                        "score_end": o.score_end,
+                        "question": o.question,
+                        "summary": o.summary,
+                        "log": o.log,
+                        "edits": [e.__dict__ for e in o.edits],
+                    }
+                    for o in fixes
+                ],
+                ensure_ascii=False,
+                indent=1,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
     trace = {
         "model_id": request.model_id,
         "falcon_version": FALCON_V3_VERSION,
@@ -687,8 +717,11 @@ async def run_draft3(
     *,
     out_dir: Path | None = None,
     allow_mission_ref: bool | None = None,
+    fix_steps: int | None = None,
 ) -> V3Result:
     request = V3Request.load(request_path)
+    if fix_steps is not None:
+        request = request.model_copy(update={"fix_steps": fix_steps})
     if allow_mission_ref is not None:
         request = request.model_copy(update={"allow_mission_ref": allow_mission_ref})
     contracts = Contracts.load(request.capability_set)
@@ -703,9 +736,18 @@ async def run_draft3(
         await drafter.clauses_stage()
         structure = await drafter.structure_stage()
         control = await drafter.control_stage(structure)
+        budget = request.fix_steps
+        fixes: list[Any] = []
+        if not control.l1_ok and budget:
+            fixes.append(await fix_sheet(drafter, run, max(1, budget // 2)))
+            budget -= fixes[-1].steps
+            control = drafter.check()
         check = await drafter.verification_stage(control) if control.l1_ok else control
+        if not check.verified and budget > 0:
+            fixes.append(await fix_sheet(drafter, run, budget))
+            check = drafter.check(verify=True)
         status = "draft_valid" if check.verified else "draft_invalid"
-        write_package(staging, request, drafter, check, status)
+        write_package(staging, request, drafter, check, status, fixes)
     except BaseException:
         (staging / SHEET_FILE).write_text(drafter.sheet, encoding="utf-8")
         failed = target.with_name(target.name + ".failed")

@@ -589,3 +589,93 @@ roles:
     assert [(r["state"], r["same"], r["extra"]) for r in rows] == [
         ("SHUTDOWN", False, ["nav.stop"])  # sense.watch shuts down with sense.off only
     ]
+
+
+# ---------------------------------------------------------------------- repair loop
+def _fix_drafter(contracts: Contracts, text: str):
+    from afsim_research_agent.falcon.llm import ModelRunner, ScriptedModel
+    from afsim_research_agent.falcon.sheet.blocks import split_sheet
+    from afsim_research_agent.falcon.v3.draft import Drafter, V3Request
+
+    drafter = Drafter(
+        V3Request(requirement="侦察车前出搜索", model_id="scout_demo"),
+        contracts,
+        ModelRunner(ScriptedModel({})),
+    )
+    drafter.blocks = split_sheet(text)[0]
+    return drafter
+
+
+def test_fix_loop_edits_several_blocks_and_keeps_the_guards(contracts: Contracts) -> None:
+    from afsim_research_agent.falcon.llm import ModelRunner, ScriptedModel
+    from afsim_research_agent.falcon.v3.fixer import SheetFixer, fix_sheet, render_fix
+
+    broken = SHEET.replace("MOVE --> OBSERVE : target_seen", "MOVE --> OBSERVE : seen").replace(
+        "nav.hold()", "nav.hodl()"
+    )
+    drafter = _fix_drafter(contracts, broken)
+    fixer = SheetFixer(drafter)
+    assert not fixer.last.l1_ok
+    assert "nav.hold" in fixer.lookup("nav.hodl")  # near matches
+    assert "动作 nav.goto" in fixer.lookup("nav.goto") and "def _search():" in fixer.lookup(
+        "sense.search"
+    )
+    assert "状态树（只能参照）" in fixer.lookup("sense.searching_state")
+    steps = [
+        {"thought": "看问题", "action": "explain", "args": {"problem": 1}},
+        # deleting the verification block is refused
+        {"action": "edit", "args": {"changes": [{"block": "verification", "text": "tests: []"}]}},
+        # one step fixes the diagram and the tree
+        {
+            "thought": "触发名与条件对齐，动作名改正",
+            "action": "edit",
+            "args": {
+                "changes": [
+                    {
+                        "block": "mermaid:scout",
+                        "old": "OBSERVE : seen",
+                        "new": "OBSERVE : target_seen",
+                    },
+                    {"block": "pytree:scout", "old": "nav.hodl()", "new": "nav.hold()"},
+                ],
+                "reason": "对齐触发名；改正动作名",
+            },
+        },
+        {"action": "finish", "args": {"summary": "已修正"}},
+    ]
+    model = ScriptedModel({"fix:v3:step": steps})
+    outcome = asyncio.run(fix_sheet(drafter, ModelRunner(model), max_steps=6))
+    assert outcome.solved, [r["result"][:300] for r in outcome.log]
+    assert [r["action"] for r in outcome.log] == ["explain", "edit", "edit"]  # solved: stops
+    assert "修改被拒绝：不能减少" in outcome.log[1]["result"]
+    assert {e.block for e in outcome.edits} == {"mermaid:scout", "pytree:scout"}
+    review = "\n".join(render_fix(outcome))
+    assert "自检纠错记录" in review and "+  MOVE --> OBSERVE : target_seen" in review
+    # the prompt carries the current problems and the tools
+    assert "explain" in model.calls[0][1] and "seen" in model.calls[0][1]
+
+
+def test_fix_loop_refuses_an_edit_that_breaks_l1_and_explains_conflicts(
+    contracts: Contracts,
+) -> None:
+    from afsim_research_agent.falcon.v3.fixer import SheetFixer
+
+    fixer = SheetFixer(_fix_drafter(contracts, SHEET))
+    assert fixer.last.l1_ok
+    result = fixer.edit(
+        [{"block": "pytree:scout", "old": "nav.stop()", "new": "nav.nope()"}], "试错"
+    )
+    assert result.startswith("修改被拒绝：会让 L1 不通过") and fixer.last.l1_ok
+    # a parallel whose branches both drive: the explanation names the branches
+    clash = SHEET.replace(
+        '    with parallel("one"):\n        nav.hold()\n        guard()',
+        '    with parallel("one"):\n        nav.hold()\n        nav.stop()',
+    )
+    fixer = SheetFixer(_fix_drafter(contracts, clash))
+    idx = next(i for i, p in enumerate(fixer.last.problems, 1) if "ARB001" in p.message)
+    text = fixer.explain(idx)
+    assert "分支 0：drive: nav.hold" in text and "分支 1：drive: nav.stop" in text
+    tick = SheetFixer(_fix_drafter(contracts, SHEET)).try_tick(
+        "scout", "MOVE", {"blackboard": {"sense.target.valid": True}}
+    )
+    assert "MOVE → OBSERVE" in tick

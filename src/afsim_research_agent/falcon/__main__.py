@@ -56,6 +56,9 @@ def _parser() -> argparse.ArgumentParser:
     draft3.add_argument("request", type=Path)
     draft3.add_argument("--out", type=Path, help="模型包的上级目录（默认请求文件所在目录）")
     draft3.add_argument("--no-mission-ref", action="store_true", help="不允许整体引用战术集任务")
+    draft3.add_argument(
+        "--fix-steps", type=int, help="自检纠错循环的步数上限（默认取请求文件，缺省 20；0 关闭）"
+    )
     comp3 = sub.add_parser(
         "compile3", help="v3：战术稿 → IR 2.0 并做 L1–L3（不调用模型，结果写到新目录）"
     )
@@ -149,6 +152,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     DashScopeModel(),
                     out_dir=args.out,
                     allow_mission_ref=False if args.no_mission_ref else None,
+                    fix_steps=args.fix_steps,
                 )
             )
             _print_v3(result3)
