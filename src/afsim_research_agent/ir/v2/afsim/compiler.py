@@ -128,6 +128,23 @@ class Package:
     manifest: dict[str, Any]
 
 
+def _placeholders(model: dict[str, Any]) -> list[str]:
+    found: set[str] = set()
+
+    def walk(node: dict[str, Any] | None, where: str) -> None:
+        if not node:
+            return
+        if "gap" in node:
+            found.add(f"{node['gap']['id']} ({where})")
+        for kid in node.get("children") or []:
+            walk(kid, where)
+
+    for rid, role in model["roles"].items():
+        for state, body in role["states"].items():
+            walk(body.get("tree"), f"{rid}.{state}")
+    return sorted(found)
+
+
 class Compiler:
     def __init__(
         self,
@@ -150,6 +167,12 @@ class Compiler:
 
     # ------------------------------------------------------------------ package
     def package(self, runs: list[RunConfig]) -> Package:
+        placeholders = _placeholders(self.m)
+        if placeholders:
+            raise CompileError(
+                "GAP002: the model still has gap placeholders; fill the gaps first: "
+                + ", ".join(placeholders)
+            )
         processors = [self._role(rid, role) for rid, role in self.m["roles"].items()]
         if self.missing:
             raise CompileError("binding has no entry for: " + ", ".join(sorted(self.missing)))

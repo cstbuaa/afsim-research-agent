@@ -404,6 +404,342 @@
       "title": "FieldDecl",
       "type": "object"
     },
+    "Gap": {
+      "additionalProperties": false,
+      "description": "A subtree or action the model needs and the capability set lacks, written as a\ncontract (design falcon-v3-composition-and-gaps §4). Trees reference it as\n``gap.<id>`` in a subtree or action leaf.",
+      "properties": {
+        "acceptance": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Acceptance",
+          "type": "array"
+        },
+        "blackboard": {
+          "$ref": "#/$defs/GapBlackboard"
+        },
+        "capability_class": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Capability Class"
+        },
+        "clauses": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Clauses",
+          "type": "array"
+        },
+        "completion": {
+          "default": "",
+          "title": "Completion",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "subtree",
+            "action"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "lifecycle": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Lifecycle",
+          "type": "object"
+        },
+        "local_only": {
+          "default": false,
+          "title": "Local Only",
+          "type": "boolean"
+        },
+        "observable": {
+          "default": "",
+          "title": "Observable",
+          "type": "string"
+        },
+        "params": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GapParam"
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "resources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Resources",
+          "type": "array"
+        },
+        "result": {
+          "$ref": "#/$defs/GapResult"
+        },
+        "roles": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Roles",
+          "type": "array"
+        },
+        "stub": {
+          "$ref": "#/$defs/GapStub"
+        },
+        "used_by": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Used By",
+          "type": "array"
+        },
+        "uses": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Uses",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "description"
+      ],
+      "title": "Gap",
+      "type": "object"
+    },
+    "GapBlackboard": {
+      "additionalProperties": false,
+      "properties": {
+        "reads": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Reads",
+          "type": "array"
+        },
+        "writes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Writes",
+          "type": "array"
+        }
+      },
+      "title": "GapBlackboard",
+      "type": "object"
+    },
+    "GapFailure": {
+      "additionalProperties": false,
+      "properties": {
+        "codes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Codes",
+          "type": "array"
+        },
+        "meaning": {
+          "default": "",
+          "title": "Meaning",
+          "type": "string"
+        }
+      },
+      "title": "GapFailure",
+      "type": "object"
+    },
+    "GapParam": {
+      "additionalProperties": false,
+      "properties": {
+        "default": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default"
+        },
+        "range": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Range"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "bool",
+            "int",
+            "double",
+            "string"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "GapParam",
+      "type": "object"
+    },
+    "GapResult": {
+      "additionalProperties": false,
+      "properties": {
+        "failure": {
+          "$ref": "#/$defs/GapFailure"
+        },
+        "max_duration_s": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Duration S"
+        },
+        "running": {
+          "default": "",
+          "title": "Running",
+          "type": "string"
+        },
+        "success": {
+          "default": "",
+          "title": "Success",
+          "type": "string"
+        },
+        "terminates": {
+          "default": true,
+          "title": "Terminates",
+          "type": "boolean"
+        }
+      },
+      "title": "GapResult",
+      "type": "object"
+    },
+    "GapStub": {
+      "additionalProperties": false,
+      "description": "How a placeholder runs before the gap is filled (L2 and the 2D simulation only).",
+      "properties": {
+        "failure_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Code"
+        },
+        "result": {
+          "default": "success",
+          "enum": [
+            "success",
+            "failure",
+            "running"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "success_after_s": {
+          "default": 0.0,
+          "minimum": 0,
+          "title": "Success After S",
+          "type": "number"
+        },
+        "writes": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Writes",
+          "type": "object"
+        }
+      },
+      "title": "GapStub",
+      "type": "object"
+    },
     "GlobalTransition": {
       "additionalProperties": false,
       "properties": {
@@ -592,31 +928,6 @@
         "intent"
       ],
       "title": "ModelMeta",
-      "type": "object"
-    },
-    "Need": {
-      "additionalProperties": false,
-      "description": "An action the tactic needs that the capability set does not have (a development gap).",
-      "properties": {
-        "action": {
-          "title": "Action",
-          "type": "string"
-        },
-        "description": {
-          "default": "",
-          "title": "Description",
-          "type": "string"
-        },
-        "params": {
-          "additionalProperties": true,
-          "title": "Params",
-          "type": "object"
-        }
-      },
-      "required": [
-        "action"
-      ],
-      "title": "Need",
       "type": "object"
     },
     "Node": {
@@ -1217,6 +1528,13 @@
       "title": "Formations",
       "type": "array"
     },
+    "gaps": {
+      "additionalProperties": {
+        "$ref": "#/$defs/Gap"
+      },
+      "title": "Gaps",
+      "type": "object"
+    },
     "missions": {
       "additionalProperties": {
         "anyOf": [
@@ -1233,13 +1551,6 @@
     },
     "model": {
       "$ref": "#/$defs/ModelMeta"
-    },
-    "needs": {
-      "items": {
-        "$ref": "#/$defs/Need"
-      },
-      "title": "Needs",
-      "type": "array"
     },
     "parameters": {
       "additionalProperties": {

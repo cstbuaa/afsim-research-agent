@@ -38,6 +38,7 @@ class ActionHost(Protocol):
 class Activation:
     running: bool = False
     leaf: dict[str, Any] | None = None
+    started: float = 0.0
 
 
 @dataclass
@@ -297,7 +298,7 @@ class Instance:
     def _action(self, leaf: dict[str, Any]) -> str:
         rid = leaf["node_id"]
         act = self.activations.setdefault(rid, Activation(leaf=leaf))
-        contract = self.contracts.actions.get(leaf.get("action") or "")
+        resources = self._resources(leaf)
         if leaf.get("operation") == "cancel":
             for other in self.activations.values():
                 if other.running and other.leaf and other.leaf.get("action") == leaf["action"]:
@@ -305,8 +306,9 @@ class Instance:
                     other.running = False
             return SUCCESS
         new = not act.running
-        if new and contract is not None:
-            for res in contract.resources:
+        if new:
+            act.started = self.now
+            for res in resources:
                 if res.get("mode") != "exclusive" or res.get("acquire") is False:
                     continue
                 owner = self.owners.get(res["resource"])
@@ -319,8 +321,8 @@ class Instance:
             self.issued.append(str(leaf.get("action")))
         status, code = self.host.tick(self, leaf, new)
         act.running = status == RUNNING
-        if status != RUNNING and contract is not None:
-            for res in contract.resources:
+        if status != RUNNING:
+            for res in resources:
                 if res.get("mode") != "exclusive":
                     continue
                 name = res["resource"]
@@ -333,6 +335,25 @@ class Instance:
         self._execution(leaf, status, code)
         return status
 
+    def _resources(self, leaf: dict[str, Any]) -> list[dict[str, Any]]:
+        if "gap" in leaf:
+            return list((leaf.get("contract") or {}).get("resources") or [])
+        contract = self.contracts.actions.get(leaf.get("action") or "")
+        return list(contract.resources) if contract is not None else []
+
+    def gap_stub(self, leaf: dict[str, Any]) -> tuple[str, str | None]:
+        """Run a gap placeholder by its stub: running until ``success_after_s`` has passed
+        since the activation started, then the stub's result (writing its fields)."""
+        stub = leaf["gap"].get("stub") or {}
+        act = self.activations.get(leaf["node_id"])
+        started = act.started if act is not None else self.now
+        if self.now - started < float(stub.get("success_after_s") or 0.0):
+            return RUNNING, None
+        result = stub.get("result", SUCCESS)
+        if result != RUNNING:
+            self.blackboard.update(stub.get("writes") or {})
+        return result, (stub.get("failure_code") or "GAP_STUB") if result == FAILURE else None
+
     def _execution(self, leaf: dict[str, Any], status: str, code: str | None) -> None:
         self.blackboard["sim.exec.action"] = leaf.get("action")
         self.blackboard["sim.exec.status"] = status.upper()
@@ -341,7 +362,7 @@ class Instance:
     def resolve_params(self, leaf: dict[str, Any]) -> dict[str, Any]:
         contract = self.contracts.actions.get(leaf.get("action") or "")
         out: dict[str, Any] = {}
-        specs = contract.parameters if contract else {}
+        specs = contract.parameters if contract else {}  # gap leaves: params as written
         for name, spec in specs.items():
             if isinstance(spec, dict) and "default" in spec:
                 out[name] = spec["default"]

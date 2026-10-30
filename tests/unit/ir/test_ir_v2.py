@@ -374,13 +374,77 @@ def test_parallel_branches_must_not_share_an_exclusive_resource(contracts: Contr
     }
 
 
-def test_needs_turn_an_unknown_action_into_a_gap(contracts: Contracts) -> None:
+def _gap_spec() -> dict:
+    spec = _spec()
+    spec["blackboard"]["mission.smoke_active"] = {"type": "bool", "default": False}
+    spec["gaps"] = {
+        "smoke_screen": {
+            "kind": "action",
+            "description": "施放烟幕",
+            "capability_class": "ground_vehicle",
+            "params": {
+                "duration_s": {"type": "double", "unit": "min", "required": True, "range": [0.1, 2]}
+            },
+            "resources": ["launcher"],
+            "blackboard": {"writes": ["mission.smoke_active"]},
+            "result": {"failure": {"codes": ["NO_AMMO"]}},
+            "stub": {"success_after_s": 2, "writes": {"mission.smoke_active": True}},
+        },
+        "overwatch": {
+            "kind": "subtree",
+            "description": "交替掩护",
+            "blackboard": {"reads": ["sense.target.valid"]},
+            "resources": ["drive"],
+            "stub": {"result": "running"},
+        },
+    }
+    spec["subtrees"][1]["root"] = {
+        "type": "parallel",
+        "policy": {"type": "one"},
+        "children": [
+            {
+                "type": "action",
+                "action": "gap.smoke_screen",
+                "params": {"duration_s": {"value": 30, "unit": "s"}},
+            },
+            {"type": "subtree", "subtree": "gap.overwatch"},
+        ],
+    }
+    return spec
+
+
+def test_gap_placeholders_are_checked_against_their_contract(contracts: Contracts) -> None:
+    result = normalize(_gap_spec(), contracts)
+    assert result.ok, [d.render() for d in result.diagnostics]
+    gaps = [d for d in result.diagnostics if d.code == "GAP001"]
+    assert {d.severity.value for d in gaps} >= {"warning"}
+    tree = result.model["roles"]["lead"]["states"]["SHUTDOWN"]["tree"]
+    smoke, over = tree["children"]
+    assert smoke["gap"]["id"] == "smoke_screen" and smoke["params"] == {"duration_s": 30.0}
+    assert over["type"] == "action" and over["gap"]["kind"] == "subtree"
+    assert result.model["gaps"]["smoke_screen"]["local_only"] is True
+    assert result.model["gaps"]["overwatch"]["used_by"] == ["lead.SHUTDOWN"]
+    leases = result.model["roles"]["lead"]["states"]["SHUTDOWN"]["leases"]
+    assert {r for lease in leases for r in lease["resources"]} == {"launcher", "drive"}
+
+
+def test_gap_errors(contracts: Contracts) -> None:
+    spec = _gap_spec()
+    spec["gaps"]["smoke_screen"]["stub"]["writes"] = {"mission.contact_reported": True}
+    leaf = spec["subtrees"][1]["root"]["children"][0]
+    leaf["params"] = {"duration_s": {"value": 10, "unit": "min"}}  # above the 2 min range
+    spec["subtrees"][1]["root"]["children"].append({"type": "subtree", "subtree": "gap.nope"})
+    spec["subtrees"][1]["root"]["children"].append({"type": "action", "action": "gap.overwatch"})
+    result = normalize(spec, contracts)
+    errors = {(d.code, d.path) for d in result.diagnostics if d.severity.value == "error"}
+    assert ("GAP001", "gaps.smoke_screen.stub.writes.mission.contact_reported") in errors
+    assert any(c == "ACT002" and p.endswith("duration_s") for c, p in errors)
+    assert any(c == "REF001" and "children[2]" in p for c, p in errors)
+    assert any(c == "GAP001" and "children[3]" in p for c, p in errors)
+    # an unknown action without a gap is an error
     spec = _spec()
     spec["subtrees"][1]["root"] = {"type": "action", "action": "nav.smoke_screen"}
-    spec["needs"] = [{"action": "nav.smoke_screen", "description": "施放烟幕"}]
-    result = normalize(spec, contracts)
-    assert result.ok
-    assert any(d.code == "ACT001" and d.severity.value == "warning" for d in result.diagnostics)
+    assert "ACT001" in _codes(normalize(spec, contracts))
 
 
 def test_v1_operands_read_the_aligned_blackboard_field(contracts: Contracts) -> None:

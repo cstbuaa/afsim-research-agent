@@ -331,6 +331,23 @@ def test_missing_binding_entries_stop_the_compile(env) -> None:
         Compiler(result.model, contracts, binding).package([run])
 
 
+def test_gap_placeholders_stop_the_compile(env) -> None:
+    contracts, binding, run, _ = env
+    raw = mission_to_ir(contracts, "sense.watch")
+    raw["gaps"] = {"jam": {"kind": "action", "description": "干扰", "stub": {}}}
+    sid, tree = next(iter(raw["state_trees"].items()))
+    state = next(iter(tree))
+    raw["subtrees"] = [
+        *raw.get("subtrees", []),
+        {"id": "jam_tree", "root": {"type": "action", "action": "gap.jam"}},
+    ]
+    raw["state_trees"][sid][state] = "jam_tree"
+    result = normalize(raw, contracts)
+    assert result.ok, [d.render() for d in result.diagnostics]
+    with pytest.raises(CompileError, match="GAP002.*jam"):
+        Compiler(result.model, contracts, binding).package([run])
+
+
 def test_package_goes_to_a_new_directory(env, tmp_path: Path) -> None:
     contracts, binding, run, _ = env
     result = normalize(mission_to_ir(contracts, "sense.watch"), contracts)

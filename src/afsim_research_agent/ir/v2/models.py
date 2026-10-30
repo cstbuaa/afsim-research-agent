@@ -179,12 +179,66 @@ class Role(_Strict):
     command: Command = Field(default_factory=Command)
 
 
-class Need(_Strict):
-    """An action the tactic needs that the capability set does not have (a development gap)."""
+# --------------------------------------------------------------------- gaps
+class GapParam(_Strict):
+    type: Literal["bool", "int", "double", "string"]
+    unit: str | None = None
+    required: bool = False
+    range: tuple[float, float] | None = None
+    default: bool | int | float | str | None = None
 
-    action: str
-    description: str = ""
-    params: dict[str, Any] = Field(default_factory=dict)
+
+class GapBlackboard(_Strict):
+    reads: list[str] = Field(default_factory=list)
+    writes: list[str] = Field(default_factory=list)
+
+
+class GapFailure(_Strict):
+    codes: list[str] = Field(default_factory=list)
+    meaning: str = ""
+
+
+class GapResult(_Strict):
+    running: str = ""
+    success: str = ""
+    failure: GapFailure = Field(default_factory=GapFailure)
+    terminates: bool = True
+    max_duration_s: float | None = Field(default=None, gt=0)
+
+
+class GapStub(_Strict):
+    """How a placeholder runs before the gap is filled (L2 and the 2D simulation only)."""
+
+    result: Literal["success", "failure", "running"] = "success"
+    success_after_s: float = Field(default=0.0, ge=0)  # running until then, then `result`
+    failure_code: str | None = None
+    writes: dict[str, bool | int | float | str] = Field(default_factory=dict)  # on completion
+
+
+class Gap(_Strict):
+    """A subtree or action the model needs and the capability set lacks, written as a
+    contract (design falcon-v3-composition-and-gaps §4). Trees reference it as
+    ``gap.<id>`` in a subtree or action leaf."""
+
+    kind: Literal["subtree", "action"]
+    description: str
+    reason: str = ""
+    clauses: list[str] = Field(default_factory=list)
+    roles: list[str] = Field(default_factory=list)
+    capability_class: str | None = None
+    params: dict[str, GapParam] = Field(default_factory=dict)
+    blackboard: GapBlackboard = Field(default_factory=GapBlackboard)
+    resources: list[str] = Field(default_factory=list)
+    result: GapResult = Field(default_factory=GapResult)
+    uses: list[str] = Field(default_factory=list)  # subtree: existing actions it should use
+    used_by: list[str] = Field(default_factory=list)  # filled by normalization when empty
+    # action gaps: the rest of the action-set contract
+    lifecycle: dict[str, str] = Field(default_factory=dict)
+    completion: str = ""
+    observable: str = ""
+    stub: GapStub = Field(default_factory=GapStub)
+    acceptance: list[dict[str, Any]] = Field(default_factory=list)
+    local_only: bool = False  # forced true for action gaps by normalization
 
 
 class BehaviorSpecV2(_Strict):
@@ -202,7 +256,7 @@ class BehaviorSpecV2(_Strict):
     subtrees: list[Subtree] = Field(default_factory=list)
     state_trees: dict[str, dict[str, str]] = Field(default_factory=dict)
     missions: dict[str, Mission | MissionRef]
-    needs: list[Need] = Field(default_factory=list)
+    gaps: dict[str, Gap] = Field(default_factory=dict)
     # kept as written for now; checked with L2 / L3 in step 3
     formations: list[dict[str, Any]] = Field(default_factory=list)
     coordination: list[dict[str, Any]] = Field(default_factory=list)

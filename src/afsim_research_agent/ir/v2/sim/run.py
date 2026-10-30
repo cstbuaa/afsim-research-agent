@@ -115,6 +115,7 @@ class SimResult:
     checks: list[Check] = field(default_factory=list)
     states: dict[str, list[tuple[float, str]]] = field(default_factory=dict)
     idealized: set[str] = field(default_factory=set)
+    placeholders: set[str] = field(default_factory=set)
     unresolved: set[str] = field(default_factory=set)
     error: str | None = None
 
@@ -133,6 +134,8 @@ class SimResult:
             lines.append(f"  {name}: {path}")
         if self.idealized:
             lines.append(f"  idealized actions (no model): {sorted(self.idealized)}")
+        if self.placeholders:
+            lines.append(f"  idealized gaps (stub): {sorted(self.placeholders)}")
         if self.unresolved:
             lines.append(f"  triggers without semantics: {sorted(self.unresolved)}")
         return "\n".join(lines)
@@ -149,6 +152,7 @@ class SimHost:
         self.shared: dict[str, dict[str, Any]] = {}
         self.models: dict[tuple[str, str], tuple[ActionModel, ActionContext]] = {}
         self.idealized: set[str] = set()
+        self.placeholders: set[str] = set()  # gaps run by their stub
 
     def _context(self, inst: Instance, leaf: dict[str, Any], options: dict[str, Any]):
         contract = self.c.actions.get(leaf.get("action") or "")
@@ -165,6 +169,9 @@ class SimHost:
 
     def tick(self, inst: Instance, leaf: dict[str, Any], new: bool) -> tuple[str, str | None]:
         action = str(leaf.get("action"))
+        if "gap" in leaf:
+            self.placeholders.add(leaf["gap"]["id"])
+            return inst.gap_stub(leaf)
         spec = self.c.semantics.actions.get(action)
         if spec is None or spec.get("model") not in MODELS:
             self.idealized.add(action)
@@ -277,6 +284,7 @@ def simulate(model: dict[str, Any], contracts: Contracts, raw: dict[str, Any]) -
     for inst in instances:
         result.unresolved |= inst.unresolved
     result.idealized = set(host.idealized)
+    result.placeholders = set(host.placeholders)
     result.checks = [_check(e, result) for e in sc.expect]
     return result
 
@@ -343,7 +351,10 @@ class _StubHost:
         self.outcomes = outcomes
 
     def tick(self, inst: Instance, leaf: dict[str, Any], new: bool) -> tuple[str, str | None]:
-        status = self.outcomes.get(str(leaf.get("action")), SUCCESS)
+        action = str(leaf.get("action"))
+        if action not in self.outcomes and "gap" in leaf:
+            return inst.gap_stub(leaf)
+        status = self.outcomes.get(action, SUCCESS)
         return status, ("STUB_FAILURE" if status == FAILURE else None)
 
     def cancel(self, inst: Instance, leaf: dict[str, Any]) -> None:

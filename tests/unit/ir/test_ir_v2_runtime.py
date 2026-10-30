@@ -476,6 +476,56 @@ def test_l2_single_steps(contracts: Contracts) -> None:
     assert "SHUTDOWN" in checks[2].detail
 
 
+def test_gap_placeholder_runs_its_stub(contracts: Contracts) -> None:
+    spec = _spec()
+    spec["blackboard"] = {"mission.cleared": {"type": "bool", "default": False}}
+    spec["gaps"] = {
+        "clear_route": {
+            "kind": "subtree",
+            "description": "排除路障",
+            "resources": ["drive"],
+            "blackboard": {"writes": ["mission.cleared"]},
+            "stub": {"success_after_s": 5, "writes": {"mission.cleared": True}},
+        }
+    }
+    spec["subtrees"][1]["root"] = {
+        "type": "sequence_with_memory",
+        "children": [
+            {"type": "subtree", "subtree": "gap.clear_route"},
+            spec["subtrees"][1]["root"],
+        ],
+    }
+    model = normalize(spec, contracts).model
+    result = simulate(model, contracts, spec["scenarios"][0])
+    assert result.passed, result.render()
+    assert result.placeholders == {"clear_route"} and "idealized gaps" in result.render()
+    entered = dict((s, t) for t, s in result.states["car_0"])
+    # the drive starts only after the 5 s stub; arrival is later than without the gap
+    plain = simulate(normalize(_spec(), contracts).model, contracts, _spec()["scenarios"][0])
+    assert entered["SHUTDOWN"] >= dict((s, t) for t, s in plain.states["car_0"])["SHUTDOWN"] + 4
+    checks = run_l2(
+        model,
+        contracts,
+        [
+            {
+                "id": "stub_runs",
+                "given": {"role": "car", "state": "DRIVE"},
+                "expect": {"tree_status": "running", "issued_actions": ["gap.clear_route"]},
+            },
+            {
+                "id": "outcome_override",
+                "given": {
+                    "role": "car",
+                    "state": "DRIVE",
+                    "actions": {"gap.clear_route": "failure"},
+                },
+                "expect": {"tree_status": "failure"},
+            },
+        ],
+    )
+    assert all(c.passed for c in checks), [c.detail for c in checks]
+
+
 def test_tactic_mission_in_the_simulation(contracts: Contracts) -> None:
     model = normalize(mission_to_ir(contracts, "sense.watch"), contracts).model
     scenario = {

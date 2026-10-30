@@ -7,7 +7,8 @@ the model reads, and the resource leases derived from the action contracts.
 
 Error codes (design §6): ACT001 / ACT002 actions, TAC001 tactic-set references, BB001
 blackboard reads, ARB001 resource conflicts, FSM001 / FSM002 state machine and state
-trees; IR002, REF001, TYPE001, UNIT001, TREE001, ROLE001 as in IR 1.0.
+trees, GAP001 gap placeholders (falcon-v3 design §4); IR002, REF001, TYPE001, UNIT001,
+TREE001, ROLE001 as in IR 1.0.
 """
 
 from __future__ import annotations
@@ -99,9 +100,10 @@ class _Normalizer:
         self.subtrees = {s.id: s for s in spec.subtrees}
         self.conditions = {c.id: c for c in spec.conditions}
         self.events = {e.id: e for e in spec.events}
-        self.needs = {n.action: n for n in spec.needs}
+        self.gaps = spec.gaps
+        self.gap_contracts = {f"{GAP}{gid}": _gap_contract(gid, g) for gid, g in spec.gaps.items()}
+        self.gap_uses: dict[str, list[str]] = {gid: [] for gid in spec.gaps}
         self.used_slices: set[str] = set()
-        self.used_needs: set[str] = set()
         self.declared: dict[str, BBField] = {}
         self.reads: set[str] = set()
 
@@ -119,8 +121,7 @@ class _Normalizer:
         }
         self._events(missions)
         self._holds(missions)
-        for name in sorted(set(self.needs) - self.used_needs):
-            self.d.info("ACT001", f"needs.{name}", "listed need is not used by any leaf")
+        gaps = self._gaps()
         imported = self.c.slice_fields(self.used_slices)
         for path in sorted(self.reads):
             if path not in imported and path not in self.declared:
@@ -153,7 +154,7 @@ class _Normalizer:
                 }
                 for rid in missions
             },
-            "needs": [n.model_dump() for n in self.spec.needs],
+            "gaps": gaps,
         }
 
     # ------------------------------------------------------------------ identifiers
@@ -400,7 +401,7 @@ class _Normalizer:
                 for leaf in _leaves(tree):
                     if leaf["type"] != "action":
                         continue
-                    contract = self.c.actions.get(leaf["action"])
+                    contract = self._contract(leaf["action"])
                     # resources this request owns: exclusive ones it acquires itself
                     exclusive = sorted(
                         r["resource"]
@@ -471,7 +472,8 @@ class _Normalizer:
             self.d.error("IR002", f"{path}.policy", "policy only applies to parallel")
         if node.repeat is not None and kind != "repeat":
             self.d.error("IR002", f"{path}.repeat", "repeat settings only apply to repeat")
-        if node.params and kind not in ("action", "tactic"):
+        gap_subtree = kind == "subtree" and (node.subtree or "").startswith(GAP)
+        if node.params and kind not in ("action", "tactic") and not gap_subtree:
             self.d.error("IR002", f"{path}.params", f"'{kind}' takes no params")
         for name, attr in (
             ("action", "action"),
@@ -529,6 +531,8 @@ class _Normalizer:
             return self._tactic_ref(node, path, node_id, stack)
         elif kind == "subtree":
             sid = node.subtree or ""
+            if gap_subtree:
+                return self._gap_leaf(node, sid, "subtree", path, rid, out)
             if sid not in self.subtrees:
                 self.d.error("REF001", f"{path}.subtree", f"subtree '{sid}' is not defined")
                 return out
@@ -670,24 +674,18 @@ class _Normalizer:
     # ------------------------------------------------------------------ layer 2
     def _action_leaf(self, node: Node, path: str, rid: str, out: dict[str, Any]) -> None:
         aid = node.action or ""
+        if aid.startswith(GAP):
+            self._gap_leaf(node, aid, "action", path, rid, out)
+            return
         out["action"] = aid
         contract = self.c.actions.get(aid)
         if contract is None:
-            if aid in self.needs:
-                self.used_needs.add(aid)
-                out["need"] = True
-                self.d.warning(
-                    "ACT001",
-                    f"{path}.action",
-                    f"'{aid}' is not in the capability set; listed as a development gap",
-                )
-            else:
-                self.d.error(
-                    "ACT001",
-                    f"{path}.action",
-                    f"'{aid}' is not in the capability set",
-                    suggestion="use an action from the action set, or list it under needs",
-                )
+            self.d.error(
+                "ACT001",
+                f"{path}.action",
+                f"'{aid}' is not in the capability set",
+                suggestion="use an action from the action set, or record a gap and use gap.<id>",
+            )
             out["params"] = dict(node.params)
             return
         self.used_slices.add(contract.slice)
@@ -822,6 +820,100 @@ class _Normalizer:
             if isinstance(bound, int | float) and not ok(number, float(bound)):
                 self.d.error("ACT002", path, f"value {number:g} must be {sym} {bound}")
 
+    # ------------------------------------------------------------------ gaps
+    def _contract(self, aid: str) -> ActionContract | None:
+        return self.gap_contracts.get(aid) or self.c.actions.get(aid)
+
+    def _gap_leaf(
+        self, node: Node, ref: str, kind: str, path: str, rid: str, out: dict[str, Any]
+    ) -> dict[str, Any]:
+        """A ``gap.<id>`` placeholder: checked against the gap's contract like a real entry,
+        executed by its stub in L2 and the 2D simulation, refused by the AFSIM compiler."""
+        attr = "action" if kind == "action" else "subtree"
+        gid = ref[len(GAP) :]
+        gap = self.gaps.get(gid)
+        out.update({"type": "action", "action": ref})
+        if gap is None:
+            self.d.error("REF001", f"{path}.{attr}", f"gap '{gid}' is not listed under gaps")
+            out["params"] = dict(node.params)
+            return out
+        if gap.kind != kind:
+            self.d.error(
+                "GAP001",
+                f"{path}.{attr}",
+                f"gap '{gid}' is a{'n' if gap.kind == 'action' else ''} {gap.kind} gap; "
+                f"reference it as a{'n' if gap.kind == 'action' else ''} {gap.kind} leaf",
+            )
+        role = self.roles.get(rid)
+        if role and gap.capability_class and role.capability_class != gap.capability_class:
+            self.d.error("GAP001", f"{path}.{attr}", f"gap '{gid}' is for {gap.capability_class}")
+        self.gap_uses[gid].append(out["node_id"])
+        self.d.warning(
+            "GAP001",
+            f"{path}.{attr}",
+            f"placeholder for gap '{gid}' ({gap.kind}): runs its stub in L2 / L3, "
+            "not compiled to AFSIM until the gap is filled",
+        )
+        contract = self.gap_contracts[ref]
+        out["gap"] = {
+            "id": gid,
+            "kind": gap.kind,
+            "stub": gap.stub.model_dump(exclude_none=True),
+        }
+        out["contract"] = {
+            "slice": None,
+            "kind": "gap",
+            "resources": [dict(r) for r in contract.resources],
+            "failure_codes": list(contract.failure_codes),
+        }
+        out["params"] = self._action_params(contract, node.params, f"{path}.params")
+        return out
+
+    def _gaps(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for gid, gap in self.gaps.items():
+            p = f"gaps.{gid}"
+            if not IDENT.match(gid):
+                self.d.error("ID001", p, f"'{gid}' is not a valid gap id")
+            for r in gap.roles:
+                if r not in self.roles:
+                    self.d.error("ROLE001", f"{p}.roles", f"role '{r}' is not defined")
+            for name, prm in gap.params.items():
+                if prm.unit and infer_dimension(prm.unit) is None:
+                    self.d.error("UNIT001", f"{p}.params.{name}.unit", f"unknown unit '{prm.unit}'")
+            for index, field_path in enumerate(gap.blackboard.reads):
+                self._bb(field_path, f"{p}.blackboard.reads[{index}]")
+            writes = set(gap.blackboard.writes)
+            for index, field_path in enumerate(gap.blackboard.writes):
+                if field_path not in self.declared and field_path not in self.c.blackboard:
+                    self.d.error(
+                        "BB001",
+                        f"{p}.blackboard.writes[{index}]",
+                        f"field '{field_path}' is neither imported nor declared "
+                        "(declare new fields as mission.<name>)",
+                    )
+            for key in sorted(set(gap.stub.writes) - writes):
+                self.d.error(
+                    "GAP001", f"{p}.stub.writes.{key}", "the stub may only write the gap's writes"
+                )
+            for res in gap.resources:
+                if res not in self.c.resources:
+                    self.d.info("GAP001", f"{p}.resources", f"'{res}' is a new resource")
+            if gap.stub.result == "failure" and not gap.stub.failure_code:
+                self.d.warning("GAP001", f"{p}.stub", "a failing stub should name a failure code")
+            for name in gap.uses:
+                if name not in self.c.actions and name not in self.c.tactics:
+                    self.d.warning("GAP001", f"{p}.uses", f"'{name}' is not in the capability set")
+            uses = self.gap_uses.get(gid, [])
+            if not uses:
+                self.d.warning("GAP001", p, "gap is not used by any tree")
+            data = gap.model_dump(exclude_none=True)
+            data["used_by"] = gap.used_by or sorted({".".join(u.split(".")[:2]) for u in uses})
+            if gap.kind == "action":
+                data["local_only"] = True
+            out[gid] = data
+        return out
+
     # ------------------------------------------------------------------ layer 4
     def _parallel_resources(self, node: dict[str, Any], path: str) -> None:
         owners: dict[str, int] = {}
@@ -829,7 +921,7 @@ class _Normalizer:
             mine: set[str] = set()
             for leaf in _leaves(child):
                 if leaf["type"] == "action":
-                    contract = self.c.actions.get(leaf.get("action") or "")
+                    contract = self._contract(leaf.get("action") or "")
                     if contract is not None and leaf.get("operation") != "cancel":
                         mine |= contract.exclusive
             for res in sorted(mine):
@@ -991,6 +1083,41 @@ class _Normalizer:
             if got is not None and not T.comparable(kind, got)[0]:
                 self.d.error("UNIT001", f"{path}.arguments.{name}", f"expected {kind}")
         return T.BOOL
+
+
+GAP = "gap."
+GAP_TYPES = {"double": "number", "int": "integer", "bool": "boolean", "string": "string"}
+
+
+def _gap_contract(gid: str, gap: Any) -> ActionContract:
+    params: dict[str, dict[str, Any]] = {}
+    for name, prm in gap.params.items():
+        spec: dict[str, Any] = {"type": GAP_TYPES[prm.type], "required": prm.required}
+        lo_hi = list(prm.range) if prm.range is not None else None
+        if prm.unit:
+            dim = infer_dimension(prm.unit)
+            canonical = {u: c for d, c in CONTRACT_UNITS.values() for u in (d,)}.get(dim or "")
+            spec["units"] = canonical or prm.unit
+            if canonical and lo_hi is not None and dim:
+                try:
+                    lo_hi = [to_canonical(float(v), prm.unit, dim) for v in lo_hi]
+                except UnitError:
+                    pass
+        if lo_hi is not None:
+            spec["minimum"], spec["maximum"] = lo_hi
+        if prm.default is not None:
+            spec["default"] = prm.default
+        params[name] = spec
+    return ActionContract(
+        id=f"{GAP}{gid}",
+        slice="gap",
+        kind="gap",
+        status="gap",
+        parameters=params,
+        resources=tuple({"resource": r, "mode": "exclusive"} for r in gap.resources),
+        failure_codes=tuple(gap.result.failure.codes),
+        platform_classes=(gap.capability_class,) if gap.capability_class else (),
+    )
 
 
 TACTIC_NODES = {"sequence": "sequence_with_memory", "selector": "selector_with_memory"}
