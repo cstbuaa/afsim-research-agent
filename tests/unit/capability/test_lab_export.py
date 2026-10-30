@@ -68,7 +68,9 @@ def lab(tmp_path: Path) -> Path:
         root,
         "schema/blackboard/movement_blackboard.schema.yaml",
         {
-            "fields": {"self.speed_mps": {"type": "number", "units": "m/s", "afsim": "apc_example"}},
+            "fields": {
+                "self.speed_mps": {"type": "number", "units": "m/s", "afsim": "apc_example"}
+            },
         },
     )
     _w(
@@ -120,6 +122,25 @@ def lab(tmp_path: Path) -> Path:
     )
     _w(
         root,
+        "tactics/engagement/fire_while_holding.subtree.yaml",
+        {
+            "id": "engagement.fire_while_holding",
+            "root": {
+                "type": "parallel",
+                "success_policy": "one",
+                "children": [
+                    {
+                        "type": "repeat",
+                        "until_done": True,
+                        "child": {"type": "action", "ref": "engagement.fire"},
+                    },
+                    {"type": "condition", "ref": "task.valid"},
+                ],
+            },
+        },
+    )
+    _w(
+        root,
         "behavior_trees/engagement/firing.tree.yaml",
         {
             "id": "engagement.firing",
@@ -139,7 +160,9 @@ def lab(tmp_path: Path) -> Path:
     # never read
     _w(root, "bindings/afsim_2_9/movement_binding.yaml", {"secret": "apc_example"})
     (root / "model").mkdir()
-    (root / "model" / "x.txt").write_text("platform_type APC_EXAMPLE WSF_EXAMPLE\n", encoding="utf-8")
+    (root / "model" / "x.txt").write_text(
+        "platform_type APC_EXAMPLE WSF_EXAMPLE\n", encoding="utf-8"
+    )
     return root
 
 
@@ -163,9 +186,16 @@ def test_export_normalizes_and_scrubs(lab: Path, tmp_path: Path) -> None:
     assert tactics["conditions"] == ["task.valid"]
     assert tactics["missions"][0]["id"] == "engagement.multiweapon_engagement"
     assert tactics["state_trees"][0]["uses"] == {"subtrees": ["engagement.fire_once"]}
+    held = next(t for t in tactics["subtrees"] if t["id"] == "engagement.fire_while_holding")
+    assert held["root"]["success_policy"] == "one"
+    assert held["root"]["children"][0] == {
+        "type": "repeat",
+        "until_done": True,
+        "child": {"type": "action", "action": "engagement.fire"},
+    }
     reasons = {r for _, r, _ in exporter.report.dropped}
     assert {"native_type", "path"} <= reasons
-    assert exporter.report.files_read == 10  # bindings/ and model/ are never read
+    assert exporter.report.files_read == 11  # bindings/ and model/ are never read
     out = tmp_path / "set"
     write_export(result, out)
     assert scan_tree(out) == []

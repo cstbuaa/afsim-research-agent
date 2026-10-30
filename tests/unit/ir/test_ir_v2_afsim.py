@@ -505,3 +505,29 @@ def test_failure_as_running_and_trace(env, tmp_path: Path) -> None:
 
     inst = Instance("v", "vehicle", 0, model, fresh, Failing())
     assert inst.tick(tree) == "running"
+
+
+def test_tactic_set_parallel_and_repeat(env) -> None:
+    contracts, binding, run, base = env
+    sets = base / "set" / "tactic_set" / "sense.yaml"
+    data = yaml.safe_load(sets.read_text(encoding="utf-8"))
+    data["state_trees"][1]["root"] = {
+        "type": "parallel",
+        "success_policy": "one",
+        "children": [
+            {
+                "type": "repeat",
+                "until_done": True,
+                "child": {"type": "action", "action": "sense.scan"},
+            },
+            {"type": "subtree", "subtree": "sense.search"},
+        ],
+    }
+    sets.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    fresh = Contracts.load(base / "set")
+    model = normalize(mission_to_ir(fresh, "sense.watch"), fresh).model
+    tree = model["roles"]["vehicle"]["states"]["SEARCHING"]["tree"]
+    assert tree["type"] == "parallel" and tree["policy"] == {"type": "one"}
+    assert tree["children"][0]["repeat"] == {"until_done": True}
+    text = Compiler(model, fresh, binding).package([run]).behavior
+    assert "success_policy succeed_on_one" in text and "decorator repeater until_done" in text

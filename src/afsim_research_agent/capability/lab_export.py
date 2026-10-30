@@ -562,6 +562,10 @@ class LabExporter:
             acc["subtrees"].add(ref)
         if "duration_s" in n:
             out["duration_s"] = n["duration_s"]
+        # parallel success policy and repeat settings of the lab's tree vocabulary
+        for key in ("success_policy", "threshold", "until_done", "count"):
+            if key in n:
+                out[key] = n[key]
         if n.get("child"):
             out["child"] = self._node(sid, n["child"], acc)
         if n.get("children"):

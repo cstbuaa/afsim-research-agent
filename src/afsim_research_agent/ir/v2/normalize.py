@@ -649,6 +649,18 @@ class _Normalizer:
             return out
         if kind == "timeout":
             out["duration_s"] = raw.get("duration_s")
+        if kind == "parallel":
+            policy = str(raw.get("success_policy") or "one")
+            out["policy"] = {"type": policy}
+            if policy == "threshold":
+                out["policy"]["count"] = int(raw.get("threshold") or 1)
+        if kind == "repeat":
+            if raw.get("until_done"):
+                out["repeat"] = {"until_done": True}
+            elif raw.get("count"):
+                out["repeat"] = {"count": int(raw["count"])}
+            else:
+                out["repeat"] = {"duration_s": float(raw.get("duration_s") or 0.0)}
         kids = raw.get("children") or ([raw["child"]] if raw.get("child") else [])
         out["children"] = [
             self._tactic_node(k, entry, f"{node_id}.{i}", stack) for i, k in enumerate(kids)
