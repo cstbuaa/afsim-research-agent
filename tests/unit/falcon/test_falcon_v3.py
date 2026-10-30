@@ -858,6 +858,36 @@ def test_rings_of_field_transitions_are_refused(set_root: Path) -> None:
     )
     msgs = [p.message for p in _compile(contracts, timed).errors]
     assert not any("状态环" in m for m in msgs), msgs
+    # out on "seen", back on "not seen": both cannot hold, so the ring cannot turn
+    back = SHEET.replace(
+        "  OBSERVE --> MOVE : lost_timeout\n", "  OBSERVE --> MOVE : not sense.target.valid\n"
+    )
+    msgs = [p.message for p in _compile(contracts, back).errors]
+    assert not any("状态环" in m for m in msgs), msgs
+
+
+def test_ring_contradictions() -> None:
+    from afsim_research_agent.falcon.v3.compiler import _atoms, _contradict
+
+    def cmp(field: str, op: str, value: object) -> dict:
+        right = {"value": value, "unit": "m"} if isinstance(value, int) else {"literal": value}
+        return {"compare": {"left": {"bb": field}, "operator": op, "right": right}}
+
+    exprs = {"lost": {"not": {"bb": "t.valid"}}, "seen": {"bb": "t.valid"}}
+    atoms = _atoms({"condition_ref": "lost"}, exprs) + _atoms({"condition_ref": "seen"}, exprs)
+    assert _contradict(atoms)
+    near, far = cmp("r", "lt", 300), cmp("r", "gte", 500)
+    assert _contradict(_atoms(near, {}) + _atoms(far, {}))
+    assert not _contradict(_atoms(cmp("r", "lt", 500), {}) + _atoms(cmp("r", "gte", 300), {}))
+    assert _contradict(_atoms(cmp("r", "lte", 300), {}) + _atoms(cmp("r", "gt", 300), {}))
+    assert not _contradict(_atoms(cmp("r", "lte", 300), {}) + _atoms(cmp("r", "gte", 300), {}))
+    # a disjunction requires nothing in particular
+    assert not _contradict(_atoms({"any": [{"bb": "t.valid"}, {"bb": "x"}]}, {}) + atoms[:1])
+    # string states
+    a = _atoms(cmp("mode", "eq", "A"), {}) + _atoms(cmp("mode", "eq", "B"), {})
+    assert _contradict(a)
+    # x == False is "not x"
+    assert _contradict(_atoms(cmp("t.valid", "eq", False), {}) + _atoms({"bb": "t.valid"}, {}))
 
 
 def test_prompt_shows_field_writers_and_results(set_root: Path) -> None:

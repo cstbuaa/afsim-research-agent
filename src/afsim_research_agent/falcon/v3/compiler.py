@@ -533,7 +533,8 @@ class SheetCompiler:
         update. A ring of states joined only by field conditions (no event, no time in state) keeps
         turning within one update once those fields hold — e.g. "assignments.count > 0"
         stays true after the first allocation. Refuse such a ring: at least one of its
-        transitions must wait (a tree event, time in state or an external event)."""
+        transitions must wait (a tree event, time in state or an external event). A ring
+        whose conditions cannot all hold together (X out, not X back) cannot turn."""
         exprs = {c["id"]: c["expression"] for c in spec["conditions"]}
 
         def waits(cid: str, stack: tuple[str, ...] = ()) -> bool:
@@ -552,6 +553,13 @@ class SheetCompiler:
                 if tr["from"] != tr["to"] and not waits(tr["on"]):
                     graph.setdefault(tr["from"], []).append((tr["to"], i))
             for ring in _rings(graph):
+                atoms = [
+                    a
+                    for _, i in ring
+                    for a in _atoms(exprs.get(mission["transitions"][i]["on"]), exprs)
+                ]
+                if _contradict(atoms):
+                    continue  # e.g. leave on "not seen", come back on "seen": cannot both hold
                 states = " -> ".join([*(s for s, _ in ring), ring[0][0]])
                 block, line = self.out.locate(f"missions.{rid}.transitions[{ring[0][1]}]")
                 self.fail(
@@ -1304,3 +1312,95 @@ def _rings(graph: dict[str, list[tuple[str, int]]]) -> list[list[tuple[str, int]
         if ring:
             rings.append(list(ring))
     return rings
+
+
+_FLIP = {"lt": "gte", "lte": "gt", "gt": "lte", "gte": "lt", "eq": "ne", "ne": "eq"}
+
+
+def _atoms(
+    expr: Any, exprs: dict[str, Any], neg: bool = False, stack: tuple[str, ...] = ()
+) -> list[tuple[str, str, Any]]:
+    """Facts an expression requires (conjunctive positions only): (field, operator, value)."""
+    if not isinstance(expr, dict):
+        return []
+    if "condition_ref" in expr:
+        ref = str(expr["condition_ref"])
+        return [] if ref in stack else _atoms(exprs.get(ref), exprs, neg, (*stack, ref))
+    if "not" in expr:
+        return _atoms(expr["not"], exprs, not neg, stack)
+    if ("all" in expr and not neg) or ("any" in expr and neg):
+        parts = expr.get("all") if "all" in expr else expr.get("any")
+        return [a for part in parts or [] for a in _atoms(part, exprs, neg, stack)]
+    if "bb" in expr:
+        return [(str(expr["bb"]), "eq", not neg)]
+    cmp = expr.get("compare")
+    if isinstance(cmp, dict) and isinstance(cmp.get("left"), dict) and "bb" in cmp["left"]:
+        right = cmp.get("right")
+        if isinstance(right, dict) and "literal" in right:
+            value: Any = right["literal"]
+        elif isinstance(right, dict) and "value" in right and "unit" in right:
+            value = (right["value"], right["unit"])
+        elif isinstance(right, dict) and "parameter_ref" in right:
+            value = ("param", right["parameter_ref"])
+        else:
+            return []
+        op = str(cmp.get("operator"))
+        if op not in _FLIP:
+            return []
+        if neg:
+            op = _FLIP[op]
+        if isinstance(value, bool) and op in ("eq", "ne"):
+            return [(str(cmp["left"]["bb"]), "eq", value if op == "eq" else not value)]
+        return [(str(cmp["left"]["bb"]), op, value)]
+    return []
+
+
+def _contradict(atoms: list[tuple[str, str, Any]]) -> bool:
+    """Whether some two of the facts cannot hold together."""
+    for i, (fa, oa, va) in enumerate(atoms):
+        for fb, ob, vb in atoms[i + 1 :]:
+            if fa != fb:
+                continue
+            if va == vb and _FLIP.get(oa) == ob:
+                return True
+            if va == vb and {oa, ob} in ({"eq", "lt"}, {"eq", "gt"}, {"lt", "gt"}):
+                return True
+            if oa == ob == "eq" and va != vb:
+                return True
+            a, b = _number(va), _number(vb)
+            if a is None or b is None or a[1] != b[1]:
+                continue
+            if not _overlap(oa, a[0], ob, b[0]):
+                return True
+    return False
+
+
+def _number(v: Any) -> tuple[float, str] | None:
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int | float):
+        return float(v), ""
+    if isinstance(v, tuple) and len(v) == 2 and isinstance(v[0], int | float) and v[0] != "param":
+        return float(v[0]), str(v[1])
+    return None
+
+
+def _overlap(oa: str, a: float, ob: str, b: float) -> bool:
+    """Whether x (oa a) and x (ob b) can both hold for some number x."""
+
+    def bounds(op: str, v: float) -> tuple[float, bool, float, bool] | None:
+        inf = float("inf")
+        return {
+            "lt": (-inf, False, v, False),
+            "lte": (-inf, False, v, True),
+            "gt": (v, False, inf, False),
+            "gte": (v, True, inf, False),
+            "eq": (v, True, v, True),
+        }.get(op)
+
+    x, y = bounds(oa, a), bounds(ob, b)
+    if x is None or y is None:
+        return True  # "ne" excludes a single point only
+    lo, lo_in = (x[0], x[1]) if (x[0], not x[1]) > (y[0], not y[1]) else (y[0], y[1])
+    hi, hi_in = (x[2], x[3]) if (x[2], x[3]) < (y[2], y[3]) else (y[2], y[3])
+    return lo < hi or (lo == hi and lo_in and hi_in)
