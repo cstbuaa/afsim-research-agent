@@ -52,6 +52,16 @@ def _parser() -> argparse.ArgumentParser:
         choices=("python", "xml"),
         help="v2：行为树写成 Python 函数或 BehaviorTree.CPP XML（默认取请求文件，缺省 python）",
     )
+    draft3 = sub.add_parser("draft3", help="v3：需求 → 战术稿 v3 → IR 2.0 模型包")
+    draft3.add_argument("request", type=Path)
+    draft3.add_argument("--out", type=Path, help="模型包的上级目录（默认请求文件所在目录）")
+    draft3.add_argument("--no-mission-ref", action="store_true", help="不允许整体引用战术集任务")
+    comp3 = sub.add_parser(
+        "compile3", help="v3：战术稿 → IR 2.0 并做 L1–L3（不调用模型，结果写到新目录）"
+    )
+    comp3.add_argument("sheet", type=Path)
+    comp3.add_argument("--request", type=Path, required=True)
+    comp3.add_argument("--out", type=Path, required=True, help="新的模型包目录（不能已存在）")
     comp = sub.add_parser(
         "compile", help="战术稿 tactic_sheet.md → behavior_spec.yaml（不调用模型）"
     )
@@ -84,6 +94,19 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _print_v3(result) -> None:
+    check = result.check
+    print(f"模型包：{result.package_dir}")
+    print(
+        f"状态：{result.status}；L1 {'通过' if check.l1_ok else '未通过'}；"
+        f"L2 {sum(t['passed'] for t in check.l2)}/{len(check.l2)}；"
+        f"L3 {sum(s['passed'] for s in check.l3)}/{len(check.l3)}；修复 {len(result.rounds)} 轮"
+    )
+    for p in check.problems[:20]:
+        print(p.render())
+    print("审阅：falcon_review.md")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
@@ -113,6 +136,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print(line)
             print("审查报告：falcon_review.md")
             return result.exit_code
+        if args.command == "draft3":
+            from dotenv import load_dotenv
+
+            from afsim_research_agent.falcon.llm import DashScopeModel
+            from afsim_research_agent.falcon.v3.draft import run_draft3
+
+            load_dotenv()
+            result3 = asyncio.run(
+                run_draft3(
+                    args.request,
+                    DashScopeModel(),
+                    out_dir=args.out,
+                    allow_mission_ref=False if args.no_mission_ref else None,
+                )
+            )
+            _print_v3(result3)
+            return result3.exit_code
+        if args.command == "compile3":
+            from afsim_research_agent.falcon.v3.draft import compile_package
+
+            result3 = compile_package(args.sheet, args.request, args.out)
+            _print_v3(result3)
+            return result3.exit_code
         if args.command == "compile":
             from afsim_research_agent.falcon.sheet.recompile import recompile_package
 

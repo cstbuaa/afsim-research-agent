@@ -1,0 +1,441 @@
+"""Falcon v3: tactic sheet v3 → IR 2.0 (compiler, source map, drafting loop).
+
+A synthetic capability set is used (no lab content).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+import types
+from pathlib import Path
+
+import pytest
+import yaml
+
+from afsim_research_agent.falcon.v3.compiler import compile_sheet
+from afsim_research_agent.ir.v2 import Contracts, normalize
+
+
+def _w(root: Path, rel: str, data) -> None:
+    path = root / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+@pytest.fixture
+def set_root(tmp_path: Path) -> Path:
+    root = tmp_path / "set"
+    _w(
+        root,
+        "index.yaml",
+        {
+            "format": "CapabilitySet",
+            "format_version": "1.0.0",
+            "catalog": {"id": "demo_set", "platform_classes": ["ground_vehicle"]},
+            "slices": [
+                {
+                    "id": "nav",
+                    "action_file": "action_set/nav.yaml",
+                    "tactic_file": "tactic_set/nav.yaml",
+                },
+                {
+                    "id": "sense",
+                    "action_file": "action_set/sense.yaml",
+                    "tactic_file": "tactic_set/sense.yaml",
+                },
+            ],
+        },
+    )
+    drive = [{"resource": "drive", "mode": "exclusive"}]
+    _w(
+        root,
+        "action_set/nav.yaml",
+        {
+            "resources": {"drive": {"mode": "exclusive"}},
+            "blackboard": {
+                "fields": {
+                    "self.speed_mps": {"type": "number", "units": "m/s"},
+                    "nav.range_m": {"type": "number", "units": "m"},
+                }
+            },
+            "actions": [
+                {
+                    "id": "nav.goto",
+                    "status": "implemented",
+                    "description": "Drive to a point.",
+                    "resources": drive,
+                    "parameters": {
+                        "lat_deg": {"type": "number", "units": "deg", "required": True},
+                        "lon_deg": {"type": "number", "units": "deg", "required": True},
+                        "speed_mps": {"type": "number", "units": "m/s", "minimum": 0, "default": 5},
+                    },
+                },
+                {"id": "nav.hold", "status": "implemented", "resources": drive},
+                {"id": "nav.stop", "status": "implemented", "resources": drive},
+            ],
+        },
+    )
+    _w(
+        root,
+        "action_set/sense.yaml",
+        {
+            "resources": {"sensor": {"mode": "exclusive"}},
+            "blackboard": {"fields": {"sense.target.valid": {"type": "boolean"}}},
+            "actions": [
+                {
+                    "id": "sense.scan",
+                    "status": "implemented",
+                    "resources": [{"resource": "sensor", "mode": "exclusive"}],
+                },
+                {"id": "sense.off", "status": "implemented"},
+            ],
+        },
+    )
+    _w(root, "tactic_set/nav.yaml", {"subtrees": [], "state_trees": [], "missions": []})
+    _w(
+        root,
+        "tactic_set/sense.yaml",
+        {
+            "subtrees": [
+                {
+                    "id": "sense.search",
+                    "description": "Scan until a target is valid.",
+                    "root": {"type": "action", "action": "sense.scan"},
+                },
+                {"id": "sense.track", "root": {"type": "action", "action": "sense.scan"}},
+            ],
+            "state_trees": [
+                {
+                    "id": "sense.searching_state",
+                    "root": {"type": "subtree", "subtree": "sense.search"},
+                },
+                {"id": "sense.shutdown_state", "root": {"type": "action", "action": "sense.off"}},
+            ],
+            "missions": [
+                {
+                    "id": "sense.watch",
+                    "description": "Search until cancelled.",
+                    "initial_state": "SEARCHING",
+                    "states": ["SEARCHING", "SHUTDOWN", "COMPLETE"],
+                    "terminal_states": ["COMPLETE"],
+                    "transitions": [
+                        {"from": "SEARCHING", "to": "SHUTDOWN", "when": "CANCELLED"},
+                        {"from": "SHUTDOWN", "to": "COMPLETE", "when": "CLEANUP_COMPLETE"},
+                    ],
+                    "state_trees": {
+                        "SEARCHING": "sense.searching_state",
+                        "SHUTDOWN": "sense.shutdown_state",
+                    },
+                }
+            ],
+        },
+    )
+    return root
+
+
+@pytest.fixture
+def contracts(set_root: Path) -> Contracts:
+    return Contracts.load(set_root)
+
+
+SHEET = """# 侦察
+
+```yaml model
+model: {display_name: 单车侦察, intent: 前出搜索，发现后观察}
+slices: [nav, sense]
+roles:
+  scout: {capability_class: ground_vehicle, description: 侦察车}
+parameters:
+  obs_lat: {value: "30.01 deg", basis: inferred, rationale: 观察点}
+  obs_lon: {value: "120.0 deg", basis: inferred}
+  approach_speed: {value: "18 km/h", basis: unknown}
+events:
+  cancelled: {source: external, description: 上级取消}
+  lost_timeout: {after: "20 s"}
+assumptions: [上级会在任务结束时发出取消]
+implements: {rq_01: [scout.MOVE], rq_02: [scout.OBSERVE]}
+```
+
+```mermaid scout
+stateDiagram-v2
+  [*] --> MOVE
+  MOVE --> OBSERVE : target_seen
+  OBSERVE --> MOVE : lost_timeout
+  SHUTDOWN --> DONE : stopped
+  * --> SHUTDOWN : cancelled
+  DONE --> [*]
+```
+
+```python conditions
+target_seen = sense.target.valid
+stopped = self.speed_mps <= 0.1 and time_in_state() >= 2 * s
+```
+
+```python scout
+def MOVE():
+    with parallel("all"):
+        with repeat(until_done=True):
+            nav.goto(lat_deg=obs_lat, lon_deg=obs_lon, speed_mps=approach_speed)
+        tactic("sense.search")
+
+def OBSERVE():
+    with parallel("one"):
+        nav.hold()
+        guard()
+
+def guard():
+    if nav.range_m < "300 m":
+        gap("smoke_screen", duration_s=30 * s)
+    else:
+        tactic("sense.track")
+
+def SHUTDOWN():
+    nav.stop()
+    tactic("sense.shutdown_state")
+```
+
+```yaml gaps
+gaps:
+  smoke_screen:
+    kind: action
+    description: 施放烟幕
+    reason: 能力集没有遮蔽类动作
+    clauses: [rq_02]
+    capability_class: ground_vehicle
+    params: {duration_s: {type: double, unit: s, required: true, range: [5, 120]}}
+    stub: {success_after_s: 2}
+```
+
+```yaml verification
+tests:
+  - id: sees_target
+    given: {role: scout, state: MOVE, blackboard: {sense.target.valid: true}}
+    expect: {next_state: OBSERVE}
+scenarios:
+  - id: cancel
+    environment: {origin_deg: [30.0, 120.0], duration_s: 20}
+    events: [{at_s: 3, event: cancelled}]
+    expect: [{id: shut, role: scout, reaches: SHUTDOWN, within_s: 5}]
+```
+"""
+
+
+def _compile(contracts: Contracts, text: str = SHEET, **kw):
+    return compile_sheet(text, contracts, model_id="scout_demo", **kw)
+
+
+def test_sheet_compiles_to_ir_v2(contracts: Contracts) -> None:
+    out = _compile(contracts)
+    assert not out.errors, [p.render() for p in out.errors]
+    spec = out.spec
+    mission = spec["missions"]["scout"]
+    assert mission["initial_state"] == "MOVE" and mission["terminal"] == ["DONE"]
+    assert mission["global"] == [{"to": "SHUTDOWN", "on": "cancelled", "priority": 100}]
+    assert {"from": "OBSERVE", "to": "MOVE", "on": "lost_timeout"} in mission["transitions"]
+    assert spec["parameters"]["approach_speed"] == {
+        "type": "speed",
+        "value": 18,
+        "unit": "km/h",
+        "basis": {"status": "unknown", "evidence": [], "rationale": None},
+    }
+    assert spec["events"][1] == {"id": "lost_timeout", "source": "timer", "after_s": 20.0}
+    trees = spec["state_trees"]["scout"]
+    assert trees == {
+        "MOVE": "scout_move",
+        "OBSERVE": "scout_observe",
+        "SHUTDOWN": "scout_shutdown",
+    }
+    subs = {s["id"]: s["root"] for s in spec["subtrees"]}
+    move = subs["scout_move"]
+    assert move["type"] == "parallel" and move["policy"] == {"type": "all"}
+    assert move["children"][0]["repeat"] == {"until_done": True}
+    assert move["children"][0]["children"][0]["params"]["lat_deg"] == "$obs_lat"
+    guard = subs["guard"]
+    assert guard["type"] == "selector"
+    cond, smoke = guard["children"][0]["children"]
+    assert cond == {"type": "condition", "condition": "guard_c1"} or cond["condition"].endswith(
+        "_c1"
+    )
+    assert smoke == {
+        "type": "action",
+        "action": "gap.smoke_screen",
+        "params": {"duration_s": {"value": 30, "unit": "s"}},
+    }
+    assert subs["scout_shutdown"]["type"] == "sequence_with_memory"
+    result = normalize(spec, contracts)
+    assert result.ok, [d.render() for d in result.diagnostics]
+    assert result.model["gaps"]["smoke_screen"]["used_by"] == ["scout.OBSERVE"]
+    assert result.model["capability"]["slices"] == ["nav", "sense"]
+
+
+def test_problems_point_at_blocks_and_lines(contracts: Contracts) -> None:
+    text = SHEET.replace("nav.hold()", "nav.hodl()").replace(
+        "target_seen = sense.target.valid", "target_seen = sense.target.vaild"
+    )
+    out = _compile(contracts, text)
+    lines = text.splitlines()
+    by_block = {p.block: p for p in out.errors}
+    tree = by_block["pytree:scout"]
+    assert "nav.hodl" in tree.message and "nav.hold" in tree.candidates
+    assert "nav.hodl()" in lines[tree.line - 1]
+    cond = by_block["conditions"]
+    assert "sense.target.vaild" in cond.message and "sense.target.valid" in cond.candidates
+    assert lines[cond.line - 1].startswith("target_seen")
+    # a normalization error (unknown parameter of an action) is mapped back to its line
+    text = SHEET.replace("speed_mps=approach_speed", "speed_mps=approach_speed, heading=3")
+    out = _compile(contracts, text)
+    result = normalize(out.spec, contracts)
+    errors = [out.problem(d) for d in result.diagnostics if d.severity.value == "error"]
+    assert errors and errors[0].block == "pytree:scout"
+    assert "nav.goto(" in text.splitlines()[errors[0].line - 1]
+
+
+def test_mission_reference_and_state_override(contracts: Contracts) -> None:
+    text = """```yaml model
+model: {display_name: 值守, intent: 搜索直到取消}
+roles:
+  scout: {capability_class: ground_vehicle, mission: {tactic: sense.watch}}
+```
+
+```python scout
+def SEARCHING():
+    with parallel("all"):
+        nav.hold()
+        tactic("sense.search")
+```
+"""
+    out = _compile(contracts, text)
+    assert not out.errors, [p.render() for p in out.errors]
+    assert out.spec["missions"]["scout"] == {"tactic": "sense.watch"}
+    result = normalize(out.spec, contracts)
+    assert result.ok, [d.render() for d in result.diagnostics]
+    states = result.model["roles"]["scout"]["states"]
+    assert states["SEARCHING"]["tree_ref"] == "scout_searching"
+    assert states["SHUTDOWN"]["tree_ref"] == "sense.shutdown_state"
+    refused = _compile(contracts, text, allow_mission_ref=False)
+    assert any("不允许整体引用" in p.message for p in refused.errors)
+
+
+def test_tree_and_condition_errors(contracts: Contracts) -> None:
+    text = SHEET.replace(
+        "def SHUTDOWN():\n    nav.stop()",
+        'def SHUTDOWN():\n    bb.x = 1\n    nav.stop(3)\n    tactic("sense.nope")\n    gap("nope")\n    helper()',
+    )
+    out = _compile(contracts, text)
+    messages = " | ".join(p.message for p in out.errors)
+    for part in ("不能给黑板赋值", "关键字参数", "sense.nope", "缺口 'nope'", "'helper'"):
+        assert part in messages, part
+    bad = SHEET.replace("def OBSERVE():", "def WATCH():")
+    out = _compile(contracts, bad)
+    assert any("不是角色 scout 的状态" in p.message for p in out.errors)
+    result = normalize(out.spec, contracts)
+    fsm = [out.problem(d) for d in result.diagnostics if d.code == "FSM002"]
+    assert fsm and fsm[0].block == "mermaid:scout"
+
+
+# ---------------------------------------------------------------------- drafting loop
+def _stub_langchain() -> None:
+    if "langchain_openai" not in sys.modules:
+        try:
+            import langchain_openai  # noqa: F401
+        except ModuleNotFoundError:
+            mod = types.ModuleType("langchain_openai")
+            mod.ChatOpenAI = object  # type: ignore[attr-defined]
+            sys.modules["langchain_openai"] = mod
+
+
+def _blocks(text: str, *labels: str) -> str:
+    from afsim_research_agent.falcon.sheet.blocks import split_sheet
+
+    blocks, _ = split_sheet(text)
+    return "\n\n".join(
+        b.fence()
+        for b in blocks
+        if b.label.split()[0:2] and any(b.label.startswith(x) for x in labels)
+    )
+
+
+def test_draft_loop_repairs_and_writes_the_package(set_root: Path, tmp_path: Path) -> None:
+    _stub_langchain()
+    from afsim_research_agent.falcon.llm import ScriptedModel
+    from afsim_research_agent.falcon.v3.draft import run_draft3
+
+    request = tmp_path / "req.yaml"
+    request.write_text(
+        yaml.safe_dump(
+            {
+                "requirement": "侦察车前出到观察点搜索目标，发现后保持观察。",
+                "model_id": "scout_demo",
+                "roles": {"scout": {"capability_class": "ground_vehicle"}},
+                "capability_set": str(set_root),
+                "allow_mission_ref": False,
+            },
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    structure = _blocks(SHEET, "yaml model", "mermaid")
+    control_bad = _blocks(SHEET, "python", "yaml gaps").replace("nav.hold()", "nav.hodl()")
+    fixed_tree = _blocks(SHEET, "python scout")
+    verification = _blocks(SHEET, "yaml verification")
+    prompts: dict[str, list[str]] = {}
+
+    def answer(text):
+        def handler(prompt, schema, index):
+            return {"text": text}
+
+        return handler
+
+    script = {
+        "requirements": [
+            {
+                "clauses": [
+                    {"text": "侦察车前出到观察点搜索目标", "kind": "behavior"},
+                    {"text": "发现后保持观察", "kind": "behavior"},
+                ]
+            }
+        ],
+        "v3:structure": answer(structure),
+        "v3:control": answer(control_bad),
+        "v3:repair:pytree": answer(fixed_tree),
+        "v3:verification": answer(verification),
+    }
+    model = ScriptedModel(script)
+    result = asyncio.run(run_draft3(request, model, out_dir=tmp_path / "out"))
+    for stage, prompt in model.calls:
+        prompts.setdefault(stage, []).append(prompt)
+    assert result.check.l1_ok, [p.render() for p in result.check.problems]
+    assert result.status == "draft_valid", result.check.l2 + result.check.l3
+    assert [r["stage"] for r in result.rounds] == ["control"]
+    pkg = result.package_dir
+    for name in (
+        "behavior_spec.yaml",
+        "gaps.yaml",
+        "tactic_sheet.md",
+        "falcon_review.md",
+        "validation_report.json",
+        "falcon_trace.json",
+        "source_map.json",
+    ):
+        assert (pkg / name).exists(), name
+    spec = yaml.safe_load((pkg / "behavior_spec.yaml").read_text(encoding="utf-8"))
+    assert spec["schema_version"] == "2.0"
+    gaps = yaml.safe_load((pkg / "gaps.yaml").read_text(encoding="utf-8"))["gaps"]
+    assert gaps["smoke_screen"]["local_only"] is True
+    report = json.loads((pkg / "validation_report.json").read_text(encoding="utf-8"))
+    assert report["status"] == "draft_valid" and report["gaps"] == ["smoke_screen"]
+    review = (pkg / "falcon_review.md").read_text(encoding="utf-8")
+    assert "缺口 `smoke_screen`" in review and "不允许" in review
+    # the structure prompt sees the slice index; the control prompt sees the slices in full
+    assert (
+        "切片 `nav`" in prompts["v3:structure"][0]
+        and "Drive to a point." not in prompts["v3:structure"][0]
+    )
+    assert "Drive to a point." in prompts["v3:control"][0]
+    assert "不允许整体引用战术集任务" in prompts["v3:structure"][0]
+    assert "nav.hodl" in prompts["v3:repair:pytree"][0]
+    # an existing package is never overwritten
+    with pytest.raises(FileExistsError):
+        asyncio.run(run_draft3(request, ScriptedModel(script), out_dir=tmp_path / "out"))

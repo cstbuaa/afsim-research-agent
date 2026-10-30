@@ -173,6 +173,7 @@ class Compiler:
                 "GAP002: the model still has gap placeholders; fill the gaps first: "
                 + ", ".join(placeholders)
             )
+        self._scenario_parameters(runs)
         processors = [self._role(rid, role) for rid, role in self.m["roles"].items()]
         if self.missing:
             raise CompileError("binding has no entry for: " + ", ".join(sorted(self.missing)))
@@ -828,6 +829,19 @@ class Compiler:
                 value = self.params.get(value["parameter_ref"])
             out[name] = value
         return out
+
+    def _scenario_parameters(self, runs: list[RunConfig]) -> None:
+        """Values the scenario supplies (a route name, …) replace the model's placeholders.
+        They live in the local run configuration and never in the model or a prompt."""
+        given: dict[str, Any] = {}
+        for run in runs:
+            for name, value in run.parameters.items():
+                if name not in self.params:
+                    raise CompileError(f"run {run.id}: the model has no parameter '{name}'")
+                if name in given and given[name] != value:
+                    raise CompileError(f"runs disagree on the value of parameter '{name}'")
+                given[name] = value
+        self.params.update(given)
 
     # ------------------------------------------------------------------ run file
     def _run(self, run: RunConfig, behavior_file: str) -> str:

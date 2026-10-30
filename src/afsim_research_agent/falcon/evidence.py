@@ -37,6 +37,7 @@ from afsim_research_agent.falcon.models import (
     Quantity,
 )
 from afsim_research_agent.falcon.prompts import extraction_prompt, grouping_prompt
+from afsim_research_agent.falcon.text import _DASHES, squash  # noqa: F401 - re-exported
 
 PRIVATE_KINDS = {"local_document", "local_code"}
 TIER_SCORE = {"A": 0.85, "B": 0.65, "C": 0.45, "D": 0.2}
@@ -52,18 +53,10 @@ TOPIC_ORDER = (
     "sensing",
     "other",
 )
-_DASHES = str.maketrans(
-    {"–": "-", "—": "-", "‑": "-", "−": "-", "“": '"', "”": '"', "‘": "'", "’": "'"}
-)
 
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def squash(text: str) -> str:
-    """Comparison form: no whitespace, lower case, unified dashes and quotes."""
-    return re.sub(r"\s+", "", text.translate(_DASHES)).lower().replace("­", "")
 
 
 def _snake(name: str) -> str:

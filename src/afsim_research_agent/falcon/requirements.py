@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from afsim_research_agent.evidence.merge import canonical_unit, number_present
 from afsim_research_agent.falcon.errors import FalconError
-from afsim_research_agent.falcon.evidence import squash
 from afsim_research_agent.falcon.llm import ModelRunner
 from afsim_research_agent.falcon.models import (
     FalconRequest,
@@ -14,6 +13,7 @@ from afsim_research_agent.falcon.models import (
     UserValueRecord,
 )
 from afsim_research_agent.falcon.prompts import requirements_prompt
+from afsim_research_agent.falcon.text import squash
 from afsim_research_agent.ir.units import to_canonical
 
 

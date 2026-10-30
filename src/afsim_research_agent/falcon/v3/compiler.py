@@ -1,0 +1,706 @@
+"""Tactic sheet v3 → IR 2.0 ``behavior_spec`` (design falcon-v3-composition-and-gaps §2, §8).
+
+A v3 sheet has these fenced blocks::
+
+    ```yaml model            model, roles (optionally a tactic-set mission), parameters,
+                             new blackboard fields, events, assumptions, implements
+    ```mermaid <role>        the role's mission state machine (unless it takes a
+                             tactic-set mission)
+    ```python conditions     name = expression
+    ```python <role>         state trees and subtrees as Python functions (``pytree``)
+    ```yaml gaps             gap contracts (IR 2.0 ``gaps``)
+    ```yaml verification     L2 tests and L3 scenarios (IR 2.0 ``tests`` / ``scenarios``)
+
+The compiler links names through the capability set, writes the IR, and keeps a source
+map (IR path → block and line) so normalization diagnostics point back at the sheet.
+Whatever cannot be parsed or linked is a problem filed under its block; the rest still
+compiles.
+"""
+
+from __future__ import annotations
+
+import ast
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+import yaml
+
+from afsim_research_agent.falcon.sheet.blocks import Block, SheetProblem, split_sheet
+from afsim_research_agent.falcon.sheet.mermaid import parse_diagram
+from afsim_research_agent.falcon.v3.pyexpr import ExprCompiler, ExprError, Symbols, quantity
+from afsim_research_agent.falcon.v3.pytree import TreeSymbols, parse_block
+from afsim_research_agent.ir.diagnostics import Diagnostic
+from afsim_research_agent.ir.units import infer_dimension
+from afsim_research_agent.ir.v2.contracts import Contracts
+
+V3_KINDS = ("model", "mermaid", "conditions", "pytree", "gaps", "verification")
+STATE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+IDENT = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+GLOBAL_PRIORITY = 100
+DIM_TYPES = {
+    "distance": "distance",
+    "speed": "speed",
+    "time": "time",
+    "angle": "angle",
+    "altitude": "altitude",
+    "mass": "mass",
+    "frequency": "frequency",
+    "ratio": "ratio",
+}
+BASIS = {"explicit", "inferred", "conflicting", "unknown", "user_specified"}
+
+
+@dataclass
+class Compiled:
+    spec: dict[str, Any] | None
+    problems: list[SheetProblem] = field(default_factory=list)
+    source: dict[str, tuple[str, int]] = field(default_factory=dict)  # IR path → (block, line)
+    blocks: dict[str, Block] = field(default_factory=dict)
+    implements: dict[str, list[str]] = field(default_factory=dict)
+
+    @property
+    def errors(self) -> list[SheetProblem]:
+        return [p for p in self.problems if p.severity == "error"]
+
+    def locate(self, path: str) -> tuple[str, int | None]:
+        """Block key and sheet line of an IR path (longest known prefix)."""
+        best = ""
+        for prefix in self.source:
+            if (
+                path == prefix or path.startswith(prefix + ".") or path.startswith(prefix + "[")
+            ) and len(prefix) > len(best):
+                best = prefix
+        if best:
+            return self.source[best]
+        head = re.split(r"[.\[]", path, maxsplit=1)[0]
+        fallback = {
+            "missions": "mermaid",
+            "state_trees": "pytree",
+            "subtrees": "pytree",
+            "conditions": "conditions",
+            "gaps": "gaps",
+            "tests": "verification",
+            "scenarios": "verification",
+        }.get(head, "model")
+        for key in self.blocks:
+            if key.split(":")[0] == fallback:
+                return key, None
+        return "model", None
+
+    def problem(self, d: Diagnostic) -> SheetProblem:
+        block, line = self.locate(d.path)
+        message = f"{d.code} {d.path}: {d.message}"
+        if d.suggestion:
+            message += f"（{d.suggestion}）"
+        return SheetProblem(block, line, message, code=d.code, severity=d.severity.value)
+
+
+def _key_lines(block: Block) -> dict[str, int]:
+    """Sheet line of each ``key:`` in a YAML block (first occurrence, any depth)."""
+    out: dict[str, int] = {}
+    for i, text in enumerate(block.text.splitlines()):
+        m = re.match(r"^\s*-?\s*['\"]?([A-Za-z_][\w.\[\]]*)['\"]?\s*:", text)
+        if m and m.group(1) not in out:
+            out[m.group(1)] = block.line + i
+    return out
+
+
+class SheetCompiler:
+    def __init__(
+        self,
+        text: str,
+        contracts: Contracts,
+        *,
+        model_id: str,
+        roles_hint: dict[str, dict[str, Any]] | None = None,
+        allow_mission_ref: bool = True,
+        scenario_parameters: dict[str, dict[str, Any]] | None = None,
+        pending_triggers: bool = False,
+    ) -> None:
+        self.c = contracts
+        # structure stage: a bare name in a transition is a condition to be written later
+        self.pending_triggers = pending_triggers
+        self.model_id = model_id
+        self.roles_hint = roles_hint or {}
+        self.allow_mission_ref = allow_mission_ref
+        self.scenario_parameters = scenario_parameters or {}
+        blocks, problems = split_sheet(text)
+        self.out = Compiled(None, list(problems))
+        for b in blocks:
+            if b.kind not in V3_KINDS:
+                self.out.problems.append(
+                    SheetProblem(
+                        b.key, b.line, f"v3 战术稿不使用 {b.label} 块，已忽略", severity="warning"
+                    )
+                )
+                continue
+            if b.key in self.out.blocks:
+                self.out.problems.append(
+                    SheetProblem(b.key, b.line, f"{b.label} 块出现了两次，只用第一个")
+                )
+                continue
+            self.out.blocks[b.key] = b
+
+    # ------------------------------------------------------------------ helpers
+    def fail(self, block: str, line: int | None, message: str, candidates: list[str] | None = None):
+        self.out.problems.append(SheetProblem(block, line, message, candidates or []))
+
+    def warn(self, block: str, line: int | None, message: str) -> None:
+        self.out.problems.append(SheetProblem(block, line, message, severity="warning"))
+
+    def at(self, path: str, block: str, line: int | None) -> None:
+        if line is not None:
+            self.out.source.setdefault(path, (block, line))
+
+    def yaml_block(self, key: str) -> dict[str, Any]:
+        block = self.out.blocks.get(key)
+        if block is None:
+            return {}
+        try:
+            data = yaml.safe_load(block.text) or {}
+        except yaml.YAMLError as exc:
+            mark = getattr(exc, "problem_mark", None)
+            line = block.line + mark.line if mark is not None else block.line
+            self.fail(key, line, f"YAML 语法错误：{getattr(exc, 'problem', exc)}")
+            return {}
+        if not isinstance(data, dict):
+            self.fail(key, block.line, "块内容应是一个映射")
+            return {}
+        return data
+
+    # ------------------------------------------------------------------ driver
+    def compile(self) -> Compiled:
+        if "model" not in self.out.blocks:
+            self.fail("model", None, "缺少 yaml model 块")
+            return self.out
+        model = self.yaml_block("model")
+        mlines = _key_lines(self.out.blocks["model"])
+        spec: dict[str, Any] = {
+            "schema_version": "2.0",
+            "model": self._meta(model),
+            "roles": [],
+            "parameters": {},
+            "blackboard": {},
+            "conditions": [],
+            "events": [],
+            "subtrees": [],
+            "state_trees": {},
+            "missions": {},
+        }
+        self.mlines = mlines
+        spec["parameters"] = self._parameters(model.get("parameters") or {})
+        spec["blackboard"] = self._blackboard(model.get("blackboard") or {})
+        spec["events"] = self._events(model.get("events") or {})
+        spec["assumptions"] = self._assumptions(model.get("assumptions") or [])
+        self.out.implements = self._implements(model.get("implements") or {})
+        gaps = self.yaml_block("gaps")
+        gaps = gaps.get("gaps", gaps) if isinstance(gaps.get("gaps"), dict) else gaps
+        if gaps:
+            spec["gaps"] = gaps
+            glines = _key_lines(self.out.blocks["gaps"])
+            for gid in gaps:
+                self.at(f"gaps.{gid}", "gaps", glines.get(str(gid)))
+        fields = set(self.c.blackboard) | set(spec["blackboard"])
+        cond_names = self._condition_names()
+        self.expr = ExprCompiler(Symbols(fields, set(spec["parameters"]), cond_names))
+        spec["conditions"] = self._conditions()
+        roles = self._roles(model.get("roles") or {}, spec)
+        spec["roles"] = roles
+        event_ids = {e["id"] for e in spec["events"]}
+        tree_symbols = TreeSymbols(
+            actions=set(self.c.actions),
+            tactics={t.id for t in self.c.tactics.values() if t.section != "missions"},
+            gaps={str(k): str(v.get("kind")) for k, v in gaps.items() if isinstance(v, dict)},
+            parameters=set(spec["parameters"]),
+            expr=self.expr,
+        )
+        self._trees(spec, tree_symbols, event_ids)
+        verification = self.yaml_block("verification")
+        vlines = (
+            _key_lines(self.out.blocks["verification"]) if "verification" in self.out.blocks else {}
+        )
+        for key in ("tests", "scenarios"):
+            items = verification.get(key) or []
+            if not isinstance(items, list):
+                self.fail("verification", vlines.get(key), f"{key} 应是列表")
+                items = []
+            spec[key] = items
+            for i, item in enumerate(items):
+                if isinstance(item, dict) and item.get("id"):
+                    self.at(
+                        f"{key}[{i}]", "verification", vlines.get(str(item["id"]), vlines.get(key))
+                    )
+        if not spec["missions"] and not self.out.errors:
+            self.fail("model", None, "没有任何角色的任务状态机")
+        self.out.spec = spec
+        return self.out
+
+    # ------------------------------------------------------------------ model block
+    def _meta(self, model: dict[str, Any]) -> dict[str, Any]:
+        meta = model.get("model") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        return {
+            "id": self.model_id,
+            "display_name": str(meta.get("display_name") or self.model_id),
+            "version": "0.1.0",
+            "intent": str(meta.get("intent") or meta.get("display_name") or self.model_id),
+            "description": str(meta.get("description") or ""),
+        }
+
+    def _parameters(self, raw: Any) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if not isinstance(raw, dict):
+            self.fail(
+                "model", self.mlines.get("parameters"), "parameters 应是 名称: {value: …} 的映射"
+            )
+            return out
+        for name, spec in raw.items():
+            name = str(name)
+            line = self.mlines.get(name)
+            self.at(f"parameters.{name}", "model", line)
+            if not IDENT.match(name):
+                self.fail("model", line, f"参数名 '{name}' 应是英文蛇形 ID")
+                continue
+            if not isinstance(spec, dict):
+                spec = {"value": spec}
+            value = spec.get("value")
+            ptype = spec.get("type")
+            unit = spec.get("unit")
+            q = quantity(value) if isinstance(value, str) else None
+            if q is not None:
+                value, unit = q["value"], q["unit"]
+                ptype = ptype or DIM_TYPES.get(infer_dimension(unit) or "", None)
+            elif ptype is None:
+                if isinstance(value, bool):
+                    ptype = "boolean"
+                elif isinstance(value, int):
+                    ptype = "integer"
+                elif isinstance(value, float):
+                    ptype = "ratio"
+                else:
+                    ptype = "string"
+            param: dict[str, Any] = {"type": ptype, "value": value}
+            if unit:
+                param["unit"] = unit
+            if spec.get("description"):
+                param["description"] = str(spec["description"])
+            basis = spec.get("basis")
+            if basis is not None:
+                status = basis if isinstance(basis, str) else (basis or {}).get("status")
+                if status not in BASIS:
+                    self.fail("model", line, f"参数 {name} 的 basis 应是 {sorted(BASIS)} 之一")
+                else:
+                    param["basis"] = {
+                        "status": status,
+                        "evidence": list(spec.get("evidence") or []),
+                        "rationale": spec.get("rationale"),
+                    }
+            out[name] = param
+        for name, sp in self.scenario_parameters.items():
+            if name not in out:
+                self.warn(
+                    "model",
+                    self.mlines.get("parameters"),
+                    f"想定参数 {name} 未在 parameters 中定义，已补上",
+                )
+                out[name] = {
+                    "type": sp.get("type", "string"),
+                    "value": sp.get("placeholder", name),
+                    "description": sp.get("description", "由想定提供"),
+                }
+        return out
+
+    def _blackboard(self, raw: Any) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        if not isinstance(raw, dict):
+            return out
+        for path, spec in raw.items():
+            path = str(path)
+            self.at(f"blackboard.{path}", "model", self.mlines.get(path))
+            if not isinstance(spec, dict):
+                spec = {"type": spec}
+            decl = {k: spec[k] for k in ("type", "default", "unit", "description") if k in spec}
+            out[path] = decl
+        return out
+
+    def _events(self, raw: Any) -> list[dict[str, Any]]:
+        out = []
+        if isinstance(raw, list):
+            raw = {str(e.get("id")): e for e in raw if isinstance(e, dict)}
+        if not isinstance(raw, dict):
+            return out
+        for i, (eid, spec) in enumerate(raw.items()):
+            eid = str(eid)
+            spec = spec if isinstance(spec, dict) else {}
+            line = self.mlines.get(eid)
+            self.at(f"events[{i}]", "model", line)
+            event: dict[str, Any] = {"id": eid}
+            after = spec.get("after", spec.get("after_s"))
+            source = spec.get("source") or ("timer" if after is not None else "external")
+            event["source"] = source
+            if spec.get("description"):
+                event["description"] = str(spec["description"])
+            if after is not None:
+                q = quantity(after) if isinstance(after, str) else None
+                if q is not None:
+                    from afsim_research_agent.ir.units import to_canonical
+
+                    after = to_canonical(float(q["value"]), q["unit"], "time")
+                if not isinstance(after, int | float):
+                    self.fail("model", line, f"事件 {eid} 的 after 写成时长，如 2 s")
+                else:
+                    event["after_s"] = float(after)
+            if source not in ("external", "timer"):
+                self.fail(
+                    "model",
+                    line,
+                    f"事件 {eid}：模型只写 external 或 timer 事件（战术集任务的事件自动带入）",
+                )
+                continue
+            out.append(event)
+        return out
+
+    def _assumptions(self, raw: Any) -> list[dict[str, Any]]:
+        out = []
+        for i, item in enumerate(raw if isinstance(raw, list) else []):
+            if isinstance(item, str):
+                item = {"statement": item}
+            if not isinstance(item, dict) or not item.get("statement"):
+                continue
+            out.append(
+                {
+                    "id": str(item.get("id") or f"as_{i + 1:02d}"),
+                    "statement": str(item["statement"]),
+                    "requires_confirmation": bool(item.get("requires_confirmation", True)),
+                }
+            )
+        return out
+
+    def _implements(self, raw: Any) -> dict[str, list[str]]:
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(k): [str(x) for x in (v if isinstance(v, list) else [v])] for k, v in raw.items()
+        }
+
+    # ------------------------------------------------------------------ conditions
+    def _condition_names(self) -> set[str]:
+        block = self.out.blocks.get("conditions")
+        if block is None:
+            return set()
+        try:
+            module = ast.parse(block.text)
+        except SyntaxError:
+            return set()
+        return {
+            t.id
+            for s in module.body
+            if isinstance(s, ast.Assign)
+            for t in s.targets
+            if isinstance(t, ast.Name)
+        }
+
+    def _conditions(self) -> list[dict[str, Any]]:
+        block = self.out.blocks.get("conditions")
+        if block is None:
+            return []
+        try:
+            module = ast.parse(block.text)
+        except SyntaxError as exc:
+            self.fail(
+                "conditions", block.line + (exc.lineno or 1) - 1, f"Python 语法错误：{exc.msg}"
+            )
+            return []
+        out = []
+        for stmt in module.body:
+            line = block.line + stmt.lineno - 1
+            if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant):
+                continue
+            if (
+                not isinstance(stmt, ast.Assign)
+                or len(stmt.targets) != 1
+                or not isinstance(stmt.targets[0], ast.Name)
+            ):
+                self.fail("conditions", line, "每行写成 条件名 = 表达式")
+                continue
+            name = stmt.targets[0].id
+            if not IDENT.match(name):
+                self.fail("conditions", line, f"条件名 '{name}' 应是英文蛇形 ID")
+                continue
+            try:
+                expr = self.expr.compile_node(stmt.value)
+            except ExprError as exc:
+                self.fail("conditions", line + exc.line_offset, f"{name}: {exc}", exc.candidates)
+                continue
+            self.at(f"conditions[{len(out)}]", "conditions", line)
+            out.append({"id": name, "expression": expr})
+        return out
+
+    # ------------------------------------------------------------------ roles & missions
+    def _roles(self, raw: Any, spec: dict[str, Any]) -> list[dict[str, Any]]:
+        out = []
+        if not isinstance(raw, dict) or not raw:
+            self.fail(
+                "model", self.mlines.get("roles"), "roles 应是 角色名: {capability_class: …} 的映射"
+            )
+            return out
+        for rid, info in raw.items():
+            rid = str(rid)
+            line = self.mlines.get(rid)
+            info = info if isinstance(info, dict) else {}
+            hint = self.roles_hint.get(rid, {})
+            role = {
+                "id": rid,
+                "capability_class": info.get("capability_class")
+                or hint.get("capability_class")
+                or "ground_vehicle",
+                "count": int(info.get("count") or 1),
+                "description": str(info.get("description") or hint.get("description") or ""),
+            }
+            if info.get("superior") or info.get("subordinates"):
+                role["command"] = {
+                    "superior": info.get("superior"),
+                    "subordinates": list(info.get("subordinates") or []),
+                }
+            out.append(role)
+            self.at(f"roles.{rid}", "model", line)
+            mission = info.get("mission")
+            if mission is not None:
+                if not self.allow_mission_ref:
+                    self.fail(
+                        "model",
+                        line,
+                        f"本次生成不允许整体引用战术集任务（角色 {rid}）；请用 mermaid 写任务状态机，"
+                        "状态树可以引用战术集的子树和状态树",
+                    )
+                    continue
+                if isinstance(mission, str):
+                    mission = {"tactic": mission}
+                ref = {"tactic": str(mission.get("tactic") or "")}
+                if mission.get("role"):
+                    ref["role"] = str(mission["role"])
+                if mission.get("params"):
+                    ref["params"] = dict(mission["params"])
+                spec["missions"][rid] = ref
+                self.at(f"missions.{rid}", "model", line)
+                if f"mermaid:{rid}" in self.out.blocks:
+                    self.warn(f"mermaid:{rid}", None, f"角色 {rid} 引用了战术集任务，状态图被忽略")
+                continue
+            block = self.out.blocks.get(f"mermaid:{rid}")
+            if block is None:
+                self.fail(
+                    f"mermaid:{rid}",
+                    None,
+                    f"角色 {rid} 缺少 mermaid 状态图（或在 model 中引用战术集任务）",
+                )
+                continue
+            spec["missions"][rid] = self._mission(rid, block, spec)
+        for key in self.out.blocks:
+            if key.startswith("mermaid:") and key.split(":", 1)[1] not in raw:
+                self.warn(key, None, f"状态图的角色 {key.split(':', 1)[1]} 不在 roles 中")
+        return out
+
+    def _mission(self, rid: str, block: Block, spec: dict[str, Any]) -> dict[str, Any]:
+        key = block.key
+        diagram, problems = parse_diagram(block.text, rid, key, block.line)
+        self.out.problems.extend(problems)
+        wild = {(w.target, w.label, w.line) for w in diagram.wildcards}
+        own = [t for t in diagram.transitions if (t.target, t.label, t.line) not in wild]
+        rename = {s: s.upper() for s in diagram.states}
+        for s in diagram.states:
+            if not STATE.match(rename[s]):
+                self.fail(key, diagram.lines.get(s), f"状态名 '{s}' 应是大写英文 ID")
+        self.state_lines = getattr(self, "state_lines", {})
+        for s in diagram.states:
+            self.state_lines[(rid, rename[s])] = (key, diagram.lines.get(s, block.line))
+        mission: dict[str, Any] = {
+            "initial_state": rename.get(diagram.initial or "", diagram.initial or ""),
+            "states": [rename[s] for s in diagram.states],
+            "terminal": sorted(rename[s] for s in diagram.terminal),
+            "transitions": [],
+            "global": [],
+        }
+        self.at(f"missions.{rid}", key, block.line)
+        events = {e["id"] for e in spec["events"]}
+        for t in own:
+            index = len(mission["transitions"])
+            on = self._trigger(rid, t.label, key, t.line, spec, events)
+            if on is None:
+                continue
+            self.at(f"missions.{rid}.transitions[{index}]", key, t.line)
+            mission["transitions"].append(
+                {"from": rename[t.source], "to": rename[t.target], "on": on}
+            )
+        for w in diagram.wildcards:
+            index = len(mission["global"])
+            on = self._trigger(rid, w.label, key, w.line, spec, events)
+            if on is None:
+                continue
+            self.at(f"missions.{rid}.global[{index}]", key, w.line)
+            mission["global"].append(
+                {"to": rename[w.target], "on": on, "priority": GLOBAL_PRIORITY}
+            )
+        return mission
+
+    def _trigger(
+        self, rid: str, label: str, key: str, line: int, spec: dict[str, Any], events: set[str]
+    ) -> str | None:
+        label = label.strip()
+        if label in events or label in {c["id"] for c in spec["conditions"]}:
+            return label
+        if self.pending_triggers and IDENT.match(label):
+            return label
+        try:
+            expr = self.expr.compile(label)
+        except ExprError as exc:
+            if self.pending_triggers:
+                return label
+            self.fail(
+                key,
+                line,
+                f"转换条件 '{label}' 不是事件、条件名或可解析的表达式：{exc}",
+                exc.candidates or sorted(events | {c["id"] for c in spec["conditions"]})[:8],
+            )
+            return None
+        cid = f"{rid}_t{sum(1 for c in spec['conditions'] if c['id'].startswith(rid + '_t')) + 1}"
+        self.at(f"conditions[{len(spec['conditions'])}]", key, line)
+        spec["conditions"].append({"id": cid, "expression": expr})
+        return cid
+
+    # ------------------------------------------------------------------ trees
+    def _role_states(self, rid: str, spec: dict[str, Any]) -> tuple[list[str], list[str]]:
+        mission = spec["missions"].get(rid)
+        if mission is None:
+            return [], []
+        if "tactic" in mission:
+            entry = self.c.tactics.get(mission["tactic"])
+            if entry is None or entry.section != "missions":
+                return [], []
+            raw = entry.raw
+            return [str(s) for s in raw.get("states") or []], [
+                str(s) for s in raw.get("terminal_states") or []
+            ]
+        return mission["states"], mission["terminal"]
+
+    def _trees(self, spec: dict[str, Any], symbols: TreeSymbols, events: set[str]) -> None:
+        names: dict[str, str] = {}  # function name → role that defines it
+        parsed: dict[str, Any] = {}
+        for key, block in self.out.blocks.items():
+            if block.kind != "pytree":
+                continue
+            rid = block.role or ""
+            if rid not in spec["missions"] and rid not in {r["id"] for r in spec["roles"]}:
+                self.fail(key, block.line, f"树块的角色 '{rid}' 不在 roles 中")
+                continue
+            pb = parse_block(block.text, symbols, rid)
+            for p in pb.problems:
+                self.fail(key, block.line + p.line, p.message, p.candidates)
+            parsed[rid] = (block, pb)
+            for fn in pb.functions:
+                if not STATE.match(fn.name):
+                    if fn.name in names:
+                        names[fn.name] = "*"  # defined by several roles → role-prefixed ids
+                    else:
+                        names[fn.name] = rid
+        for rid, (block, pb) in parsed.items():
+            key = block.key
+            states, terminal = self._role_states(rid, spec)
+            upper = {s.upper(): s for s in states}
+            trees = spec["state_trees"].setdefault(rid, {})
+
+            def sid(name: str, rid: str = rid) -> str:
+                return name if names.get(name) == rid else f"{rid}_{name}"
+
+            for cid, (expr, line) in pb.conditions.items():
+                self.at(f"conditions[{len(spec['conditions'])}]", key, block.line + line)
+                spec["conditions"].append({"id": cid, "expression": expr})
+            for fn in pb.functions:
+                line = block.line + fn.line
+                if fn.root is None:
+                    continue
+                _rename_calls(fn.root, sid)
+                if STATE.match(fn.name):
+                    state = upper.get(fn.name)
+                    if state is None:
+                        self.fail(
+                            key,
+                            line,
+                            f"函数 {fn.name} 不是角色 {rid} 的状态；状态树函数名与状态名相同，"
+                            "子树函数用小写名",
+                            states,
+                        )
+                        continue
+                    if state in terminal:
+                        self.warn(key, line, f"{state} 是结束状态，不执行树")
+                        continue
+                    ref = _direct_ref(fn.root)
+                    if ref is None:
+                        ref = f"{rid}_{state.lower()}"
+                        self._add_subtree(spec, ref, fn.root, key, block.line, line)
+                    trees[state] = ref
+                    self.at(f"state_trees.{rid}.{state}", key, line)
+                    self._map_nodes(f"state_trees.{rid}.{state}", fn.root, key, block.line)
+                else:
+                    if not IDENT.match(fn.name):
+                        self.fail(key, line, f"子树函数名 '{fn.name}' 应是小写英文 ID")
+                        continue
+                    self._add_subtree(spec, sid(fn.name), fn.root, key, block.line, line)
+        for rid, mission in spec["missions"].items():
+            if "tactic" in mission:
+                continue
+            for state in mission["states"]:
+                if state in mission["terminal"] or state in spec["state_trees"].get(rid, {}):
+                    continue
+                where = getattr(self, "state_lines", {}).get((rid, state))
+                self.at(f"state_trees.{rid}.{state}", *(where or (f"pytree:{rid}", None)))
+        _strip_lines(spec)
+
+    def _add_subtree(
+        self, spec: dict[str, Any], sid: str, root: dict[str, Any], key: str, first: int, line: int
+    ) -> None:
+        index = len(spec["subtrees"])
+        spec["subtrees"].append({"id": sid, "root": root})
+        self.at(f"subtrees[{index}]", key, line)
+        self.at(f"subtrees.{sid}", key, line)
+        self._map_nodes(f"subtrees[{index}].root", root, key, first)
+        self._map_nodes(f"subtrees.{sid}.root", root, key, first)
+
+    def _map_nodes(self, path: str, node: dict[str, Any], key: str, first: int) -> None:
+        if "_line" in node:
+            self.at(path, key, first + node["_line"])
+        for i, kid in enumerate(node.get("children") or []):
+            self._map_nodes(f"{path}.children[{i}]", kid, key, first)
+
+
+def _direct_ref(root: dict[str, Any]) -> str | None:
+    """A state function that only calls one subtree or tactic-set tree maps to it directly."""
+    if root.get("type") == "tactic" and not root.get("params"):
+        return str(root["tactic"])
+    if root.get("type") == "subtree" and not str(root.get("subtree", "")).startswith("gap."):
+        return str(root["subtree"])
+    return None
+
+
+def _rename_calls(node: dict[str, Any], sid) -> None:
+    if node.get("type") == "subtree" and not str(node.get("subtree", "")).startswith("gap."):
+        node["subtree"] = sid(node["subtree"])
+    for kid in node.get("children") or []:
+        _rename_calls(kid, sid)
+
+
+def _strip_lines(spec: dict[str, Any]) -> None:
+    def strip(node: dict[str, Any]) -> None:
+        node.pop("_line", None)
+        if not node.get("params"):
+            node.pop("params", None)
+        for kid in node.get("children") or []:
+            strip(kid)
+
+    for sub in spec["subtrees"]:
+        strip(sub["root"])
+
+
+def compile_sheet(text: str, contracts: Contracts, **kw: Any) -> Compiled:
+    return SheetCompiler(text, contracts, **kw).compile()

@@ -18,7 +18,17 @@ import re
 from dataclasses import dataclass, field
 
 MAX_BLOCK_CHARS = 60_000
-KINDS = ("model", "mermaid", "conditions", "xml", "pytree", "basis", "needs", "verification")
+KINDS = (
+    "model",
+    "mermaid",
+    "conditions",
+    "xml",
+    "pytree",
+    "basis",
+    "needs",
+    "gaps",
+    "verification",
+)
 TREE_KINDS = ("xml", "pytree")  # a role's behavior trees: either form, or both
 _FENCE = re.compile(r"^(?P<indent>\s*)(?P<ticks>`{3,}|~{3,})\s*(?P<info>[^\n`]*)$")
 _ROLE_MERMAID = re.compile(r"%%\s*role\s*[:：]\s*([A-Za-z][\w]*)")
@@ -48,6 +58,7 @@ class Block:
             "pytree": "python",
             "basis": "yaml basis",
             "needs": "yaml needs",
+            "gaps": "yaml gaps",
             "verification": "yaml verification",
         }
         return names[self.kind] + (f" {self.role}" if self.role else "")
@@ -90,6 +101,7 @@ def _kind(info: str) -> tuple[str | None, str | None]:
             "model": "model",
             "basis": "basis",
             "needs": "needs",
+            "gaps": "gaps",
             "verification": "verification",
         }.get(name)
         if kind is None and name in ("tests", "verify", "validation"):

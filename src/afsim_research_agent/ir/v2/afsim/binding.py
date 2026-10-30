@@ -58,6 +58,8 @@ Run configuration (TOML)::
     body = "<platform body: side, position, edits, added processors>"
     [[events]]
     at_s = 1.0; event = "<event id or tactic text>"; platform = "<platform>"
+    [parameters]                               # model parameters the scenario supplies
+    <parameter> = "<value>"
     [expect]
     sequence = ["<state>", ...]                # optional
     [reference]                                # the handwritten version's evidence
@@ -183,6 +185,8 @@ class RunConfig(_Strict):
     extra: str = ""
     platforms: list[RunPlatform] = Field(min_length=1)
     events: list[RunEvent] = Field(default_factory=list)
+    # model parameters the scenario supplies (e.g. a route name), replacing placeholders
+    parameters: dict[str, bool | int | float | str] = Field(default_factory=dict)
     expect: RunExpect = Field(default_factory=RunExpect)
     reference: Reference | None = None
 
