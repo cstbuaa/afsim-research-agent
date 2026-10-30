@@ -302,6 +302,7 @@ class SheetCompiler:
         if not self.pending_triggers:
             self._writer_checks(spec)
             self._tree_event_checks(spec)
+            self._instant_cycle_checks(spec)
         if self.scenario_events and not self.pending_triggers:
             external = {e["id"] for e in spec["events"] if e["source"] == "external"}
             for eid in sorted(external - set(self.scenario_events)):
@@ -526,6 +527,41 @@ class SheetCompiler:
                             "互补的转换（X 与 not X），立即按进入时的值转出；或用树事件表达"
                             '"本状态的树完成"（events 中声明 {source: tree, result: success}）',
                         )
+
+    def _instant_cycle_checks(self, spec: dict[str, Any]) -> None:
+        """Transitions are checked again right after a state is entered, in the same
+        update. A ring of states joined only by field conditions (no event, no time in state) keeps
+        turning within one update once those fields hold — e.g. "assignments.count > 0"
+        stays true after the first allocation. Refuse such a ring: at least one of its
+        transitions must wait (a tree event, time in state or an external event)."""
+        exprs = {c["id"]: c["expression"] for c in spec["conditions"]}
+
+        def waits(cid: str, stack: tuple[str, ...] = ()) -> bool:
+            if cid not in exprs:
+                return True  # an event
+            expr = exprs[cid]
+            if _calls(expr, "time_in_state_gte"):
+                return True
+            return any(waits(r, (*stack, cid)) for r in _condition_refs(expr) if r not in stack)
+
+        for rid, mission in spec["missions"].items():
+            if "tactic" in mission:
+                continue
+            graph: dict[str, list[tuple[str, int]]] = {}
+            for i, tr in enumerate(mission["transitions"]):
+                if tr["from"] != tr["to"] and not waits(tr["on"]):
+                    graph.setdefault(tr["from"], []).append((tr["to"], i))
+            for ring in _rings(graph):
+                states = " -> ".join([*(s for s, _ in ring), ring[0][0]])
+                block, line = self.out.locate(f"missions.{rid}.transitions[{ring[0][1]}]")
+                self.fail(
+                    block,
+                    line,
+                    f"状态环 {states} 的转换全是字段条件：这些字段一旦同时成立（如分配完成后"
+                    "一直为真的计数），状态会在同一次更新内不停打转。让环上至少一个转换等待："
+                    "用树事件（本状态的树完成，events 中声明 {source: tree, result: success}）、"
+                    "计时（time_in_state() >= …）或外部事件；或把整条流水线放在一个状态的树里",
+                )
 
     # ------------------------------------------------------------------ termination
     def _outcomes(self, node: Any, subs: dict[str, Any], seen: frozenset[str] = frozenset()):
@@ -1221,3 +1257,50 @@ def _complementary(cids: list[str], exprs: dict[str, Any]) -> set[str]:
             if exprs[b] in ({"not": exprs[a]}, {"not": {"condition_ref": a}}):
                 out |= {a, b}
     return out
+
+
+def _calls(expr: Any, name: str) -> bool:
+    """Whether the expression must call the named function (not under `not` or `any`)."""
+    if isinstance(expr, dict):
+        call = expr.get("function_call")
+        if isinstance(call, dict) and call.get("name") == name:
+            return True
+        return any(_calls(v, name) for k, v in expr.items() if k not in ("not", "any"))
+    if isinstance(expr, list):
+        return any(_calls(v, name) for v in expr)
+    return False
+
+
+def _rings(graph: dict[str, list[tuple[str, int]]]) -> list[list[tuple[str, int]]]:
+    """One cycle per strongly connected group of states: [(state, transition index), ...]
+    where the transition leaves that state for the next one in the ring."""
+    rings: list[list[tuple[str, int]]] = []
+    done: set[str] = set()
+    for start in sorted(graph):
+        if start in done:
+            continue
+        # depth-first walk from start; the first back edge to a state on the path is a ring
+        path: list[tuple[str, int]] = []
+        on_path: dict[str, int] = {}
+        seen: set[str] = set()
+
+        def walk(state: str) -> list[tuple[str, int]] | None:
+            seen.add(state)
+            on_path[state] = len(path)
+            for nxt, i in graph.get(state, []):
+                path.append((state, i))
+                if nxt in on_path:
+                    return path[on_path[nxt] :]
+                if nxt not in seen and nxt not in done:
+                    found = walk(nxt)
+                    if found:
+                        return found
+                path.pop()
+            del on_path[state]
+            return None
+
+        ring = walk(start)
+        done |= seen
+        if ring:
+            rings.append(list(ring))
+    return rings

@@ -844,6 +844,22 @@ def test_conditions_must_read_fields_the_state_keeps_up_to_date(set_root: Path) 
     assert any("状态 DECIDE" in p.message for p in _compile(contracts, one).errors)
 
 
+def test_rings_of_field_transitions_are_refused(set_root: Path) -> None:
+    contracts = _annotate(set_root)
+    ring = SHEET.replace(
+        "  OBSERVE --> MOVE : lost_timeout\n", "  OBSERVE --> MOVE : self.speed_mps >= 0\n"
+    )
+    msgs = [p.message for p in _compile(contracts, ring).errors]
+    assert any("状态环" in m and "MOVE" in m and "OBSERVE" in m for m in msgs), msgs
+    # a timer on one transition of the ring makes it wait
+    timed = SHEET.replace(
+        "  OBSERVE --> MOVE : lost_timeout\n",
+        "  OBSERVE --> MOVE : self.speed_mps >= 0 and time_in_state() >= 5 * s\n",
+    )
+    msgs = [p.message for p in _compile(contracts, timed).errors]
+    assert not any("状态环" in m for m in msgs), msgs
+
+
 def test_prompt_shows_field_writers_and_results(set_root: Path) -> None:
     from afsim_research_agent.falcon.v3 import catalog as K
 
