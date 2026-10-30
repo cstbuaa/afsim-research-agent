@@ -168,6 +168,9 @@ class SimSemantics:
     tactic_conditions: dict[str, dict[str, Any]] = field(default_factory=dict)
     events: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     fields: dict[str, str] = field(default_factory=dict)  # generic model key → blackboard field
+    # ``[sim_initial]``: field → value at the start of L2 tests and L3 runs (e.g. formation
+    # slot errors start large: the followers are not in their slots yet)
+    initial: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
     def load(cls, path: Path) -> SimSemantics:
@@ -184,6 +187,7 @@ class SimSemantics:
                 for m, table in (data.get("event") or {}).items()
             },
             fields={str(k): str(v) for k, v in (data.get("sim_fields") or {}).items()},
+            initial=dict(data.get("sim_initial") or {}),
         )
 
     def event(self, mission: str | None, text: str | None) -> dict[str, Any] | None:

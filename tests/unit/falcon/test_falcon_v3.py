@@ -679,3 +679,22 @@ def test_fix_loop_refuses_an_edit_that_breaks_l1_and_explains_conflicts(
         "scout", "MOVE", {"blackboard": {"sense.target.valid": True}}
     )
     assert "MOVE → OBSERVE" in tick
+
+
+def test_fix_tools_avoid_rereading_and_diagnose_skipped_states(contracts: Contracts) -> None:
+    from afsim_research_agent.falcon.v3.fixer import SheetFixer, _skipped
+
+    fixer = SheetFixer(_fix_drafter(contracts, SHEET.replace("nav.hold()", "nav.hodl()")))
+    assert "def OBSERVE" in fixer.show("pytree:scout")
+    assert "没有改动" in fixer.show("pytree:scout")
+    summary = fixer.summary()
+    assert ">| " in summary and "nav.hodl()" in summary  # the failing line is shown in place
+    scenario = {
+        "transitions": {
+            "car_0": [
+                {"t": 3.0, "from": "A", "to": "B", "on": "go"},
+                {"t": 3.0, "from": "B", "to": "C", "on": "ready"},
+            ]
+        }
+    }
+    assert "进入 B 后同一拍就因 ready 离开" in _skipped(scenario)[0]

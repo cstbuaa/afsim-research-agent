@@ -388,6 +388,10 @@ def test_judge_compares_with_expectation_and_reference(env) -> None:
         None,
     )
     assert not j.passed and j.errors and any("reference" in p for p in j.problems)
+    run["expect"]["markers"] = [r"^CLEANUP\|1"]
+    j = judge(run, CONSOLE, reference)
+    assert not j.passed and any("CLEANUP" in p for p in j.problems)
+    assert judge(run, CONSOLE + "CLEANUP|1\n", reference).passed
 
 
 def test_cli_compile_and_judge(env, tmp_path: Path, capsys) -> None:

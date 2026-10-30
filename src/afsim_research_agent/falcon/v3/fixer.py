@@ -149,6 +149,7 @@ class SheetFixer:
         self.last = drafter.check(verify=True)
         self.best = (self.score(self.last), _copy(drafter.blocks), self.last)
         self.refused = 0
+        self.shown: dict[tuple[Any, ...], tuple[str, int]] = {}
 
     # ------------------------------------------------------------------ scoring
     @staticmethod
@@ -176,8 +177,8 @@ class SheetFixer:
         check = check or self.last
         lines = [f"L1：{'通过' if check.l1_ok else '未通过'}"]
         for i, p in enumerate(check.problems, start=1):
-            text = self._line_text(p.block, p.line)
-            lines.append(f"[{i}] {p.render()[2:]}" + (f"\n     当前行：{text}" if text else ""))
+            lines.append(f"[{i}] {p.render()[2:]}")
+            lines += self._context(p.block, p.line, 2)
         if check.l1_ok:
             failed = [t for t in check.l2 if not t["passed"]]
             lines.append(f"L2：{len(check.l2) - len(failed)}/{len(check.l2)} 通过")
@@ -186,6 +187,7 @@ class SheetFixer:
                 lines.append(f"L3 {s['id']}：{'通过' if s['passed'] else '未通过'}")
                 if not s["passed"]:
                     lines += ["    " + x for x in s["render"].splitlines()[1:6]]
+                    lines += ["    " + x for x in _skipped(s)]
             for key, line in self.d._stuck(check)[:4]:
                 lines.append(f"提示（{key}）：{line[2:]}")
             if not check.l2 and not check.l3:
@@ -196,6 +198,20 @@ class SheetFixer:
 
     def _block(self, key: str) -> Block | None:
         return next((b for b in self.d.blocks if b.key == key), None)
+
+    def _context(self, key: str, line: int | None, around: int) -> list[str]:
+        """The sheet lines around a problem, so an edit needs no ``show`` first."""
+        block = self._block(key)
+        if block is None or not line:
+            return []
+        rows = block.text.splitlines()
+        i = line - block.line
+        if not 0 <= i < len(rows):
+            return []
+        lo, hi = max(0, i - around), min(len(rows), i + around + 1)
+        return [
+            f"     {block.line + k:4d}{'>' if k == i else ' '}| {rows[k]}" for k in range(lo, hi)
+        ]
 
     def _line_text(self, key: str, line: int | None) -> str:
         block = self._block(key)
@@ -209,6 +225,13 @@ class SheetFixer:
         block = self._block(key)
         if block is None:
             return f"没有块 {key}；现有：{', '.join(b.key for b in self.d.blocks)}"
+        seen = self.shown.get((key, start, end))
+        if seen is not None and seen[0] == block.text:
+            return (
+                f"块 {key} 自第 {seen[1]} 步查看以来没有改动，内容见那一步的结果；"
+                "需要改就直接 edit（old 写原文片段），或 explain 某个问题"
+            )
+        self.shown[(key, start, end)] = (block.text, self.step)
         rows = block.numbered().splitlines()
         first = block.line
         lo = int(start) - first if isinstance(start, int) else 0
@@ -446,6 +469,19 @@ class SheetFixer:
         return self.last
 
 
+def _skipped(scenario: dict[str, Any]) -> list[str]:
+    """States entered and left in the same update: the leaving trigger already held."""
+    out = []
+    for name, moves in (scenario.get("transitions") or {}).items():
+        for a, b in zip(moves, moves[1:], strict=False):
+            if a["t"] == b["t"] and a["to"] == b["from"]:
+                out.append(
+                    f"诊断：{name} 在 {a['t']:g} s 进入 {a['to']} 后同一拍就因 {b['on']} 离开，"
+                    f"即进入 {a['to']} 时 {b['on']} 已成立；检查它读的字段在这一刻的值"
+                )
+    return out[:4]
+
+
 def _strip_fence(text: str) -> str:
     text = text.strip("\n")
     m = re.match(r"^```[^\n]*\n(.*?)\n?```\s*$", text, re.S)
@@ -532,17 +568,19 @@ async def fix_sheet(drafter: Any, run: ModelRunner, max_steps: int = 20) -> FixO
             action = await run(
                 "fix:v3:step", _prompt(fixer, records, max_steps - step + 1), FixStep
             )
-        except Exception as exc:  # noqa: BLE001 - a broken step ends the loop, best version kept
+        except Exception as exc:  # noqa: BLE001 - a bad answer: retry once, then stop
             records.append(
                 {
                     "step": step,
                     "action": "error",
                     "args": {},
                     "thought": "",
-                    "result": str(exc)[:300],
+                    "result": f"上一步的输出无法解析（{str(exc)[:200]}），请只输出一个 JSON 动作",
                 }
             )
-            break
+            if sum(r["action"] == "error" for r in records) >= 2:
+                break
+            continue
         a = action.args
         reason = str(a.get("reason") or action.thought)[:300]
         if action.action == "finish":

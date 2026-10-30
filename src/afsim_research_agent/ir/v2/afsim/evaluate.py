@@ -93,6 +93,9 @@ def judge(run: dict[str, Any], console: str, reference_console: str | None) -> R
             got = [s for _, s in j.states.get(name, [])]
             if got != j.expected:
                 j.problems.append(f"{name} visited {got}, expected {j.expected}")
+    for pattern in (run.get("expect") or {}).get("markers") or []:
+        if not re.search(pattern, console, re.M):
+            j.problems.append(f"console has no line matching {pattern!r}")
     ref = run.get("reference")
     if ref and reference_console is not None:
         j.reference = parse_reference(reference_console, ref["state_pattern"])

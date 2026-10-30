@@ -187,6 +187,7 @@ class Drafter:
                         "placeholders": sorted(res.placeholders),
                         "unresolved": sorted(res.unresolved),
                         "states": {k: [list(x) for x in v] for k, v in res.states.items()},
+                        "transitions": res.transitions,
                         "duration_s": float(
                             ((raw.get("environment") or {}).get("duration_s")) or 0.0
                         ),

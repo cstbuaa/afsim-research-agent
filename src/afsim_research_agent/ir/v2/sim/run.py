@@ -114,6 +114,8 @@ class SimResult:
     scenario: str
     checks: list[Check] = field(default_factory=list)
     states: dict[str, list[tuple[float, str]]] = field(default_factory=dict)
+    # instance → transitions taken: {t, from, to, on}
+    transitions: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     idealized: set[str] = field(default_factory=set)
     placeholders: set[str] = field(default_factory=set)
     unresolved: set[str] = field(default_factory=set)
@@ -283,6 +285,7 @@ def simulate(model: dict[str, Any], contracts: Contracts, raw: dict[str, Any]) -
         world.step(env.step_s)
     for inst in instances:
         result.unresolved |= inst.unresolved
+        result.transitions[inst.name] = list(inst.trace)
     result.idealized = set(host.idealized)
     result.placeholders = set(host.placeholders)
     result.checks = [_check(e, result) for e in sc.expect]

@@ -308,7 +308,60 @@ class ClearSelected(ActionModel):
         return SUCCESS, None
 
 
+# ---------------------------------------------------------------------- formation
+class FormationSlots(ActionModel):
+    """Followers taking the slots of a formation shape (``mode`` option): the slot errors
+    start at ``initial_error_m`` when the shape changes and shrink at ``converge_mps`` to
+    ``floor_m``. Persistent (running) like the formation steps it stands for; the
+    followers are not simulated vehicles, only their slot errors are."""
+
+    KEYS = ("formation.left_error", "formation.right_error")
+
+    def start(self, ctx: ActionContext) -> Status:
+        state = ctx.shared.setdefault("formation", {})
+        mode = str(ctx.options.get("mode", "FORMATION"))
+        if state.get("mode") != mode:
+            state.update(
+                mode=mode, error=float(ctx.options.get("initial_error_m", 60.0)), at=ctx.now
+            )
+        ctx.write("formation.mode", mode)
+        return self.update(ctx)
+
+    def update(self, ctx: ActionContext) -> Status:
+        state = ctx.shared.setdefault("formation", {"error": 0.0, "at": ctx.now})
+        dt = max(0.0, ctx.now - float(state.get("at", ctx.now)))
+        floor = float(ctx.options.get("floor_m", 2.0))
+        rate = float(ctx.options.get("converge_mps", 4.0))
+        state["error"] = max(floor, float(state.get("error", floor)) - rate * dt)
+        state["at"] = ctx.now
+        for key in self.KEYS:
+            ctx.write(key, state["error"])
+        return RUNNING, None
+
+
+class StandoffCommand(ActionModel):
+    """Range band of the selected target against ``desired_m`` ± ``tolerance_m``
+    (persistent); the band is what standoff conditions read."""
+
+    def update(self, ctx: ActionContext) -> Status:
+        desired = float(ctx.options.get("desired_m", 500.0))
+        tol = float(ctx.options.get("tolerance_m", 50.0))
+        rng = ctx.read("selected.range")
+        if not ctx.read("selected.valid") or not isinstance(rng, int | float):
+            zone = "NO_TARGET"
+        elif rng > desired + tol:
+            zone = "TOO_FAR"
+        elif rng < desired - tol:
+            zone = "TOO_CLOSE"
+        else:
+            zone = "IN_BAND"
+        ctx.write("formation.range_zone", zone)
+        return RUNNING, None
+
+
 MODELS: dict[str, Callable[[], ActionModel]] = {
+    "formation_slots": FormationSlots,
+    "standoff_command": StandoffCommand,
     "move_to_point": MoveToPoint,
     "follow_route": FollowRoute,
     "hold_position": HoldPosition,

@@ -70,7 +70,9 @@ class Instance:
         self.events = self.model.get("events", {})
         self.rng = random.Random(self.seed)
         for path, spec in self.model["blackboard"].items():
-            self.blackboard.setdefault(path, _default(spec, self.contracts, path))
+            initial = self.contracts.semantics.initial
+            value = initial[path] if path in initial else _default(spec, self.contracts, path)
+            self.blackboard.setdefault(path, value)
         self.state = self.mission["initial_state"]
 
     # ------------------------------------------------------------------ public

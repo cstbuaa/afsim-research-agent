@@ -603,3 +603,43 @@ def test_local_tactic_scenarios_pass(capability_set) -> None:
             result = simulate(model, contracts, scenario)
             assert result.passed, result.render()
             assert not result.idealized and not result.unresolved, result.render()
+
+
+def test_formation_models_converge_and_initial_values_apply(contracts: Contracts) -> None:
+    from afsim_research_agent.ir.v2.sim.actions import (
+        ActionContext,
+        FormationSlots,
+        StandoffCommand,
+    )
+    from afsim_research_agent.ir.v2.sim.world import Geo, Vehicle, World
+
+    world = World(geo=Geo(30.0, 120.0), routes={})
+    bb: dict = {}
+    fields = {
+        "formation.left_error": "f.left",
+        "formation.right_error": "f.right",
+        "formation.mode": "f.mode",
+        "formation.range_zone": "f.zone",
+        "selected.valid": "t.valid",
+        "selected.range": "t.range",
+    }
+    shared: dict = {}
+
+    def ctx(options):
+        return ActionContext(world, Vehicle("v", 0, 0), bb, fields, {}, {}, options, shared)
+
+    line = FormationSlots()
+    opts = {"mode": "LINE", "initial_error_m": 40.0, "converge_mps": 4.0}
+    assert line.start(ctx(opts))[0] == RUNNING and bb["f.left"] == 40.0 and bb["f.mode"] == "LINE"
+    for _ in range(5):
+        world.step(1.0)
+        line.update(ctx(opts))
+    assert bb["f.left"] == 20.0 and bb["f.right"] == 20.0
+    bb.update({"t.valid": True, "t.range": 620.0})
+    StandoffCommand().update(ctx({"desired_m": 500, "tolerance_m": 50}))
+    assert bb["f.zone"] == "TOO_FAR"
+    # [sim_initial] values seed the blackboard of every instance
+    contracts.semantics.initial["nav.range_m"] = 1234.0
+    spec = _spec()
+    inst = Instance("car_0", "car", 0, normalize(spec, contracts).model, contracts, host=None)  # type: ignore[arg-type]
+    assert inst.blackboard["nav.range_m"] == 1234.0
