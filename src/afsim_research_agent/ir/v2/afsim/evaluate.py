@@ -4,7 +4,9 @@ Evidence is the console of each run: the ``IR_STATE|<time>|<platform>|<state>`` 
 generated state machines write, and AFSIM's error markers. A run passes when AFSIM
 completes without errors, every platform's state sequence matches the run's expectation,
 and — when the run names the handwritten version's console — the sequence equals the
-reference sequence; transition time differences are reported.
+reference sequence; transition time differences are reported, and with
+``expect.max_interval_delta_s`` the time spent in each state must stay that close to the
+reference (a requirement such as "start searching after 10 s" shows as a state left early).
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 IR_STATE = re.compile(r"^IR_STATE\|([^|]+)\|([^|]+)\|([^|\r\n]+)", re.M)
+IR_ACT = re.compile(r"^IR_ACT\|([^|]+)\|([^|]+)\|([^|\r\n]+)", re.M)
 ERRORS = re.compile(r"\*\*\*\*\* (ERROR|FATAL)[^\r\n]*")
 
 
@@ -30,6 +33,7 @@ class RunJudgement:
     reference: list[tuple[float, str]] | None = None
     problems: list[str] = field(default_factory=list)
     time_deltas: list[dict[str, Any]] = field(default_factory=list)
+    obligations: list[dict[str, Any]] = field(default_factory=list)  # verdicts
 
     @property
     def passed(self) -> bool:
@@ -49,6 +53,10 @@ class RunJudgement:
                 f"  {d['transition']}: generated {d['generated']:g}s, "
                 f"reference {d['reference']:g}s ({d['delta']:+g}s)"
             )
+        for v in self.obligations:
+            if v.get("judged", True):
+                mark = "ok" if v["passed"] else "FAIL"
+                lines.append(f"  [{mark}] 需求约束 {v['id']}：{v['detail']}")
         lines += [f"  problem: {p}" for p in self.problems]
         return "\n".join(lines)
 
@@ -78,7 +86,12 @@ def parse_reference(console: str, pattern: str) -> list[tuple[float, str]]:
     return compress(seq)
 
 
-def judge(run: dict[str, Any], console: str, reference_console: str | None) -> RunJudgement:
+def judge(
+    run: dict[str, Any],
+    console: str,
+    reference_console: str | None,
+    obligations: list[dict[str, Any]] | None = None,
+) -> RunJudgement:
     j = RunJudgement(run=run["id"], completed="Simulation complete" in console)
     j.errors = [m.group(0) for m in ERRORS.finditer(console)]
     j.states = parse_states(console)
@@ -110,8 +123,30 @@ def judge(run: dict[str, Any], console: str, reference_console: str | None) -> R
                 j.time_deltas.append(
                     {"transition": f"-> {sg}", "generated": tg, "reference": tr, "delta": tg - tr}
                 )
+            limit = (run.get("expect") or {}).get("max_interval_delta_s")
+            if limit is not None:
+                for i in range(1, len(first) - 1):
+                    stay = first[i + 1][0] - first[i][0]
+                    ref_stay = j.reference[i + 1][0] - j.reference[i][0]
+                    if abs(stay - ref_stay) > float(limit):
+                        j.problems.append(
+                            f"{names[0]} stayed {stay:g}s in {first[i][1]} (entered at "
+                            f"{first[i][0]:g}s), the handwritten version {ref_stay:g}s; "
+                            f"more than {float(limit):g}s apart"
+                        )
     elif ref:
         j.problems.append("the handwritten reference console was not found")
+    if obligations:
+        from afsim_research_agent.ir.v2.obligations import Obligation, check
+
+        obs = [Obligation.model_validate(o) for o in obligations]
+        acts = [(float(t), p, a.strip()) for t, p, a in IR_ACT.findall(console)]
+        events = [(float(e["at_s"]), str(e["event"])) for e in run.get("events") or []]
+        verdicts = check(obs, acts, events, end_s=float(run.get("end_time_s") or 0) or None)
+        j.obligations = [asdict(v) for v in verdicts]
+        for v in verdicts:
+            if v.judged and not v.passed:
+                j.problems.append(f"requirement obligation {v.id}: {v.detail}")
     return j
 
 
@@ -159,7 +194,7 @@ def _judge_saved(package: Path, run: dict[str, Any], console: str) -> RunJudgeme
         path = path if path.is_absolute() else root / path
         if path.exists():
             ref_text = path.read_text(encoding="utf-8", errors="replace")
-    return judge(run, console, ref_text)
+    return judge(run, console, ref_text, manifest.get("obligations") or [])
 
 
 def _report(package: Path, results: list[RunJudgement]) -> None:

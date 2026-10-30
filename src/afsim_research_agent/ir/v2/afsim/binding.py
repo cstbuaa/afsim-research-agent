@@ -172,6 +172,9 @@ class RunExpect(_Strict):
     # regular expressions the console must contain (the scenario's own checks, e.g. that
     # cleanup completed); a missing one fails the run
     markers: list[str] = Field(default_factory=list)
+    # with a handwritten reference: the time spent in each state may differ from the
+    # reference by at most this much (a state left far too early or too late fails the run)
+    max_interval_delta_s: float | None = None
 
 
 class Reference(_Strict):

@@ -406,6 +406,30 @@ def test_draft_loop_repairs_and_writes_the_package(set_root: Path, tmp_path: Pat
                 ]
             }
         ],
+        "v3:obligations": [
+            {
+                "obligations": [
+                    {
+                        "id": "search_while_moving",
+                        "kind": "not_before",
+                        "action": "sense.scan",
+                        "after": "nav.goto",
+                        "min_s": 0,
+                        "clause": "rq_01",
+                        "description": "前出时搜索",
+                    },
+                    {
+                        "id": "stop_on_cancel",
+                        "kind": "response",
+                        "on_event": "cancelled",
+                        "action": "nav.stop",
+                        "within_s": 5,
+                        "description": "取消后停车",
+                    },
+                    {"id": "bogus", "kind": "precedes", "first": "nav.fly", "then": "nav.stop"},
+                ]
+            }
+        ],
         "v3:structure": answer(structure),
         "v3:control": answer(control_bad),
         "v3:repair:pytree": answer(fixed_tree),
@@ -437,6 +461,15 @@ def test_draft_loop_repairs_and_writes_the_package(set_root: Path, tmp_path: Pat
     assert report["status"] == "draft_valid" and report["gaps"] == ["smoke_screen"]
     review = (pkg / "falcon_review.md").read_text(encoding="utf-8")
     assert "缺口 `smoke_screen`" in review and "自己写" in review
+    # requirement obligations: written to the package, judged on the scenario runs; one
+    # naming an action the capability set does not have is dropped
+    obligations = yaml.safe_load((pkg / "obligations.yaml").read_text(encoding="utf-8"))
+    assert [o["id"] for o in obligations["obligations"]] == [
+        "search_while_moving",
+        "stop_on_cancel",
+    ]
+    assert "stop_on_cancel" in review and "cancel 通过" in review, review
+    assert "需求约束 bogus 已忽略" in review
     # the structure prompt sees the slice index; the control prompt sees the slices in full
     assert (
         "切片 `nav`" in prompts["v3:structure"][0]
@@ -806,3 +839,64 @@ def test_step_results_in_conditions_point_to_tree_events(contracts: Contracts) -
         )
         msgs = [p.message for p in _compile(contracts, bad).errors]
         assert any("source: tree, result: success" in m for m in msgs), msgs
+
+
+def test_gates_compile_to_the_usual_tree_patterns(contracts: Contracts) -> None:
+    sheet = SHEET.replace(
+        """def OBSERVE():
+    with parallel("one"):
+        nav.hold()
+        guard()""",
+        """def OBSERVE():
+    with parallel("one"):
+        with after(5 * s):
+            nav.hold()
+        with until(sense.target.valid):
+            tactic("sense.track")
+        with when(nav.range_m < "300 m"):
+            sense.off()""",
+    ).replace("def guard():", "def unused():")
+    out = _compile(contracts, sheet)
+    assert not out.errors, [p.render() for p in out.errors]
+    subs = {s["id"]: s["root"] for s in out.spec["subtrees"]}
+    after, until, when = subs["scout_observe"]["children"]
+    assert after["type"] == "sequence" and after["children"][0]["type"] == "failure_as_running"
+    cond = {c["id"]: c["expression"] for c in out.spec["conditions"]}
+    gate = cond[after["children"][0]["children"][0]["condition"]]
+    assert gate["function_call"]["name"] == "time_in_state_gte"
+    assert until["type"] == "selector" and until["children"][0]["type"] == "condition"
+    assert when["children"][1]["action"] == "sense.off"
+    # the hand-made form of "until" that runs the wrong way round is refused
+    bad = SHEET.replace(
+        """        nav.hold()
+        guard()""",
+        """        nav.hold()
+        with selector():
+            assert sense.target.valid
+            guard()""",
+    )
+    msgs = [p.message for p in _compile(contracts, bad).errors]
+    assert any("with until" in m for m in msgs), msgs
+
+
+def test_tree_events_of_trees_that_never_finish_are_refused(set_root: Path) -> None:
+    contracts = _annotate(set_root)
+    import dataclasses
+
+    hold = contracts.actions["nav.hold"]
+    contracts.actions["nav.hold"] = dataclasses.replace(hold, persistent=True)
+    sheet = (
+        SHEET.replace(
+            '  lost_timeout: {after: "20 s"}',
+            '  lost_timeout: {after: "20 s"}\n  held: {source: tree, result: success}',
+        )
+        .replace("OBSERVE --> MOVE : lost_timeout", "OBSERVE --> MOVE : held")
+        .replace(
+            """    with parallel("one"):
+        nav.hold()
+        guard()""",
+            "    nav.hold()",
+        )
+    )
+    msgs = [p.message for p in _compile(contracts, sheet).errors]
+    assert any("树事件 held" in m and "OBSERVE" in m for m in msgs), msgs

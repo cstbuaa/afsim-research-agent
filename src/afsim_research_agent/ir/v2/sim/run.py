@@ -120,6 +120,11 @@ class SimResult:
     placeholders: set[str] = field(default_factory=set)
     unresolved: set[str] = field(default_factory=set)
     dropped: set[str] = field(default_factory=set)  # model writes outside the contract
+    # (time, instance, action) whenever an action leaf starts; (time, event) of raised events
+    activations: list[tuple[float, str, str]] = field(default_factory=list)
+    events: list[tuple[float, str]] = field(default_factory=list)
+    step_s: float = 1.0
+    duration_s: float = 0.0
     error: str | None = None
 
     @property
@@ -159,6 +164,7 @@ class SimHost:
         self.idealized: set[str] = set()
         self.placeholders: set[str] = set()  # gaps run by their stub
         self.dropped: set[str] = set()  # fields a model wrote but the contract does not
+        self.activations: list[tuple[float, str, str]] = []
 
     def _context(self, inst: Instance, leaf: dict[str, Any], options: dict[str, Any]):
         contract = self.c.actions.get(leaf.get("action") or "")
@@ -180,12 +186,15 @@ class SimHost:
         if "gap" in leaf:
             self.placeholders.add(leaf["gap"]["id"])
             return inst.gap_stub(leaf)
+        key = (inst.name, leaf["node_id"])
+        if new or key not in self.models:
+            self.activations.append((self.world.now, inst.name, action))
         spec = self.c.semantics.actions.get(action)
         if spec is None or spec.get("model") not in MODELS:
             self.idealized.add(action)
+            self.models.setdefault(key, None)  # type: ignore[arg-type]
             return SUCCESS, None
-        key = (inst.name, leaf["node_id"])
-        if new or key not in self.models:
+        if new or self.models.get(key) is None:
             options = {k: v for k, v in spec.items() if k != "model"}
             model = MODELS[spec["model"]]()
             ctx = self._context(inst, leaf, options)
@@ -203,7 +212,7 @@ class SimHost:
 
     def cancel(self, inst: Instance, leaf: dict[str, Any]) -> None:
         key = (inst.name, leaf["node_id"])
-        if key in self.models:
+        if self.models.get(key) is not None:
             model, ctx = self.models.pop(key)
             model.cancel(ctx)
             self._execution(ctx, str(leaf.get("action")), "cancelled", "CANCELLED", False)
@@ -273,6 +282,7 @@ def simulate(model: dict[str, Any], contracts: Contracts, raw: dict[str, Any]) -
         now = world.now
         while pending and pending[0].at_s <= now + 1e-9:
             ev = pending.pop(0)
+            result.events.append((now, ev.event))
             for inst in instances:
                 if (ev.role in (None, inst.role)) and (ev.instance in (None, inst.index)):
                     inst.raise_event(_event_name(inst, ev.event))
@@ -298,6 +308,9 @@ def simulate(model: dict[str, Any], contracts: Contracts, raw: dict[str, Any]) -
         result.transitions[inst.name] = list(inst.trace)
     result.idealized = set(host.idealized)
     result.placeholders = set(host.placeholders)
+    result.activations = list(host.activations)
+    result.step_s = env.step_s
+    result.duration_s = env.duration_s
     result.dropped = set(host.dropped)
     result.checks = [_check(e, result) for e in sc.expect]
     return result

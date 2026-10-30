@@ -112,6 +112,12 @@ def tree_python(contracts: Contracts, raw: dict[str, Any], indent: str = "    ")
             head = f"{indent}with repeat(count={raw['count']}):"
         else:
             head = f"{indent}with repeat(duration={raw.get('duration_s')} * s):"
+    elif kind == "selector" and kids and kids[0].get("type") == "condition" and len(kids) > 1:
+        # "the rest until the condition holds" — written with the sheet's until gate
+        sem = contracts.semantics.tactic_conditions.get(str(kids[0].get("condition"))) or {}
+        cond = expr_text(sem["expression"]) if "expression" in sem else kids[0].get("condition")
+        body = [x for k in kids[1:] for x in tree_python(contracts, k, indent + "    ")]
+        return [f"{indent}with until({cond}):", *body]
     elif kind in ("sequence", "selector"):
         head = f"{indent}with {kind}():"
     else:
@@ -199,6 +205,27 @@ def index(contracts: Contracts, classes: set[str] | None = None) -> str:
                 f"  - 战术集任务 `{m.id}`：状态 {', '.join(map(str, m.raw.get('states') or []))}"
                 + (f"（{desc}）" if desc else "")
             )
+    return "\n".join(lines)
+
+
+def action_list(contracts: Contracts, classes: set[str] | None = None) -> str:
+    """Every action with its description and the tactic-set subtrees that use it (for
+    writing requirement obligations, which name actions)."""
+    used: dict[str, list[str]] = {}
+    for t in contracts.tactics.values():
+        if t.section != "subtrees":
+            continue
+        for ref in _refs(t.raw):
+            if ref in contracts.actions:
+                used.setdefault(ref, []).append(t.id)
+    lines = []
+    for a in sorted(contracts.actions.values(), key=lambda x: x.id):
+        if classes and a.platform_classes and not classes & set(a.platform_classes):
+            continue
+        cap = contracts.catalog.capabilities.get(a.id)
+        desc = _short((cap.raw.get("description") if cap else "") or a.description, 100)
+        subs = sorted(set(used.get(a.id, [])))
+        lines.append(f"- {a.id} — {desc}" + (f"（用于子树 {', '.join(subs)}）" if subs else ""))
     return "\n".join(lines)
 
 

@@ -246,6 +246,9 @@ def test_state_machine_and_trees_use_native_structure(env) -> None:
     assert "script string IR_SENSE_WATCH_VEHICLE_SEARCHING_" in text
     assert 'Demo_Pick(aPlatform, "sense_watch_vehicle", "sense_watch")' in text
     assert "Demo_Cancel(PLATFORM" in searching and 'Demo_Release(PLATFORM, "target"' in searching
+    # each action leaf reports its first execution after the state was entered (obligations)
+    assert 'writeln("IR_ACT|", TIME_NOW, "|", PLATFORM.Name(), "|' in text
+    assert '_act", false);' in searching
     # tactic-set timeout: the child, or a guard that fails when the time is up
     assert "_timeout" in searching and '{ return Failure("timeout"); }' in text
     assert "on_exit" in searching
@@ -391,6 +394,13 @@ def test_judge_compares_with_expectation_and_reference(env) -> None:
     run["expect"]["markers"] = [r"^CLEANUP\|1"]
     j = judge(run, CONSOLE, reference)
     assert not j.passed and any("CLEANUP" in p for p in j.problems)
+    assert judge(run, CONSOLE + "CLEANUP|1\n", reference).passed
+    # time spent in each state against the reference (generated: SEARCHING for 4 s, the
+    # reference 3 s)
+    run["expect"]["max_interval_delta_s"] = 0.5
+    j = judge(run, CONSOLE + "CLEANUP|1\n", reference)
+    assert not j.passed and any("stayed 4s in SEARCHING" in p for p in j.problems), j.problems
+    run["expect"]["max_interval_delta_s"] = 2.0
     assert judge(run, CONSOLE + "CLEANUP|1\n", reference).passed
 
 

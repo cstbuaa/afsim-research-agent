@@ -59,6 +59,11 @@ def _parser() -> argparse.ArgumentParser:
     draft3.add_argument(
         "--fix-steps", type=int, help="自检纠错循环的步数上限（默认取请求文件，缺省 20；0 关闭）"
     )
+    draft3.add_argument(
+        "--candidates",
+        type=int,
+        help="独立起草的份数，取检查结果最好的一份（默认取请求文件，缺省 1）",
+    )
     comp3 = sub.add_parser(
         "compile3", help="v3：战术稿 → IR 2.0 并做 L1–L3（不调用模型，结果写到新目录）"
     )
@@ -153,6 +158,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     out_dir=args.out,
                     allow_mission_ref=False if args.no_mission_ref else None,
                     fix_steps=args.fix_steps,
+                    candidates=args.candidates,
                 )
             )
             _print_v3(result3)

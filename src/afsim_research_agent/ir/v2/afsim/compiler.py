@@ -12,7 +12,9 @@ Conventions of the generated input (all names start with ``ir_`` / ``IR_``):
 
 - a ``IR_BOOT`` state enters the initial state, so its ``on_entry`` runs (AFSIM does not
   run the initial state's ``on_entry``);
-- every ``on_entry`` writes ``IR_STATE|<time>|<platform>|<state>`` for the evaluator;
+- every ``on_entry`` writes ``IR_STATE|<time>|<platform>|<state>`` for the evaluator, and
+  the first execution of each action leaf in a state writes ``IR_ACT|<time>|<platform>|<action>``
+  (requirement obligations are judged on these);
 - external events are auxiliary data ``ir_ev_<id>`` set by the run file and consumed by
   the transition that fires on them.
 """
@@ -166,7 +168,7 @@ class Compiler:
         self.missing: set[str] = set()
 
     # ------------------------------------------------------------------ package
-    def package(self, runs: list[RunConfig]) -> Package:
+    def package(self, runs: list[RunConfig], obligations: list[dict] | None = None) -> Package:
         placeholders = _placeholders(self.m)
         if placeholders:
             raise CompileError(
@@ -198,6 +200,7 @@ class Compiler:
             "model_root": self.b.meta.model_root,
             "behavior_file": name,
             "runs": {f: r.model_dump() for f, r in zip(run_files, runs, strict=True)},
+            "obligations": list(obligations or []),
             "sha256": {
                 name: hashlib.sha256(behavior.encode()).hexdigest(),
                 **{f: hashlib.sha256(t.encode()).hexdigest() for f, t in run_files.items()},
@@ -286,6 +289,8 @@ class Compiler:
             f'writeln("IR_STATE|", TIME_NOW, "|", PLATFORM.Name(), "|{s}");',
             *subst(self.b.instance.state_entry, state=s).strip().splitlines(),
         ]
+        # the evaluator's action starts (IR_ACT) are reported once per state entry
+        entry += [f'PLATFORM.SetAuxData("{leaf.name}_act", false);' for leaf in st.leaves]
         seen: list[str] = []
         for leaf in st.leaves:
             if leaf.enter.strip() and leaf.enter not in seen:
@@ -695,6 +700,7 @@ class Compiler:
                 f"advanced_behavior {name}",
                 f"   precondition {pre} end_precondition",
                 "   execute",
+                *_activation(name, action),
                 f"      string st = {func}(PLATFORM);",
                 f'      PLATFORM.SetAuxData("{name}_run", st == "RUNNING");',
                 '      if (st == "SUCCESS") { return Success(); }',
@@ -727,6 +733,7 @@ class Compiler:
             f"advanced_behavior {name}_in",
             f"   precondition {pre} end_precondition",
             "   execute",
+            *_activation(name, action),
             f'      string req = PLATFORM.AuxDataString("{name}_req");',
             '      bool fresh = (req == "");',
             f"      if (!fresh) {{ fresh = ({done.strip() or 'false'}); }}",
@@ -898,3 +905,14 @@ class Compiler:
     def _event_name(self, name: str) -> str:
         """A run names an event by id or by its tactic-set text."""
         return name if name in self.m.get("events", {}) else event_id(name)
+
+
+def _activation(name: str, action: str) -> list[str]:
+    """Report the first execution of an action leaf after its state was entered."""
+    return [
+        f'      if (!PLATFORM.AuxDataBool("{name}_act"))',
+        "      {",
+        f'         PLATFORM.SetAuxData("{name}_act", true);',
+        f'         writeln("IR_ACT|", TIME_NOW, "|", PLATFORM.Name(), "|{action}");',
+        "      }",
+    ]

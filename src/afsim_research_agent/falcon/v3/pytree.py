@@ -19,6 +19,12 @@ several statements                          ``sequence_with_memory`` (resumes at
 ``with repeat(until_done=True):``           ``repeat`` (``count=n`` / ``duration=10 * s``)
 ``with inverter():`` / ``with succeeder():``  decorators
 ``with keep_running():``                    ``failure_as_running`` (failure → running)
+``with after(10 * s):``                     gate: running until the state has lasted 10 s,
+                                            then the body (``sequence(keep_running(c), …)``)
+``with when(c):``                           gate: the body only while ``c`` holds, running
+                                            (waiting) otherwise
+``with until(c):``                          the body until ``c`` holds, then success
+                                            (``selector(c, …)``)
 ``if c: A`` / ``else: B``                   ``sequence(c, A)`` / ``selector(sequence(c, A), B)``
 ``try: A`` ``except: B``                    ``selector_with_memory(A, B)``
 ==========================================  ==============================================
@@ -51,6 +57,7 @@ CONTROLS = {
     "keep_running": "failure_as_running",
 }
 DECORATORS = ("repeat", "inverter", "succeeder", "negator", "keep_running")
+GATES = ("after", "when", "until")
 
 
 @dataclass
@@ -272,9 +279,11 @@ class _Translator:
             return None
         call = stmt.items[0].context_expr
         name = dotted(call.func) or ""
+        if name in GATES:
+            return self.gate(name, call, stmt)
         kind = CONTROLS.get(name)
         if kind is None:
-            self.fail(stmt, f"'{name}' 不是控制节点", sorted(CONTROLS))
+            self.fail(stmt, f"'{name}' 不是控制节点", sorted(CONTROLS) + list(GATES))
             return None
         kids = [n for n in (self.statement(s) for s in stmt.body) if n is not None]
         if not kids:
@@ -289,6 +298,16 @@ class _Translator:
             ]
         else:
             out["children"] = kids
+        if kind in ("selector", "selector_with_memory") and len(kids) > 1:
+            first = kids[0]
+            if first.get("type") == "condition":
+                self.fail(
+                    stmt,
+                    f"{name} 的第一个子节点是条件：条件成立时整个 {name} 立即成功，后面的节点"
+                    '不再执行。要"执行直到条件成立"写 with until(条件):；要"条件成立后才执行"'
+                    "写 with when(条件): 或计时 with after(10 * s):",
+                )
+                return None
         if kind == "parallel":
             out["policy"] = self.policy(call)
         elif kind == "repeat":
@@ -299,6 +318,36 @@ class _Translator:
         elif call.args or call.keywords:
             self.fail(stmt, f"{name}() 不带参数")
         return self.node(out, stmt)
+
+    def gate(self, name: str, call: ast.Call, stmt: ast.With) -> dict[str, Any] | None:
+        """``after`` / ``when`` / ``until``: the usual timing and guard patterns as one
+        construct, so that their behavior-tree form cannot be written the wrong way round."""
+        if len(call.args) != 1 or call.keywords:
+            self.fail(
+                stmt, f"{name}(…) 写一个参数：" + ("时长，如 10 * s" if name == "after" else "条件")
+            )
+            return None
+        body = self.body(stmt.body, stmt)
+        if body is None:
+            return None
+        arg = call.args[0]
+        if name == "after":
+            test: ast.expr = ast.Compare(
+                left=ast.Call(func=ast.Name("time_in_state", ast.Load()), args=[], keywords=[]),
+                ops=[ast.GtE()],
+                comparators=[arg],
+            )
+            ast.copy_location(test, arg)
+            ast.fix_missing_locations(test)
+        else:
+            test = arg
+        cond = self.condition(test, stmt)
+        if cond is None:
+            return None
+        if name == "until":
+            return self.node({"type": "selector", "children": [cond, body]}, stmt)
+        wait = self.node({"type": "failure_as_running", "children": [cond]}, stmt)
+        return self.node({"type": "sequence", "children": [wait, body]}, stmt)
 
     def policy(self, call: ast.Call) -> dict[str, Any]:
         arg: ast.expr | None = call.args[0] if call.args else None

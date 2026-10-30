@@ -82,6 +82,9 @@ CONTROL_GUIDE = """```python conditions``` 块：每行 `条件名 = 表达式`�
   避免重复下达；也可 count=次数、duration=时长），`with inverter():`、`with succeeder():`，`with keep_running():`（下面的节点失败时报告"运行中"，
   如没有目标时继续搜索，而不是让整棵树失败）；
   `if 条件: …`、`else: …`；`try: …` `except: …`（前者失败时执行后者）；
+- 门控：`with after(10 * s):`（进入本状态满 10 s 后才执行下面的节点，之前保持运行），
+  `with when(条件):`（条件成立时才执行，不成立时等待），`with until(条件):`（执行下面的节点直到条件成立，
+  然后成功）。"过一段时间再做""满足条件才做""做到条件成立为止"都用它们写，不要自己用 selector 和 assert 拼；
 - 同一时刻要持续做的几件事（边走边搜、边跟踪边保持队形）放进 parallel；并行分支不能同时占用同一独占资源；
 - 一直运行的动作（如保持位置）放在顺序节点前面会挡住后面的节点，此时用 parallel；
 - 树里不能给黑板赋值。
@@ -222,6 +225,7 @@ def structure_prompt(
     state_names: dict[str, list[str]] | None = None,
     scenario_events: dict[str, str] | None = None,
     policy: str = "all",
+    obligations: str = "",
 ) -> str:
     names = ""
     if scenario_events:
@@ -241,7 +245,7 @@ def structure_prompt(
 ## 需求条款
 {_clauses(clauses)}
 {tactic_brief}
-## 约定
+{_obligations_section(obligations)}## 约定
 {_hints(roles, scenario, allow_mission_ref, policy)}{names}
 
 ## 能力集切片索引
@@ -265,6 +269,7 @@ def control_prompt(
     pending: list[str] | None = None,
     mission_refs: list[str] | None = None,
     policy: str = "all",
+    obligations: str = "",
 ) -> str:
     need = "；".join(f"{r}: {', '.join(states.get(r, []))}" for r in roles_needing_trees)
     if pending:
@@ -287,7 +292,7 @@ def control_prompt(
 ## 需求条款
 {_clauses(clauses)}
 
-## 已写好的部分
+{_obligations_section(obligations)}## 已写好的部分
 {sheet}
 
 ## 能力集详细内容（只用这里的 ID 和字段）
@@ -302,12 +307,18 @@ def control_prompt(
 只输出这几个代码块，不要重复已写好的块，不要解释。"""
 
 
-def verification_prompt(requirement: str, sheet: str, summary: str) -> str:
+def verification_prompt(requirement: str, sheet: str, summary: str, obligations: str = "") -> str:
+    cover = (
+        "\n想定要能覆盖下面的需求约束：让约束的前提（相关动作开始、外部事件发生）在想定中出现，"
+        "程序会在每个想定的运行轨迹上检查它们。\n"
+        if obligations
+        else ""
+    )
     return f"""你在为战术行为模型编写验证用例。
 
 ## 需求
 {requirement}
-
+{_obligations_section(obligations)}{cover}
 ## 战术稿
 {sheet}
 
@@ -318,6 +329,58 @@ def verification_prompt(requirement: str, sheet: str, summary: str) -> str:
 {VERIFICATION_GUIDE}
 
 只输出这一个代码块，不要解释。"""
+
+
+def _obligations_section(text: str) -> str:
+    if not text:
+        return ""
+    return (
+        "## 需求约束（程序会在二维仿真和 AFSIM 运行中按动作开始时刻检查，模型必须满足）\n"
+        f"{text}\n"
+        "时间上的先后与延迟用状态图的计时事件或树中的 `with after(…)` / `with when(…)` 实现。\n\n"
+    )
+
+
+OBLIGATIONS_GUIDE = """把需求条款中关于"什么时候做"的要求写成可以在运行轨迹上检查的约束。程序记录每个动作
+开始执行的时刻和外部事件发生的时刻，按下面三类检查（动作 ID 只能用下面列出的）：
+
+- not_before：动作 action 第一次开始，不早于动作 after 第一次开始后 min_s 秒。
+  例："前进约 10 秒后开始搜索" → {kind: not_before, action: <开始搜索的动作>, after: <前进的动作>, min_s: 10}
+- precedes：动作 then 开始前，动作 first 已经开始过。
+  例："先停车，再展开" → {kind: precedes, first: <停车的动作>, then: <展开的动作>}
+- response：外部事件 on_event 发生后 within_s 秒内动作 action 开始。
+  例："收到结束请求后关闭传感器" → {kind: response, on_event: <事件>, action: <关传感器的动作>, within_s: 10}
+
+规则：
+- 只写需求明确提出的时间或先后要求；动作本身就有的顺序（同一个子树内部）不写；
+- 选最直接体现条款的动作：搜索开始用开机 / 开始搜索的动作，不用读取航迹类动作；
+- 时长取需求给的数值（"约 10 秒"写 10）；没有给时长的 response 用 10；
+- id 用英文蛇形；clause 写条款编号；description 用一句中文复述要求；
+- 没有可检查的要求就返回空列表。"""
+
+
+def obligations_prompt(
+    requirement: str, clauses: list[dict[str, Any]], actions: str, events: dict[str, str]
+) -> str:
+    ev = "\n".join(f"- {k}：{v}" for k, v in events.items()) or "（无）"
+    return f"""你在把战术需求中的时间与先后要求写成可检查的约束。
+
+## 需求
+{requirement}
+
+## 需求条款
+{_clauses(clauses)}
+
+## 外部事件
+{ev}
+
+## 可用的动作（ID — 说明）
+{actions}
+
+## 要求
+{OBLIGATIONS_GUIDE}
+
+按给定的结构输出。"""
 
 
 def repair_prompt(label: str, numbered: str, problems: list[str], guide: str, context: str) -> str:

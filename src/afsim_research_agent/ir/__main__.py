@@ -146,6 +146,24 @@ def _v2_from_tactic(args) -> int:
     return 0 if not failed else 1
 
 
+def _obligations(args) -> list[dict]:
+    """Requirement obligations for the AFSIM judge: --obligations, or the falcon package's
+    obligations.yaml next to the behavior spec."""
+    import yaml
+
+    from afsim_research_agent.ir.v2.obligations import Obligation
+
+    path = getattr(args, "obligations", None)
+    if path is None and getattr(args, "spec", None) is not None:
+        sibling = args.spec.parent / "obligations.yaml"
+        path = sibling if sibling.exists() else None
+    if path is None:
+        return []
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    items = data.get("obligations", data) if isinstance(data, dict) else data
+    return [Obligation.model_validate(o).model_dump(exclude_none=True) for o in items or []]
+
+
 def _v2_model(args, contracts):
     import yaml
 
@@ -231,7 +249,10 @@ def _v2_afsim(args) -> int:
             return 1
         try:
             compiler = Compiler(model, contracts, Binding.load(args.binding), trace=args.trace)
-            package = compiler.package([RunConfig.load(r) for r in args.run])
+            obligations = _obligations(args)
+            package = compiler.package(
+                [RunConfig.load(r) for r in args.run], obligations=obligations
+            )
             written = compiler.write(package, args.out)
         except CompileError as exc:
             print(f"compile failed: {exc}")
@@ -354,6 +375,11 @@ def main(argv: list[str] | None = None) -> int:
     v2ac.add_argument("--out", type=Path, required=True)
     v2ac.add_argument("--capability-set", type=Path)
     v2ac.add_argument("--trace", action="store_true", help="leaves print IR_TICK lines")
+    v2ac.add_argument(
+        "--obligations",
+        type=Path,
+        help="requirement obligations to judge (default: obligations.yaml next to the spec)",
+    )
     v2ar = v2a_sub.add_parser("run")
     v2ar.add_argument("package", type=Path)
     v2ar.add_argument("--mission", help="mission executable (default: $AFSIM_MISSION or mission)")

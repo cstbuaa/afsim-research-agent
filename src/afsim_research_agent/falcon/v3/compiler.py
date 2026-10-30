@@ -295,6 +295,7 @@ class SheetCompiler:
         self._condition_usage(spec)
         if not self.pending_triggers:
             self._writer_checks(spec)
+            self._tree_event_checks(spec)
         if self.scenario_events and not self.pending_triggers:
             external = {e["id"] for e in spec["events"] if e["source"] == "external"}
             for eid in sorted(external - set(self.scenario_events)):
@@ -514,6 +515,108 @@ class SheetCompiler:
                             "或子树，或改用本状态会更新的字段、计时，或用树事件表达"
                             '"本状态的树完成"（events 中声明 {source: tree, result: success}）',
                         )
+
+    # ------------------------------------------------------------------ termination
+    def _outcomes(self, node: Any, subs: dict[str, Any], seen: frozenset[str] = frozenset()):
+        """Results a tree can end with ({"success", "failure"}), from the contracts'
+        result semantics (an action that runs until stopped never succeeds)."""
+        both = {"success", "failure"}
+        if not isinstance(node, dict):
+            return both
+        kind = node.get("type")
+        kids = [k for k in [node.get("child"), *(node.get("children") or [])] if k]
+        if kind == "action":
+            name = str(node.get("action") or "")
+            a = self.c.actions.get(name)
+            if a is None:
+                return both
+            if a.persistent:
+                return {"failure"}
+            return both
+        if kind in ("subtree", "tactic"):
+            ref = str(node.get("subtree") or node.get("tactic") or "")
+            if ref in seen:
+                return both
+            if ref in subs:
+                return self._outcomes(subs[ref], subs, seen | {ref})
+            entry = self.c.tactics.get(ref)
+            if entry is None:
+                return both
+            if entry.raw.get("persistent") is True:
+                return {"failure"}
+            return self._outcomes(entry.raw.get("root"), subs, seen | {ref})
+        outs = [self._outcomes(k, subs, seen) for k in kids]
+        if kind in ("sequence", "sequence_with_memory"):
+            res = set()
+            if all("success" in o for o in outs):
+                res.add("success")
+            if any("failure" in o for o in outs):
+                res.add("failure")
+            return res
+        if kind in ("selector", "selector_with_memory"):
+            res = set()
+            if any("success" in o for o in outs):
+                res.add("success")
+            if all("failure" in o for o in outs):
+                res.add("failure")
+            return res
+        if kind == "parallel":
+            policy = node.get("policy") or {"type": node.get("success_policy") or "one"}
+            ptype = policy.get("type") if isinstance(policy, dict) else str(policy)
+            need = {"one": 1, "all": len(outs)}.get(str(ptype), int(policy.get("count", 1) or 1))
+            res = set()
+            if sum("success" in o for o in outs) >= need:
+                res.add("success")
+            if any(o for o in outs):
+                res.add("failure")
+            return res
+        if kind == "failure_as_running":
+            return {"success"} & (outs[0] if outs else both)
+        if kind == "inverter":
+            o = outs[0] if outs else both
+            return {{"success": "failure", "failure": "success"}[x] for x in o}
+        if kind == "succeeder":
+            return {"success"}
+        if kind == "negator":
+            return {"failure"}
+        if kind == "repeat":
+            o = outs[0] if outs else both
+            rep = node.get("repeat") or {}
+            if rep.get("duration_s") or node.get("duration_s"):
+                return {"success"}
+            return {"success"} if o else set()
+        return both
+
+    def _tree_event_checks(self, spec: dict[str, Any]) -> None:
+        """A tree event fires when the state's tree ends with that result: refuse one whose
+        tree can never end that way (e.g. a tree that keeps running, like holding position)."""
+        tree_events = {
+            e["id"]: e.get("result", "success") for e in spec["events"] if e["source"] == "tree"
+        }
+        if not tree_events:
+            return
+        subs = {s["id"]: s["root"] for s in spec["subtrees"]}
+        for rid, mission in spec["missions"].items():
+            if "tactic" in mission:
+                continue
+            trees = spec["state_trees"].get(rid, {})
+            for i, tr in enumerate(mission["transitions"]):
+                result = tree_events.get(tr["on"])
+                if result is None:
+                    continue
+                ref = trees.get(tr["from"])
+                root = subs.get(ref) if ref in subs else {"type": "tactic", "tactic": ref}
+                if ref is None or result in self._outcomes(root, subs):
+                    continue
+                word = "成功" if result == "success" else "失败"
+                block, line = self.out.locate(f"missions.{rid}.transitions[{i}]")
+                self.fail(
+                    block,
+                    line,
+                    f"树事件 {tr['on']}（本状态的树{word}时触发）永远不会在 {tr['from']} 触发："
+                    f"该状态的树不会{word}（含一直运行、不会自己结束的动作或子树）。"
+                    "改用会变化的字段条件或计时事件，或让树在工作完成时结束",
+                )
 
     def _tree_conditions(self, ref: str | None, subs: dict[str, Any]) -> set[str]:
         """Condition ids used inside the model's own trees reachable from a state tree."""

@@ -38,6 +38,9 @@ from afsim_research_agent.falcon.v3.compiler import Compiled, compile_sheet
 from afsim_research_agent.falcon.v3.fixer import fix_sheet, render_fix
 from afsim_research_agent.ir.diagnostics import Diagnostic
 from afsim_research_agent.ir.v2 import Contracts, normalize
+from afsim_research_agent.ir.v2.obligations import Obligation
+from afsim_research_agent.ir.v2.obligations import check as check_obligations
+from afsim_research_agent.ir.v2.obligations import render as render_obligations
 from afsim_research_agent.ir.v2.sim import run_l2, simulate
 
 FALCON_V3_VERSION = "falcon-3.0.0"
@@ -89,10 +92,33 @@ class V3Request(BaseModel):
     capability_set: Path | None = None  # default: the configured capability set
     max_repair: int = Field(default=3, ge=0, le=6)
     fix_steps: int = Field(default=20, ge=0, le=60)  # self-checking repair loop budget
+    # requirement obligations checked on every run (None: extracted from the requirement)
+    obligations: list[dict[str, Any]] | None = None
+    extract_obligations: bool = True
+    # drafts made independently; the one that passes most checks is kept
+    candidates: int = Field(default=1, ge=1, le=5)
 
     @classmethod
     def load(cls, path: Path) -> V3Request:
         return cls.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {})
+
+
+class ObligationItem(BaseModel):
+    id: str
+    kind: str
+    description: str = ""
+    clause: str | None = None
+    action: str | None = None
+    after: str | None = None
+    min_s: float | None = None
+    first: str | None = None
+    then: str | None = None
+    on_event: str | None = None
+    within_s: float | None = None
+
+
+class ObligationAnswer(BaseModel):
+    obligations: list[ObligationItem] = Field(default_factory=list)
 
 
 @dataclass
@@ -140,6 +166,7 @@ class Drafter:
         self.clauses: list[dict[str, Any]] = []
         self.slices: list[str] = []
         self.notes: list[str] = []
+        self.obligations: list[Obligation] = []
 
     # ------------------------------------------------------------------ helpers
     @property
@@ -176,13 +203,28 @@ class Drafter:
                 {"id": c.id, "passed": c.passed, "detail": c.detail}
                 for c in run_l2(model, self.c, spec.get("tests") or [])
             ]
+            covered: set[str] = set()
             for raw in spec.get("scenarios") or []:
                 res = simulate(model, self.c, raw)
+                verdicts = check_obligations(
+                    self.obligations,
+                    res.activations,
+                    res.events,
+                    step_s=res.step_s,
+                    end_s=res.duration_s,
+                )
+                covered |= {v.id for v in verdicts if v.judged}
+                broken = [v for v in verdicts if v.judged and not v.passed]
+                render = res.render()
+                lines = render_obligations(verdicts, self.obligations)
+                if lines:
+                    render += "\n" + "\n".join(lines)
                 out.l3.append(
                     {
                         "id": res.scenario,
-                        "passed": res.passed,
-                        "render": res.render(),
+                        "passed": res.passed and not broken,
+                        "render": render,
+                        "obligations": [v.__dict__ for v in verdicts],
                         "idealized": sorted(res.idealized),
                         "placeholders": sorted(res.placeholders),
                         "unresolved": sorted(res.unresolved),
@@ -191,6 +233,25 @@ class Drafter:
                         "duration_s": float(
                             ((raw.get("environment") or {}).get("duration_s")) or 0.0
                         ),
+                    }
+                )
+            missing = [o for o in self.obligations if o.id not in covered]
+            if missing and spec.get("scenarios"):
+                out.l3.append(
+                    {
+                        "id": "obligation_coverage",
+                        "passed": False,
+                        "render": "obligation_coverage: FAIL\n"
+                        + "\n".join(
+                            f"  [FAIL] 需求约束 {o.id}（{o.description or o.kind}）没有被任何想定"
+                            "覆盖：在 verification 中加一个会出现它的前提的想定"
+                            + (f"（外部事件 {o.on_event}）" if o.on_event else "")
+                            for o in missing
+                        ),
+                        "obligations": [],
+                        "states": {},
+                        "transitions": {},
+                        "duration_s": 0.0,
                     }
                 )
         return out
@@ -235,8 +296,22 @@ class Drafter:
         self.rounds.append(record)
         return True
 
+    @property
+    def obligations_text(self) -> str:
+        return "\n".join(
+            f"- {o.id}（{o.clause or '—'}，{o.kind}）：{o.description}"
+            + "；"
+            + json.dumps(
+                o.model_dump(exclude_none=True, exclude={"id", "description", "clause", "kind"}),
+                ensure_ascii=False,
+            )
+            for o in self.obligations
+        )
+
     def _context(self, check: Check) -> str:
         parts = [f"当前战术稿：\n{self.sheet}"]
+        if self.obligations:
+            parts.append("需求约束（程序检查）：\n" + self.obligations_text)
         if self.slices:
             parts.append(
                 "能力集详细内容：\n" + K.details(self.c, self.slices, self.r.reference_policy)
@@ -261,6 +336,38 @@ class Drafter:
         self.clauses = [{"id": c.id, "text": c.text, "kind": c.kind} for c in clauses]
         self.notes += notes
 
+    async def obligations_stage(self) -> None:
+        """Requirement obligations: given by the request, or written by the model from the
+        requirement clauses (independent of the draft, so a missed clause shows up)."""
+        known = set(self.c.actions)
+        events = set(self.r.scenario_events)
+        raw: list[dict[str, Any]] = []
+        if self.r.obligations is not None:
+            raw = list(self.r.obligations)
+        elif self.r.extract_obligations:
+            classes = {v.capability_class for v in self.r.roles.values()} or None
+            prompt = P.obligations_prompt(
+                self.r.requirement,
+                self.clauses,
+                K.action_list(self.c, classes),
+                self.r.scenario_events,
+            )
+            answer = await self.run("v3:obligations", prompt, ObligationAnswer)
+            raw = [dict(o) for o in answer.obligations]
+        seen: set[str] = set()
+        for item in raw:
+            try:
+                ob = Obligation.model_validate({k: v for k, v in item.items() if v is not None})
+            except Exception as exc:  # noqa: BLE001 - a malformed item is dropped and noted
+                self.notes.append(f"需求约束 {item.get('id')} 格式不对，已忽略：{str(exc)[:120]}")
+                continue
+            problems = ob.problems(known, events)
+            if problems or ob.id in seen:
+                self.notes.append(f"需求约束 {ob.id} 已忽略：{'；'.join(problems) or '重复'}")
+                continue
+            seen.add(ob.id)
+            self.obligations.append(ob)
+
     async def structure_stage(self) -> Check:
         classes = {v.capability_class for v in self.r.roles.values()} or None
         prompt = P.structure_prompt(
@@ -273,6 +380,7 @@ class Drafter:
             state_names=self.r.state_names,
             scenario_events=self.r.scenario_events,
             policy=self.r.reference_policy,
+            obligations=self.obligations_text,
         )
         await self.ask("v3:structure", prompt, STRUCTURE_KINDS)
         check = self.check(pending=True)
@@ -326,6 +434,7 @@ class Drafter:
             states,
             pending=self._pending(structure.compiled),
             policy=self.r.reference_policy,
+            obligations=self.obligations_text,
             mission_refs=[
                 r
                 for r, m in ((structure.compiled.spec or {}).get("missions") or {}).items()
@@ -343,7 +452,9 @@ class Drafter:
         return check
 
     async def verification_stage(self, control: Check) -> Check:
-        prompt = P.verification_prompt(self.r.requirement, self.sheet, self._summary(control))
+        prompt = P.verification_prompt(
+            self.r.requirement, self.sheet, self._summary(control), self.obligations_text
+        )
         await self.ask("v3:verification", prompt, ("verification",), single="verification")
         check = self.check(verify=True)
         if not check.l1_ok:
@@ -559,6 +670,21 @@ def _review(request: V3Request, drafter: Drafter, check: Check, status: str) -> 
         rows = compare_tactics(check.model, drafter.c)
         if rows:
             lines += [*render_comparison(rows), ""]
+    if drafter.obligations:
+        lines.append("## 需求约束（程序检查）")
+        judged: dict[str, list[str]] = {}
+        for s in check.l3:
+            for v in s.get("obligations") or []:
+                if v.get("judged"):
+                    judged.setdefault(v["id"], []).append(
+                        f"{s['id']} {'通过' if v['passed'] else '未通过'}"
+                    )
+        for o in drafter.obligations:
+            lines.append(
+                f"- {o.id}（{o.clause or '—'}）{o.description}："
+                + ("；".join(judged.get(o.id, [])) or "没有想定覆盖")
+            )
+        lines.append("")
     lines.append("## 需求条款")
     implements = check.compiled.implements
     for c in drafter.clauses:
@@ -597,6 +723,15 @@ def write_package(
     if spec:
         (staging / "behavior_spec.yaml").write_text(
             yaml.safe_dump(spec, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+    if drafter.obligations:
+        (staging / "obligations.yaml").write_text(
+            yaml.safe_dump(
+                {"obligations": [o.model_dump(exclude_none=True) for o in drafter.obligations]},
+                allow_unicode=True,
+                sort_keys=False,
+            ),
+            encoding="utf-8",
         )
     gaps = (check.model or {}).get("gaps") or {}
     if gaps:
@@ -691,7 +826,19 @@ def compile_package(sheet_path: Path, request_path: Path, out: Path) -> V3Result
     if out.exists():
         raise FileExistsError(f"{out} exists; model packages go to a new directory")
     contracts = Contracts.load(request.capability_set)
+    if request.obligations is None:
+        saved = sheet_path.parent / "obligations.yaml"
+        data = yaml.safe_load(saved.read_text(encoding="utf-8")) if saved.exists() else {}
+        request = request.model_copy(
+            update={
+                "obligations": (data or {}).get("obligations") or [],
+                "extract_obligations": False,
+            }
+        )
     drafter = Drafter(request, contracts, ModelRunner(_NoModel()))
+    import asyncio
+
+    asyncio.run(drafter.obligations_stage())
     drafter.blocks = split_sheet(sheet_path.read_text(encoding="utf-8"))[0]
     drafter.slices = drafter._slices(drafter.compile(pending=True))
     check = drafter.check(verify=True)
@@ -712,6 +859,30 @@ class _NoModel:
         raise RuntimeError("compile3 does not call a model")
 
 
+def _score(check: Check) -> tuple[int, int, int]:
+    """Smaller is better: L1 failed, L1 problems, failed L2 tests / L3 scenarios (including
+    broken requirement obligations and obligations no scenario covers)."""
+    failed = sum(not t["passed"] for t in check.l2) + sum(not s["passed"] for s in check.l3)
+    return (0 if check.l1_ok else 1, len(check.problems), failed)
+
+
+async def _draft(drafter: Drafter, run: ModelRunner) -> tuple[Check, list[Any]]:
+    request = drafter.r
+    structure = await drafter.structure_stage()
+    control = await drafter.control_stage(structure)
+    budget = request.fix_steps
+    fixes: list[Any] = []
+    if not control.l1_ok and budget:
+        fixes.append(await fix_sheet(drafter, run, max(1, budget // 2)))
+        budget -= fixes[-1].steps
+        control = drafter.check()
+    check = await drafter.verification_stage(control) if control.l1_ok else control
+    if not check.verified and budget > 0:
+        fixes.append(await fix_sheet(drafter, run, budget))
+        check = drafter.check(verify=True)
+    return check, fixes
+
+
 async def run_draft3(
     request_path: Path,
     model: FalconModel,
@@ -719,12 +890,17 @@ async def run_draft3(
     out_dir: Path | None = None,
     allow_mission_ref: bool | None = None,
     fix_steps: int | None = None,
+    candidates: int | None = None,
 ) -> V3Result:
+    import asyncio
+
     request = V3Request.load(request_path)
     if fix_steps is not None:
         request = request.model_copy(update={"fix_steps": fix_steps})
     if allow_mission_ref is not None:
         request = request.model_copy(update={"allow_mission_ref": allow_mission_ref})
+    if candidates is not None:
+        request = request.model_copy(update={"candidates": candidates})
     contracts = Contracts.load(request.capability_set)
     target = _target(request, request_path, out_dir)
     staging = target.with_name(target.name + ".partial")
@@ -732,25 +908,33 @@ async def run_draft3(
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
     run = ModelRunner(model)
-    drafter = Drafter(request, contracts, run)
+    lead = Drafter(request, contracts, run)
+    drafters = [lead]
     try:
-        await drafter.clauses_stage()
-        structure = await drafter.structure_stage()
-        control = await drafter.control_stage(structure)
-        budget = request.fix_steps
-        fixes: list[Any] = []
-        if not control.l1_ok and budget:
-            fixes.append(await fix_sheet(drafter, run, max(1, budget // 2)))
-            budget -= fixes[-1].steps
-            control = drafter.check()
-        check = await drafter.verification_stage(control) if control.l1_ok else control
-        if not check.verified and budget > 0:
-            fixes.append(await fix_sheet(drafter, run, budget))
-            check = drafter.check(verify=True)
+        # shared by every candidate: the clauses and the obligations the drafts are judged on
+        await lead.clauses_stage()
+        await lead.obligations_stage()
+        for _ in range(request.candidates - 1):
+            d = Drafter(request, contracts, run)
+            d.clauses, d.obligations, d.notes = list(lead.clauses), list(lead.obligations), []
+            drafters.append(d)
+        outcomes = await asyncio.gather(*(_draft(d, run) for d in drafters))
+        ranked = sorted(range(len(drafters)), key=lambda i: _score(outcomes[i][0]))
+        best = ranked[0]
+        drafter, (check, fixes) = drafters[best], outcomes[best]
+        if len(drafters) > 1:
+            drafter.notes.append(
+                f"候选 {len(drafters)} 份，选第 {best + 1} 份；得分（L1 未过、L1 问题数、"
+                "L2/L3 未通过数，越小越好）："
+                + "，".join(f"第 {i + 1} 份 {_score(o[0])}" for i, o in enumerate(outcomes))
+            )
+            for i, d in enumerate(drafters):
+                if i != best:
+                    (staging / f"candidate_{i + 1}.md").write_text(d.sheet, encoding="utf-8")
         status = "draft_valid" if check.verified else "draft_invalid"
         write_package(staging, request, drafter, check, status, fixes)
     except BaseException:
-        (staging / SHEET_FILE).write_text(drafter.sheet, encoding="utf-8")
+        (staging / SHEET_FILE).write_text(lead.sheet, encoding="utf-8")
         failed = target.with_name(target.name + ".failed")
         if failed.exists():
             shutil.rmtree(failed)
