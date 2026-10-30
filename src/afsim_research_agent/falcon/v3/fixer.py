@@ -189,7 +189,8 @@ class SheetFixer:
             for s in check.l3:
                 lines.append(f"L3 {s['id']}：{'通过' if s['passed'] else '未通过'}")
                 if not s["passed"]:
-                    lines += ["    " + x for x in s["render"].splitlines()[1:6]]
+                    keep = 24 if s.get("afsim") else 6
+                    lines += ["    " + x for x in s["render"].splitlines()[1:keep]]
                     lines += ["    " + x for x in _skipped(s)]
             for key, line in self.d._stuck(check)[:4]:
                 lines.append(f"提示（{key}）：{line[2:]}")

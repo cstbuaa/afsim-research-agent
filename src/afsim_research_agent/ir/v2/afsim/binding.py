@@ -64,6 +64,7 @@ Run configuration (TOML)::
     [expect]
     sequence = ["<state>", ...]                # optional
     markers = ['<regex>', ...]                 # console must contain each (optional)
+    [expect.marker_notes]                      # marker → its meaning (drafting feedback)
     [reference]                                # the handwritten version's evidence
     console = "<console log, relative to model_root>"
     state_pattern = '<regex with one group: the state name; a time group named t>'
@@ -175,6 +176,9 @@ class RunExpect(_Strict):
     # regular expressions the console must contain (the scenario's own checks, e.g. that
     # cleanup completed); a missing one fails the run
     markers: list[str] = Field(default_factory=list)
+    # marker → what it checks, in words a drafting model may see (the marker itself may
+    # name native output); markers without a note are only counted in feedback
+    marker_notes: dict[str, str] = Field(default_factory=dict)
     # with a handwritten reference: the time spent in each state may differ from the
     # reference by at most this much (a state left far too early or too late fails the run)
     max_interval_delta_s: float | None = None

@@ -32,6 +32,16 @@ from afsim_research_agent.falcon.sheet.blocks import Block, SheetProblem, join_s
 from afsim_research_agent.falcon.sheet.generate import merge
 from afsim_research_agent.falcon.v3 import catalog as K
 from afsim_research_agent.falcon.v3 import prompts as P
+from afsim_research_agent.falcon.v3.afsim_loop import (
+    AfsimConfig,
+    AfsimHistory,
+    AfsimNote,
+    AfsimRound,
+    feedback,
+    note_entry,
+    run_once,
+    sheet_hash,
+)
 from afsim_research_agent.falcon.v3.compare import compare as compare_tactics
 from afsim_research_agent.falcon.v3.compare import render as render_comparison
 from afsim_research_agent.falcon.v3.compiler import Compiled, compile_sheet
@@ -167,6 +177,7 @@ class Drafter:
         self.slices: list[str] = []
         self.notes: list[str] = []
         self.obligations: list[Obligation] = []
+        self.afsim_note: AfsimNote | None = None  # feedback of a failed AFSIM run
 
     # ------------------------------------------------------------------ helpers
     @property
@@ -284,6 +295,11 @@ class Drafter:
                         "duration_s": 0.0,
                     }
                 )
+        note = self.afsim_note
+        if verify and out.l1_ok and note is not None and sheet_hash(self.sheet) == note.sheet_hash:
+            # the last AFSIM run of this very sheet failed; once the sheet changes, the next
+            # AFSIM round judges it again
+            out.l3.append(note_entry(note))
         return out
 
     async def ask(
@@ -951,6 +967,7 @@ async def run_draft3(
     allow_mission_ref: bool | None = None,
     fix_steps: int | None = None,
     candidates: int | None = None,
+    afsim: AfsimConfig | None = None,
 ) -> V3Result:
     import asyncio
 
@@ -995,8 +1012,14 @@ async def run_draft3(
             for i, d in enumerate(drafters):
                 if i != best:
                     (staging / f"candidate_{i + 1}.md").write_text(d.sheet, encoding="utf-8")
-        status = "draft_valid" if check.verified else "draft_invalid"
+        history = None
+        if afsim is not None and check.l1_ok and check.model is not None:
+            check, history = await _afsim_rounds(drafter, run, check, fixes, afsim, staging)
+        ok = check.verified and (history is None or history.passed)
+        status = "draft_valid" if ok else "draft_invalid"
         write_package(staging, request, drafter, check, status, fixes)
+        if history is not None:
+            (staging / "afsim_rounds.md").write_text(_afsim_report(history), encoding="utf-8")
     except BaseException:
         (staging / SHEET_FILE).write_text(lead.sheet, encoding="utf-8")
         failed = target.with_name(target.name + ".failed")
@@ -1006,3 +1029,57 @@ async def run_draft3(
         raise
     staging.rename(target)
     return V3Result(target, status, check, drafter.rounds)
+
+
+async def _afsim_rounds(
+    drafter: Drafter,
+    run: ModelRunner,
+    check: Check,
+    fixes: list[Any],
+    cfg: AfsimConfig,
+    staging: Path,
+) -> tuple[Check, AfsimHistory]:
+    """Run the chosen draft in AFSIM; on failure, hand the (sanitized) evidence to the repair
+    loop and run again, at most ``cfg.rounds`` times."""
+    import asyncio
+
+    history = AfsimHistory()
+    for index in range(cfg.rounds + 1):
+        out = staging / "afsim" / f"round_{index}"
+        obligations = [o.model_dump(exclude_none=True) for o in drafter.obligations]
+        results, runs, error = await asyncio.to_thread(
+            run_once, check.model or {}, drafter.c, obligations, cfg, out
+        )
+        passed = error is None and bool(results) and all(r.passed for r in results or [])
+        text = "" if passed else feedback(results, runs, error)
+        local = error or "\n".join(r.render() for r in results or [])
+        history.rounds.append(AfsimRound(index, passed, text, local, out))
+        drafter.notes.append(f"AFSIM 第 {index + 1} 次运行：{'通过' if passed else '未通过'}")
+        if passed or index == cfg.rounds:
+            break
+        before = sheet_hash(drafter.sheet)
+        drafter.afsim_note = AfsimNote(before, text)
+        fixes.append(await fix_sheet(drafter, run, cfg.steps))
+        check = drafter.check(verify=True)
+        if sheet_hash(drafter.sheet) == before or not check.l1_ok or check.model is None:
+            drafter.notes.append("AFSIM 反馈后的修复没有得到可运行的新稿，停止")
+            break
+    drafter.afsim_note = None
+    return drafter.check(verify=True), history
+
+
+def _afsim_report(history: AfsimHistory) -> str:
+    """Local record of the AFSIM rounds (full judgements; stays in the package)."""
+    lines = ["# AFSIM 运行记录", ""]
+    for r in history.rounds:
+        lines += [
+            f"## 第 {r.index + 1} 次：{'通过' if r.passed else '未通过'}",
+            "",
+            "```text",
+            r.local,
+            "```",
+            "",
+        ]
+        if r.feedback:
+            lines += ["交给修复循环的反馈：", "", "```text", r.feedback, "```", ""]
+    return "\n".join(lines)

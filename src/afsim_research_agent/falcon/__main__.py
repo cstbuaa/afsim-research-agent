@@ -65,6 +65,15 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         help="独立起草的份数，取检查结果最好的一份（默认取请求文件，缺省 1）",
     )
+    draft3.add_argument(
+        "--afsim-binding", type=Path, help="AFSIM 绑定：给出时选中的稿在 AFSIM 中运行"
+    )
+    draft3.add_argument("--afsim-run", type=Path, action="append", help="AFSIM 运行配置（可多个）")
+    draft3.add_argument(
+        "--afsim-mission", help="mission 可执行文件（默认 AFSIM_MISSION 或 mission）"
+    )
+    draft3.add_argument("--afsim-rounds", type=int, default=2, help="AFSIM 失败后的修复轮数")
+    draft3.add_argument("--afsim-steps", type=int, default=15, help="每轮修复的步数上限")
     comp3 = sub.add_parser(
         "compile3", help="v3：战术稿 → IR 2.0 并做 L1–L3（不调用模型，结果写到新目录）"
     )
@@ -152,6 +161,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             from afsim_research_agent.falcon.v3.draft import run_draft3
 
             load_dotenv()
+            afsim = None
+            if args.afsim_binding is not None:
+                from afsim_research_agent.falcon.v3.afsim_loop import AfsimConfig
+
+                if not args.afsim_run:
+                    print("--afsim-binding 需要至少一个 --afsim-run", file=sys.stderr)
+                    return EXIT_INPUT
+                afsim = AfsimConfig(
+                    binding=args.afsim_binding,
+                    runs=list(args.afsim_run),
+                    mission=args.afsim_mission or os.environ.get("AFSIM_MISSION") or "mission",
+                    rounds=args.afsim_rounds,
+                    steps=args.afsim_steps,
+                )
             result3 = asyncio.run(
                 run_draft3(
                     args.request,
@@ -160,6 +183,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     allow_mission_ref=False if args.no_mission_ref else None,
                     fix_steps=args.fix_steps,
                     candidates=args.candidates,
+                    afsim=afsim,
                 )
             )
             _print_v3(result3)
