@@ -29,6 +29,53 @@ def slices(contracts: Contracts) -> list[str]:
     return sorted(found)
 
 
+def expr_text(expr: Any) -> str:
+    """An IR expression in the sheet's Python condition syntax."""
+    if not isinstance(expr, dict):
+        return str(expr)
+    if set(expr) == {"value", "unit"}:
+        return f"{expr['value']} * {expr['unit']}"
+    if len(expr) != 1:
+        return str(expr)
+    key, value = next(iter(expr.items()))
+    if key in ("all", "any"):
+        joiner = " and " if key == "all" else " or "
+        return "(" + joiner.join(expr_text(v) for v in value) + ")"
+    if key == "not":
+        return f"not {expr_text(value)}"
+    if key in ("bb", "parameter_ref", "condition_ref"):
+        return str(value)
+    if key == "literal":
+        return repr(value)
+    if key == "compare":
+        ops = {"eq": "==", "ne": "!=", "lt": "<", "lte": "<=", "gt": ">", "gte": ">="}
+        return (
+            f"{expr_text(value['left'])} {ops.get(value['operator'], value['operator'])} "
+            f"{expr_text(value['right'])}"
+        )
+    if key == "function_call":
+        args = value.get("arguments") or {}
+        if value.get("name") == "time_in_state_gte":
+            return f"time_in_state() >= {expr_text(args.get('duration'))}"
+        if value.get("name") == "elapsed_since_gte":
+            return f"elapsed_since({args.get('field')}) >= {expr_text(args.get('duration'))}"
+    return str(expr)
+
+
+def trigger_text(sem: dict[str, Any]) -> str:
+    if sem.get("external"):
+        return "外部事件"
+    if "after_s" in sem:
+        return f"进入状态 {sem['after_s']:g} s 后（timer 事件）"
+    if "tree" in sem:
+        return "本状态的树" + ("成功" if sem["tree"] == "success" else "失败") + "时"
+    if "expression" in sem:
+        return expr_text(sem["expression"])
+    if "event" in sem:
+        return f"事件 {sem['event']}"
+    return "?"
+
+
 def internal_field(path: str) -> bool:
     """Interface plumbing of the action contracts (request ids, execution status)."""
     return ".request." in path or path.startswith("execution.")
@@ -169,6 +216,12 @@ def details(contracts: Contracts, wanted: list[str]) -> str:
                 + (f"（参数 {params}）" if params else "")
                 + f"：初始 {m.raw.get('initial_state')}；{trans}"
             )
+            meanings = contracts.semantics.events.get(m.id) or {}
+            if meanings:
+                out.append(
+                    "  触发条件的含义（自己写状态图和条件时照此写）："
+                    + "; ".join(f"{k} = {trigger_text(v)}" for k, v in meanings.items())
+                )
         fields = sorted(
             p for p, f in contracts.blackboard.items() if f.slice == sid and not internal_field(p)
         )

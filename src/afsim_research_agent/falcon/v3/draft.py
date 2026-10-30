@@ -175,6 +175,10 @@ class Drafter:
                         "idealized": sorted(res.idealized),
                         "placeholders": sorted(res.placeholders),
                         "unresolved": sorted(res.unresolved),
+                        "states": {k: [list(x) for x in v] for k, v in res.states.items()},
+                        "duration_s": float(
+                            ((raw.get("environment") or {}).get("duration_s")) or 0.0
+                        ),
                     }
                 )
         return out
@@ -308,6 +312,15 @@ class Drafter:
         if not check.l1_ok:
             if await self.repair(check, ("verification",), "verification"):
                 check = self.check(verify=True)
+        stuck = self._stuck(check)
+        if stuck:
+            # the model, not the test: a state is never left in the 2D simulation
+            problems = [SheetProblem(key, None, line) for key, line in stuck]
+            fake = Check(check.compiled, check.model, check.diagnostics, problems)
+            if await self.repair(fake, STRUCTURE_KINDS + CONTROL_KINDS, "behavior"):
+                again = self.check(verify=True)
+                if again.l1_ok:
+                    check = again
         failed = [t for t in check.l2 if not t["passed"]] + [s for s in check.l3 if not s["passed"]]
         if failed and check.l1_ok:
             lines = [
@@ -335,6 +348,45 @@ class Drafter:
                 self.rounds.append({"stage": "verification", "blocks": {block.key: len(failed)}})
                 check = self.check(verify=True)
         return check
+
+    def _stuck(self, check: Check) -> list[tuple[str, str]]:
+        """Failed scenarios where a role stays in a non-terminal state for the last half of
+        the run: the triggers leaving it never hold. Returned as (block key, problem)."""
+        if check.model is None:
+            return []
+        out: list[tuple[str, str]] = []
+        for sc in check.l3:
+            if sc["passed"]:
+                continue
+            for name, seq in sc.get("states", {}).items():
+                if not seq:
+                    continue
+                t, state = seq[-1]
+                role = name.rsplit("_", 1)[0]
+                rm = check.model["roles"].get(role)
+                if rm is None or state in rm["mission"]["terminal"]:
+                    continue
+                if sc["duration_s"] and t > sc["duration_s"] / 2:
+                    continue
+                exits = [
+                    f"{x['from']} → {x['to']} 当 {x['on']}"
+                    for x in rm["mission"]["transitions"]
+                    if x["from"] == state
+                ]
+                spec_m = (check.compiled.spec or {}).get("missions", {}).get(role, {})
+                key = "model" if "tactic" in spec_m else f"mermaid:{role}"
+                out.append(
+                    (
+                        key,
+                        f"- [L3 {sc['id']}] {name} 从 {t:g} s 起一直停在 {state}，直到想定结束；"
+                        f"离开它的转换：{'; '.join(exits) or '无'}。这些触发在运行中从未成立："
+                        "检查条件读的字段是否会被本状态的动作或战术写入、是否猜测了字段取值；"
+                        "能用计时事件或战术集任务的触发含义表达的，照它写",
+                    )
+                )
+                if key != "model":
+                    out.append(("conditions", out[-1][1]))
+        return out
 
     def _summary(self, check: Check) -> str:
         if check.model is None:

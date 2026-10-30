@@ -87,6 +87,7 @@ def set_root(tmp_path: Path) -> Path:
                     "sense.target.valid": {"type": "boolean"},
                     "sense.mode": {"type": "string", "enum": ["SEARCH", "TRACK"]},
                     "sense.request.id": {"type": "string"},
+                    "sense.label": {"type": "string"},
                 }
             },
             "actions": [
@@ -463,3 +464,40 @@ def test_conditions_are_checked_against_the_chosen_slices(contracts: Contracts) 
     only_nav = SHEET.replace("slices: [nav, sense]", "slices: [nav]")
     out = _compile(contracts, only_nav)
     assert any("属于切片 sense" in p.message for p in out.errors)
+
+
+def test_guessed_values_and_shadowed_mission_triggers(contracts: Contracts) -> None:
+    text = SHEET.replace("target_seen = sense.target.valid", 'target_seen = sense.label == "ENEMY"')
+    assert any("猜测" in p.message for p in _compile(contracts, text).errors)
+    text = """```yaml model
+model: {display_name: 值守, intent: 搜索直到取消}
+roles:
+  scout: {capability_class: ground_vehicle, mission: {tactic: sense.watch}}
+```
+
+```python conditions
+cancelled = False
+```
+"""
+    out = _compile(contracts, text)
+    assert any("同名" in p.message and p.block == "conditions" for p in out.errors)
+
+
+def test_a_state_never_left_in_the_simulation_goes_back_to_the_model(contracts: Contracts) -> None:
+    from afsim_research_agent.falcon.llm import ModelRunner, ScriptedModel
+    from afsim_research_agent.falcon.sheet.blocks import split_sheet
+    from afsim_research_agent.falcon.v3.draft import Drafter, V3Request
+
+    stuck = SHEET.replace("target_seen = sense.target.valid", "target_seen = nav.range_m < 0 * m")
+    stuck = stuck.replace(
+        "expect: [{id: shut, role: scout, reaches: SHUTDOWN, within_s: 5}]",
+        "expect: [{id: seen, role: scout, reaches: OBSERVE}]",
+    ).replace("events: [{at_s: 3, event: cancelled}]", "events: []")
+    drafter = Drafter(
+        V3Request(requirement="r", model_id="scout_demo"), contracts, ModelRunner(ScriptedModel({}))
+    )
+    drafter.blocks = split_sheet(stuck)[0]
+    check = drafter.check(verify=True)
+    problems = drafter._stuck(check)
+    assert {k for k, _ in problems} == {"mermaid:scout", "conditions"}
+    assert "一直停在 MOVE" in problems[0][1] and "target_seen" in problems[0][1]

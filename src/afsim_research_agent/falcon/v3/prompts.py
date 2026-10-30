@@ -28,7 +28,8 @@ MODEL_GUIDE = """```yaml model``` 块：
 - slices: [本任务要用的能力集切片 ID]（从下面的切片索引中选；下一步只展示这些切片的详细内容，
   条件只能读这些切片的黑板字段：要判断目标、传感器等状态，就要选上对应的切片）
 - roles: {角色ID: {capability_class, count, description}}；角色 ID 用小写英文。
-  若整体引用战术集任务：在角色下写 mission: {tactic: <战术集任务 ID>, role: <可选>, params: {…}}，此时不写该角色的状态图。
+  若整体引用战术集任务：在角色下写 mission: {tactic: <战术集任务 ID>, role: <可选>, params: {…}}，此时不写该角色的状态图，
+  也不要为它的转换写条件或事件（任务自带）；只有需求与任务的某个状态明显不同时，才在下一步替换该状态的树。
 - parameters: {名称: {value: "10 s" | 数 | 字符串, description, basis: explicit|inferred|unknown|user_specified, rationale}}
   数值写成"数 单位"（m、km、m/s、km/h、s、min、deg）。想定提供的参数照抄给出的名称和类型，value 写成名称本身。
 - blackboard: {mission.<名称>: {type: bool|int|double|string, default}}（只声明能力集没有的新字段，一般不需要）
@@ -63,6 +64,8 @@ CONTROL_GUIDE = """```python conditions``` 块：每行 `条件名 = 表达式`�
 - 一直运行的动作（如保持位置）放在顺序节点前面会挡住后面的节点，此时用 parallel；
 - 树里不能给黑板赋值。
 - 战术集已有某阶段的状态树时，优先让状态函数只写一句 `tactic("…")` 直接引用它；
+  引用的战术集树已包含的工作（如搜索）不要在并行分支里再写一遍，否则会争用同一独占资源；
+- 状态图的触发若与战术集任务的触发含义相同，照"触发条件的含义"写（如计时用 after 事件），不要猜测字段取值；
 - 状态树里不要用 assert 重复写进入该状态的转换条件（进入时它已成立，之后的变化由状态图的转换处理）；
   assert 只用于树内部的分支判断，否则条件一变树就整体失败、什么也不做；
 - 条件读描述战场状态的字段；请求编号、执行状态等接口字段不能用；带取值列表的字段只能与列出的取值比较。

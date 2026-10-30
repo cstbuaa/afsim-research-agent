@@ -225,6 +225,9 @@ class SheetCompiler:
                     if f.slice not in allowed and not internal_field(p)
                 },
                 internal={p for p in self.c.blackboard if internal_field(p)},
+                free_strings={
+                    p for p, f in self.c.blackboard.items() if f.type == "string" and not f.enum
+                },
             )
         )
         spec["conditions"] = self._conditions()
@@ -262,6 +265,7 @@ class SheetCompiler:
             if "tactic" not in m
             for t in m["transitions"] + m["global"]
         }
+        self._mission_ref_names(spec)
         for e in spec["events"]:
             if e["id"] not in used and not self.pending_triggers:
                 self.fail(
@@ -271,6 +275,37 @@ class SheetCompiler:
                 )
         self.out.spec = spec
         return self.out
+
+    def _mission_ref_names(self, spec: dict[str, Any]) -> None:
+        """A condition or event named like a trigger of a referenced tactic-set mission would
+        replace that trigger (e.g. ``cancelled = False`` disables the safe shutdown)."""
+        from afsim_research_agent.ir.v2.from_tactic import event_id
+
+        own = {c["id"]: "conditions" for c in spec["conditions"]} | {
+            e["id"]: "model" for e in spec["events"]
+        }
+        for mission in spec["missions"].values():
+            entry = (
+                self.c.tactics.get(str(mission.get("tactic", ""))) if "tactic" in mission else None
+            )
+            if entry is None:
+                continue
+            for t in entry.raw.get("transitions") or []:
+                name = event_id(str(t.get("when", "")))
+                block = own.pop(name, None)
+                if block is None:
+                    continue
+                line = (
+                    self.out.source.get(f"conditions.{name}", (block, None))[1]
+                    if block == "conditions"
+                    else self.mlines.get(name)
+                )
+                self.fail(
+                    block,
+                    line,
+                    f"'{name}' 与引用的战术集任务 {entry.id} 的触发条件同名，会替换它；"
+                    "引用任务时不要为它的转换写条件或事件",
+                )
 
     def _slices(self, model: dict[str, Any]) -> list[str]:
         known = K.slices(self.c)
