@@ -119,6 +119,7 @@ class SimResult:
     idealized: set[str] = field(default_factory=set)
     placeholders: set[str] = field(default_factory=set)
     unresolved: set[str] = field(default_factory=set)
+    dropped: set[str] = field(default_factory=set)  # model writes outside the contract
     error: str | None = None
 
     @property
@@ -140,6 +141,8 @@ class SimResult:
             lines.append(f"  idealized gaps (stub): {sorted(self.placeholders)}")
         if self.unresolved:
             lines.append(f"  triggers without semantics: {sorted(self.unresolved)}")
+        if self.dropped:
+            lines.append(f"  model writes outside the contracts (dropped): {sorted(self.dropped)}")
         return "\n".join(lines)
 
 
@@ -155,6 +158,7 @@ class SimHost:
         self.models: dict[tuple[str, str], tuple[ActionModel, ActionContext]] = {}
         self.idealized: set[str] = set()
         self.placeholders: set[str] = set()  # gaps run by their stub
+        self.dropped: set[str] = set()  # fields a model wrote but the contract does not
 
     def _context(self, inst: Instance, leaf: dict[str, Any], options: dict[str, Any]):
         contract = self.c.actions.get(leaf.get("action") or "")
@@ -167,6 +171,8 @@ class SimHost:
             success=dict(contract.success) if contract else {},
             options=options,
             shared=self.shared.setdefault(inst.name, {}),
+            allowed=contract.written if contract and contract.writes is not None else None,
+            dropped=self.dropped,
         )
 
     def tick(self, inst: Instance, leaf: dict[str, Any], new: bool) -> tuple[str, str | None]:
@@ -184,6 +190,10 @@ class SimHost:
             model = MODELS[spec["model"]]()
             ctx = self._context(inst, leaf, options)
             self.models[key] = (model, ctx)
+            contract = self.c.actions.get(action)
+            for w in (contract.writes or ()) if contract else ():
+                if "reset_on_start" in w:  # the step first marks its fields "not there yet"
+                    inst.blackboard[str(w["field"])] = w["reset_on_start"]
             status, code = model.start(ctx)
         else:
             model, ctx = self.models[key]
@@ -288,6 +298,7 @@ def simulate(model: dict[str, Any], contracts: Contracts, raw: dict[str, Any]) -
         result.transitions[inst.name] = list(inst.trace)
     result.idealized = set(host.idealized)
     result.placeholders = set(host.placeholders)
+    result.dropped = set(host.dropped)
     result.checks = [_check(e, result) for e in sc.expect]
     return result
 

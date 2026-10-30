@@ -141,7 +141,10 @@ def _entry_capability(
     if kind == "tactic_step":
         status = "partial"
         users = "、".join(raw.get("used_by") or [slice_id])
-        limitations.insert(0, f"只在 {users} 战术内部实现，没有独立动作契约")
+        if "writes" in raw or "result" in raw:  # capability set 1.1: contracted step
+            limitations.insert(0, f"只在 {users} 战术内部实现（有战术步骤契约）")
+        else:
+            limitations.insert(0, f"只在 {users} 战术内部实现，没有独立动作契约")
     if notes.get("note"):
         limitations.append(str(notes["note"]))
     return Capability(

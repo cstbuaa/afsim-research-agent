@@ -648,3 +648,49 @@ def test_formation_models_converge_and_initial_values_apply(contracts: Contracts
     spec = _spec()
     inst = Instance("car_0", "car", 0, normalize(spec, contracts).model, contracts, host=None)  # type: ignore[arg-type]
     assert inst.blackboard["nav.range_m"] == 1234.0
+
+
+def test_formation_models_follow_the_contract_results_and_writes() -> None:
+    """Capability set 1.1: steps succeed as the platform's do, and a model never writes a
+    field its contract does not list (that would let a guessed condition pass)."""
+    from afsim_research_agent.ir.v2.sim.actions import (
+        ActionContext,
+        FormationSlots,
+        StandoffCommand,
+    )
+    from afsim_research_agent.ir.v2.sim.world import Geo, Vehicle, World
+
+    world = World(geo=Geo(30.0, 120.0), routes={})
+    bb: dict = {"f.left": 999.0}
+    fields = {
+        "formation.left_error": "f.left",
+        "formation.right_error": "f.right",
+        "formation.range_zone": "f.zone",
+        "formation.command_mode": "f.cmd",
+        "selected.valid": "t.valid",
+        "selected.range": "t.range",
+        "exec.status": "x.status",
+    }
+    shared: dict = {}
+
+    def ctx(options, allowed=None):
+        c = ActionContext(world, Vehicle("v", 0, 0), bb, fields, {}, {}, options, shared)
+        c.allowed = allowed
+        return c
+
+    column = ctx({"mode": "COLUMN", "initial_error_m": 30.0, "success_within_m": 20.0}, set())
+    model = FormationSlots()
+    assert model.start(column)[0] == RUNNING
+    assert bb["f.left"] == 999.0 and column.dropped == {"f.left", "f.right"}
+    for _ in range(3):
+        world.step(1.0)
+        status, _ = model.update(column)
+    assert status == SUCCESS  # 30 m - 3 s * 4 m/s = 18 m <= 20 m
+    column.write("exec.status", "SUCCESS")  # execution status is always written
+    assert bb["x.status"] == "SUCCESS"
+    standoff = ctx({"desired_m": 500, "tolerance_m": 50}, {"f.zone", "f.cmd"})
+    bb.update({"t.valid": False})
+    assert StandoffCommand().update(standoff) == (FAILURE, "NO_TARGET")
+    bb.update({"t.valid": True, "t.range": 300.0})
+    assert StandoffCommand().update(standoff) == (SUCCESS, None)
+    assert bb["f.zone"] == "TOO_CLOSE" and bb["f.cmd"] == "WITHDRAW"

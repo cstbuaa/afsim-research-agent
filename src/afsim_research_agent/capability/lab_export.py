@@ -18,6 +18,19 @@ Read from the lab, per slice directory name::
     missions/*.fsm.yaml                   mission state machines (matched to a slice)
     schema/organization/*.yaml            organization schema
 
+Format 1.1 adds the semantics the lab records (all optional; a 1.0 lab exports as before):
+
+    fields       description, initial, enum_meaning, updated, internal, note; and, derived
+                 here, written_by (actions / tactic steps whose ``writes`` list the field)
+    actions      reads / writes (with updated, reset_on_start, on_success, on_failure),
+                 result (running / success / failure meaning), persistent
+    tactic steps contract files with ``kind: tactic_step`` under actions/<slice>/
+    subtrees     result, persistent; interface (reads, writes, resources) derived here
+    missions     events: <trigger> -> {meaning, description}
+    slices       description (from the slice catalog)
+
+Consistency problems are listed as warnings in the report; they never stop the export.
+
 Never read: ``bindings/``, ``model/``, ``scenarios/``, ``fixtures/``, ``tests/``, ``_local``.
 Every string that is written is scanned; native names, file paths, handling markings and
 calibre-style platform parameters are dropped (fail closed) and listed in the report, which
@@ -37,7 +50,18 @@ from typing import Any
 import yaml
 
 FORMAT = "CapabilitySet"
-FORMAT_VERSION = "1.0.0"
+FORMAT_VERSION = "1.1.0"
+
+# how a written field is kept up to date
+UPDATED = (
+    "constant",
+    "state_entry",
+    "always",
+    "while_running",
+    "on_start",
+    "on_success",
+    "on_failure",
+)
 
 SLICES: dict[str, dict[str, Any]] = {
     "movement": {"display_name": "运动", "catalog": "movement", "blackboard": "movement"},
@@ -107,6 +131,12 @@ FIELD_KEYS = (
     "max_items",
     "item_type",
     "const",
+    # 1.1 semantics
+    "initial",
+    "enum_meaning",
+    "updated",
+    "internal",
+    "note",
 )
 
 
@@ -115,6 +145,7 @@ class ExportReport:
     dropped: list[tuple[str, str, str]] = field(default_factory=list)  # (where, reason, text)
     unresolved: list[tuple[str, str]] = field(default_factory=list)  # (where, ref)
     files_read: int = 0
+    warnings: list[tuple[str, str]] = field(default_factory=list)  # (where, problem)
     counts: dict[str, dict[str, int]] = field(default_factory=dict)
 
     def render(self) -> str:
@@ -127,6 +158,9 @@ class ExportReport:
         if self.unresolved:
             lines.append(f"无契约的战术步骤 {len(self.unresolved)} 个（登记为 tactic_step）：")
             lines += [f"  {where}: {ref}" for where, ref in self.unresolved]
+        if self.warnings:
+            lines.append(f"一致性警告 {len(self.warnings)} 条：")
+            lines += [f"  {where}: {problem}" for where, problem in self.warnings]
         return "\n".join(lines)
 
 
@@ -188,6 +222,7 @@ class LabExporter:
             result["actions"][sid] = actions
             result["tactics"][sid] = tactics
         self._resolve_steps(result)
+        self._semantics(result)
         for sid in SLICES:
             a, t = result["actions"][sid], result["tactics"][sid]
             self.report.counts[sid] = {
@@ -207,6 +242,13 @@ class LabExporter:
         known = {
             x["id"] for a in result["actions"].values() for x in a["primitives"] + a["actions"]
         }
+        steps = {x["id"]: x for a in result["actions"].values() for x in a["tactic_steps"]}
+        for sid, refs in sorted(self._pending.items()):
+            for ref in sorted(refs & set(steps)):
+                used = steps[ref].setdefault("used_by", [])
+                if sid not in used:
+                    used.append(sid)
+        known |= set(steps)
         for sid, refs in self._pending.items():
             for ref in sorted(refs - known):
                 owner = ref.split(".")[0] if ref.split(".")[0] in SLICES else sid
@@ -235,6 +277,12 @@ class LabExporter:
                     "display_name": spec["display_name"],
                     "action_file": f"action_set/{sid}.yaml",
                     "tactic_file": f"tactic_set/{sid}.yaml",
+                    **(
+                        {"description": a["slice"]["description"]}
+                        if a["slice"].get("description")
+                        else {}
+                    ),
+                    **({"semantics": True} if a["slice"].get("semantics") else {}),
                     "counts": {
                         "primitives": len(a["primitives"]),
                         "actions": len(a["actions"]),
@@ -305,7 +353,8 @@ class LabExporter:
         for path in self._files(f"schema/blackboard/{spec['blackboard']}*.yaml"):
             self._blackboard(self._load(path), out["blackboard"])
         for path in self._files(f"actions/{sid}/*.action.yaml"):
-            out["actions"].append(self._action(self._load(path), f"{sid}.{path.stem}"))
+            item = self._action(self._load(path), f"{sid}.{path.stem}")
+            out["tactic_steps" if item["kind"] == "tactic_step" else "actions"].append(item)
         # a primitive that only restates an action with the same id is folded into it
         actions_by_id = {a["id"]: a for a in out["actions"]}
         kept = []
@@ -321,6 +370,7 @@ class LabExporter:
         out = self.clean(out, sid)
         out["primitives"].sort(key=lambda x: x["id"])
         out["actions"].sort(key=lambda x: x["id"])
+        out["tactic_steps"].sort(key=lambda x: x["id"])
         return out
 
     @staticmethod
@@ -401,7 +451,7 @@ class LabExporter:
     def _action(self, raw: dict[str, Any], where: str) -> dict[str, Any]:
         a: dict[str, Any] = {
             "id": raw["id"],
-            "kind": "action",
+            "kind": "tactic_step" if raw.get("kind") == "tactic_step" else "action",
             "status": "implemented",
             "description": raw.get("description", ""),
         }
@@ -411,7 +461,7 @@ class LabExporter:
             raw.get("statuses")
             or raw.get("status_vocabulary")
             or (raw.get("lifecycle") or {}).get("states")
-            or raw.get("result")
+            or (raw.get("result") if isinstance(raw.get("result"), list) else None)
         )
         if statuses:
             a["statuses"] = list(statuses)
@@ -420,7 +470,10 @@ class LabExporter:
             a["failure_codes"] = list(failures)
         res: list[dict[str, Any]] = []
         for c in raw.get("resource_claims") or []:
-            res.append({"resource": c["resource"], "mode": c.get("mode", "exclusive")})
+            item = {"resource": c["resource"], "mode": c.get("mode", "exclusive")}
+            if c.get("scope"):
+                item["scope"] = c["scope"]
+            res.append(item)
         sem = raw.get("resource_semantics")
         if isinstance(sem, dict) and sem.get("resource"):
             item = {"resource": sem["resource"], "mode": sem.get("mode", "exclusive")}
@@ -460,9 +513,118 @@ class LabExporter:
         bb = raw.get("blackboard")
         if isinstance(bb, dict):
             a["blackboard"] = {k: list(bb.get(k) or []) for k in ("reads", "writes")}
+            # 1.1: structured reads / writes
+            a["reads"] = list(bb.get("reads") or [])
+            sem = bb.get("write_semantics") or {}
+            writes = []
+            for name in bb.get("writes") or []:
+                w: dict[str, Any] = {"field": name}
+                updated = (sem.get(name) or {}).get("updated", bb.get("updated"))
+                if updated:
+                    if updated not in UPDATED:
+                        self.report.warnings.append((where, f"未知的更新方式 {updated}（{name}）"))
+                    w["updated"] = updated
+                for k in ("reset_on_start", "on_success", "on_failure"):
+                    if k in (sem.get(name) or {}):
+                        w[k] = sem[name][k]
+                writes.append(w)
+            a["writes"] = writes
+        if isinstance(raw.get("result"), dict):
+            a["result"] = dict(raw["result"])
+        if "persistent" in raw:
+            a["persistent"] = bool(raw["persistent"])
         if raw.get("unmapped"):
             a["limitations"] = list(raw["unmapped"])  # scrubbed later; native sentences drop
         return a
+
+    # ------------------------------------------------------------------ semantics (1.1)
+    def _semantics(self, result: dict[str, Any]) -> None:
+        """Derive written_by / updated per field and the interface of each tree, and list
+        consistency problems. Fields of a slice whose contracts are all annotated (every
+        action and tactic step states its writes) get ``written_by`` even when empty; a
+        field of another slice gets it only when something writes it."""
+        contracts = {
+            x["id"]: x for a in result["actions"].values() for x in a["actions"] + a["tactic_steps"]
+        }
+        fields: dict[str, tuple[str, dict[str, Any]]] = {}
+        for sid, a in result["actions"].items():
+            for name, spec in a["blackboard"]["fields"].items():
+                fields.setdefault(name, (sid, spec))
+        writers: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+        for cid, c in contracts.items():
+            for w in c.get("writes") or []:
+                writers.setdefault(w["field"], []).append((cid, w))
+                if w["field"] not in fields:
+                    self.report.warnings.append((cid, f"写入的字段不在黑板定义中：{w['field']}"))
+            for r in c.get("reads") or []:
+                if r not in fields:
+                    self.report.warnings.append((cid, f"读取的字段不在黑板定义中：{r}"))
+        for sid, a in result["actions"].items():
+            items = a["actions"] + a["tactic_steps"]
+            annotated = bool(items) and all("writes" in x for x in items)
+            if annotated:
+                a["slice"]["semantics"] = True
+            for name, spec in a["blackboard"]["fields"].items():
+                ws = writers.get(name, [])
+                if ws or (annotated and spec.get("updated") not in ("constant", "state_entry")):
+                    spec["written_by"] = sorted({cid for cid, _ in ws})
+                kinds = sorted({w["updated"] for _, w in ws if w.get("updated")})
+                if kinds and not spec.get("updated"):
+                    spec["updated"] = kinds[0] if len(kinds) == 1 else kinds
+                resets = {w["reset_on_start"] for _, w in ws if "reset_on_start" in w}
+                if len(resets) == 1:
+                    spec["reset_on_start"] = resets.pop()
+                if annotated and not spec.get("description"):
+                    self.report.warnings.append((sid, f"字段缺少说明：{name}"))
+        # tree interfaces
+        trees = {
+            x["id"]: x for t in result["tactics"].values() for x in t["subtrees"] + t["state_trees"]
+        }
+
+        def closure(node: Any, acc: dict[str, set[str]], seen: set[str]) -> None:
+            if not isinstance(node, dict):
+                return
+            if node.get("action") in contracts:
+                c = contracts[node["action"]]
+                acc["reads"] |= set(c.get("reads") or [])
+                acc["writes"] |= {w["field"] for w in c.get("writes") or []}
+                acc["resources"] |= {r["resource"] for r in c.get("resources") or []}
+            sub = node.get("subtree")
+            if sub in trees and sub not in seen:
+                seen.add(sub)
+                closure(trees[sub].get("root"), acc, seen)
+            for child in [node.get("child"), *(node.get("children") or [])]:
+                closure(child, acc, seen)
+
+        internal = {n for n, (_, spec) in fields.items() if spec.get("internal")}
+        for item in trees.values():
+            if "root" not in item:
+                continue
+            acc: dict[str, set[str]] = {"reads": set(), "writes": set(), "resources": set()}
+            closure(item["root"], acc, {item["id"]})
+            acc["reads"] -= internal
+            acc["writes"] -= internal
+            if any(acc.values()):
+                item["interface"] = {k: sorted(v) for k, v in acc.items() if v}
+        # mission trigger meanings
+        for sid, t in result["tactics"].items():
+            for m in t["missions"]:
+                events = m.get("events")
+                if not events:
+                    continue
+                for tr in m.get("transitions") or []:
+                    if tr.get("when") and tr["when"] not in events:
+                        self.report.warnings.append((m["id"], f"触发条件缺少含义：{tr['when']}"))
+                for name, spec in events.items():
+                    for f in sorted(_bb_fields(spec.get("meaning"))):
+                        if f not in fields:
+                            self.report.warnings.append(
+                                (m["id"], f"{name} 读取的字段不在黑板定义中：{f}")
+                            )
+                        elif fields[f][1].get("written_by") == []:
+                            self.report.warnings.append(
+                                (m["id"], f"{name} 读取的字段没有写入者：{f}")
+                            )
 
     # ------------------------------------------------------------------ tactic set
     def _missions(self) -> dict[str, list[dict[str, Any]]]:
@@ -534,6 +696,11 @@ class LabExporter:
             ]
         if trees:
             m["state_trees"] = trees
+        if isinstance(raw.get("events"), dict):
+            m["events"] = {
+                name: {k: v for k, v in (spec or {}).items() if k in ("meaning", "description")}
+                for name, spec in raw["events"].items()
+            }
         return m
 
     def _ref(self, sid: str, ref: str | None) -> str | None:
@@ -599,6 +766,10 @@ class LabExporter:
             for key in ("selection_policy", "no_target_result"):
                 if raw.get(key):
                     item[key] = raw[key]
+            if isinstance(raw.get("result"), dict):
+                item["result"] = dict(raw["result"])
+            if "persistent" in raw:
+                item["persistent"] = bool(raw["persistent"])
             item["root"] = self._node(sid, raw.get("root"), acc)
             item["uses"] = {k: sorted(v) for k, v in acc.items() if v}
             all_conditions |= acc["conditions"]
@@ -640,6 +811,21 @@ class LabExporter:
         out["subtrees"].sort(key=lambda x: x["id"])
         out["state_trees"].sort(key=lambda x: x["id"])
         return out
+
+
+def _bb_fields(expr: Any) -> set[str]:
+    """Blackboard fields read by an IR expression (``{bb: name}`` anywhere inside)."""
+    out: set[str] = set()
+    if isinstance(expr, dict):
+        for k, v in expr.items():
+            if k == "bb" and isinstance(v, str):
+                out.add(v)
+            else:
+                out |= _bb_fields(v)
+    elif isinstance(expr, list):
+        for v in expr:
+            out |= _bb_fields(v)
+    return out
 
 
 def _dump(data: Any) -> str:

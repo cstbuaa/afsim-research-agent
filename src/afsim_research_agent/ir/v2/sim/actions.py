@@ -38,13 +38,26 @@ class ActionContext:
     options: dict[str, Any]
     shared: dict[str, Any]  # per vehicle, across actions (e.g. the track snapshot)
     memory: dict[str, Any] = field(default_factory=dict)  # per activation
+    # capability set 1.1: the fields the contract says the action writes (None: not stated);
+    # a model writing any other field is not what the platform does — the write is dropped
+    allowed: set[str] | None = None
+    dropped: set[str] = field(default_factory=set)
 
     @property
     def now(self) -> float:
         return self.world.now
 
     def write(self, key: str, value: Any) -> None:
-        self.blackboard[self.fields.get(key, f"sim.{key}")] = value
+        path = self.fields.get(key, f"sim.{key}")
+        if (
+            self.allowed is not None
+            and path not in self.allowed
+            and not path.startswith("sim.")
+            and not key.startswith("exec.")
+        ):
+            self.dropped.add(path)
+            return
+        self.blackboard[path] = value
 
     def read(self, key: str, default: Any = None) -> Any:
         return self.blackboard.get(self.fields.get(key, f"sim.{key}"), default)
@@ -310,10 +323,13 @@ class ClearSelected(ActionModel):
 
 # ---------------------------------------------------------------------- formation
 class FormationSlots(ActionModel):
-    """Followers taking the slots of a formation shape (``mode`` option): the slot errors
-    start at ``initial_error_m`` when the shape changes and shrink at ``converge_mps`` to
-    ``floor_m``. Persistent (running) like the formation steps it stands for; the
-    followers are not simulated vehicles, only their slot errors are."""
+    """Followers taking the slots of a formation shape (``mode`` option): their error to
+    the shape's slots starts at ``initial_error_m`` when the shape changes and shrinks at
+    ``converge_mps`` to ``floor_m``. With ``success_within_m`` the step succeeds once the
+    error is within it (as the platform's formation steps do); without it, it keeps
+    running. The followers are not simulated vehicles, only their slot errors are; which
+    fields receive the error is decided by the contract (a shape whose step writes no
+    error field leaves them as they are)."""
 
     KEYS = ("formation.left_error", "formation.right_error")
 
@@ -332,27 +348,27 @@ class FormationSlots(ActionModel):
 
     def update(self, ctx: ActionContext) -> Status:
         state = ctx.shared.setdefault("formation", {"error": 0.0, "at": ctx.now})
-        away = ctx.options.get("away_m")
-        if away is not None:
-            # a shape whose slots are not the ones the error fields measure (e.g. the column,
-            # when the fields measure the line slots): the followers are away from them
-            state["at"] = ctx.now
-            for key in self.KEYS:
-                ctx.write(key, float(away))
-            return RUNNING, None
         dt = max(0.0, ctx.now - float(state.get("at", ctx.now)))
         floor = float(ctx.options.get("floor_m", 2.0))
         rate = float(ctx.options.get("converge_mps", 4.0))
         state["error"] = max(floor, float(state.get("error", floor)) - rate * dt)
         state["at"] = ctx.now
+        away = ctx.options.get("away_m")
         for key in self.KEYS:
-            ctx.write(key, state["error"])
+            # ``away_m``: the error fields measure another shape's slots (e.g. the line,
+            # while this shape is the column) and the followers are away from them
+            ctx.write(key, float(away) if away is not None else state["error"])
+        done = ctx.options.get("success_within_m")
+        if done is not None and state["error"] <= float(done):
+            return SUCCESS, None
         return RUNNING, None
 
 
 class StandoffCommand(ActionModel):
-    """Range band of the selected target against ``desired_m`` ± ``tolerance_m``
-    (persistent); the band is what standoff conditions read."""
+    """Range band of the selected target against ``desired_m`` ± ``tolerance_m``; the
+    band is what standoff conditions read. Like the platform step, each update succeeds
+    once the command is given (not when the range is in the band) and fails with
+    NO_TARGET without a valid target; ``persistent: true`` keeps it running instead."""
 
     def update(self, ctx: ActionContext) -> Status:
         desired = float(ctx.options.get("desired_m", 500.0))
@@ -367,7 +383,13 @@ class StandoffCommand(ActionModel):
         else:
             zone = "IN_BAND"
         ctx.write("formation.range_zone", zone)
-        return RUNNING, None
+        if ctx.options.get("persistent"):
+            return RUNNING, None
+        if zone == "NO_TARGET":
+            return FAILURE, "NO_TARGET"
+        mode = {"TOO_FAR": "APPROACH", "TOO_CLOSE": "WITHDRAW"}.get(zone, "HOLD")
+        ctx.write("formation.command_mode", mode)
+        return SUCCESS, None
 
 
 MODELS: dict[str, Callable[[], ActionModel]] = {

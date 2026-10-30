@@ -29,6 +29,13 @@ FIELD_TYPES = {
 }
 
 
+# resource scopes that name other vehicles than the one running the action
+OTHER_VEHICLES = ("followers", "members", "others")
+
+# fields kept up to date without a writing action
+STATIC_UPDATES = ("constant", "state_entry", "always")
+
+
 @dataclass(frozen=True)
 class BBField:
     path: str
@@ -38,6 +45,21 @@ class BBField:
     enum: tuple[str, ...] = ()
     nullable: bool = False
     default: Any = None
+    # capability set 1.1 semantics (None / empty: not stated)
+    description: str = ""
+    written_by: tuple[str, ...] | None = None  # () : nothing writes it
+    updated: str | tuple[str, ...] | None = None
+    initial: Any = None
+    has_initial: bool = False
+    reset_on_start: Any = None
+    internal: bool = False
+    note: str = ""
+    enum_meaning: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def unwritten(self) -> bool:
+        """The capability set says nothing writes this field (it cannot drive a condition)."""
+        return self.written_by == () and self.updated not in STATIC_UPDATES
 
 
 @dataclass(frozen=True)
@@ -51,10 +73,27 @@ class ActionContract:
     failure_codes: tuple[str, ...] = ()
     platform_classes: tuple[str, ...] = ()
     success: dict[str, Any] = field(default_factory=dict)  # completion criteria of the contract
+    # capability set 1.1: reads / writes (field, updated, reset_on_start, ...), result meaning
+    description: str = ""
+    reads: tuple[str, ...] = ()
+    writes: tuple[dict[str, Any], ...] | None = None  # None: not stated
+    result: dict[str, Any] = field(default_factory=dict)
+    persistent: bool | None = None
+
+    @property
+    def written(self) -> set[str]:
+        return {str(w.get("field")) for w in self.writes or ()}
 
     @property
     def exclusive(self) -> set[str]:
-        return {r["resource"] for r in self.resources if r.get("mode") == "exclusive"}
+        """Exclusive resources of the vehicle running the action. A claim scoped to other
+        vehicles (``scope: followers``: a formation step commanding the followers'
+        locomotion) does not compete with the vehicle's own actions."""
+        return {
+            r["resource"]
+            for r in self.resources
+            if r.get("mode") == "exclusive" and r.get("scope") not in OTHER_VEHICLES
+        }
 
 
 @dataclass(frozen=True)
@@ -94,6 +133,17 @@ class Contracts:
                 failure_codes=tuple(raw.get("failure_codes") or ()),
                 platform_classes=cap.platform_classes,
                 success=dict(raw.get("success") or {}),
+                description=str(raw.get("description") or ""),
+                reads=tuple(str(r) for r in raw.get("reads") or ()),
+                writes=(
+                    tuple(w for w in raw["writes"] if isinstance(w, dict))
+                    if isinstance(raw.get("writes"), list)
+                    else None
+                ),
+                result=dict(raw.get("result") or {}) if isinstance(raw.get("result"), dict) else {},
+                persistent=raw.get("persistent")
+                if isinstance(raw.get("persistent"), bool)
+                else None,
             )
         self.tactics: dict[str, TacticEntry] = {}
         for sid, data in catalog.tactics.items():
@@ -111,6 +161,27 @@ class Contracts:
                 self.resources.setdefault(name, dict(spec or {}))
         self.blackboard_aliases = dict(blackboard_aliases or {})
         self.semantics = semantics or SimSemantics()
+        self._merge_catalog_semantics()
+
+    def _merge_catalog_semantics(self) -> None:
+        """Trigger meanings and initial values recorded in the capability set (1.1) are the
+        master copy; the alignment file only fills what the capability set leaves out."""
+        for entry in self.tactics.values():
+            events = entry.raw.get("events") if entry.section == "missions" else None
+            if not isinstance(events, dict):
+                continue
+            table = self.semantics.events.setdefault(entry.id, {})
+            for name, spec in events.items():
+                meaning = (spec or {}).get("meaning")
+                if isinstance(meaning, dict) and meaning:
+                    table[str(name)] = dict(meaning)
+        for path, f in self.blackboard.items():
+            if f.has_initial and path not in self.semantics.initial:
+                self.semantics.initial[path] = f.initial
+
+    def writers(self, path: str) -> tuple[str, ...] | None:
+        f = self.blackboard.get(path)
+        return None if f is None else f.written_by
 
     @classmethod
     def load(cls, root: Path | str | None = None) -> Contracts:
@@ -140,6 +211,21 @@ def _bb_field(path: str, spec: Any, slice_id: str) -> BBField:
         enum=tuple(str(v) for v in spec.get("enum") or () if v is not None),
         nullable=bool(spec.get("nullable")),
         default=spec.get("default"),
+        description=str(spec.get("description") or ""),
+        written_by=(
+            tuple(str(w) for w in spec["written_by"])
+            if isinstance(spec.get("written_by"), list)
+            else None
+        ),
+        updated=(
+            tuple(spec["updated"]) if isinstance(spec.get("updated"), list) else spec.get("updated")
+        ),
+        initial=spec.get("initial"),
+        has_initial="initial" in spec,
+        reset_on_start=spec.get("reset_on_start"),
+        internal=bool(spec.get("internal")),
+        note=str(spec.get("note") or ""),
+        enum_meaning=tuple((str(k), str(v)) for k, v in (spec.get("enum_meaning") or {}).items()),
     )
 
 

@@ -258,3 +258,144 @@ def test_defaults_fill_only_empty_slots(capability_set) -> None:
     other = ExtensionRegistry(tactic_library=mine)
     setup_defaults(other)
     assert other.tactic_library is mine and other.action_library is not None
+
+
+def test_format_1_1_semantics_are_exported_and_checked(lab: Path) -> None:
+    """Field semantics, contracts with reads / writes / result, tactic-step contract files,
+    subtree results and mission trigger meanings (capability set 1.1)."""
+    _w(
+        lab,
+        "schema/blackboard/perception_blackboard.schema.yaml",
+        {
+            "fields": {
+                "perception.target.valid": {
+                    "type": "boolean",
+                    "description": "目标有效",
+                    "initial": False,
+                },
+                "perception.request.id": {
+                    "type": "string",
+                    "description": "请求",
+                    "internal": True,
+                },
+            }
+        },
+    )
+    _w(
+        lab,
+        "actions/perception/select.action.yaml",
+        {
+            "id": "perception.select",
+            "description": "选择目标",
+            "blackboard": {
+                "reads": ["perception.request.id"],
+                "writes": ["perception.target.valid"],
+                "updated": "on_success",
+                "write_semantics": {"perception.target.valid": {"on_success": True}},
+            },
+            "result": {"success": "已选定", "failure": "没有目标"},
+            "persistent": False,
+        },
+    )
+    _w(
+        lab,
+        "schema/blackboard/formation_standoff_blackboard.schema.yaml",
+        {
+            "fields": {
+                "formation.slot_error_m": {"type": "number", "description": "站位误差"},
+                "formation.shape": {"type": "string", "enum": ["A", "B"], "description": "未实现"},
+            }
+        },
+    )
+    _w(
+        lab,
+        "actions/formation_standoff/line_slots.action.yaml",
+        {
+            "id": "formation.line_slots",
+            "kind": "tactic_step",
+            "description": "占领横队站位",
+            "resource_claims": [
+                {"resource": "locomotion", "mode": "exclusive", "scope": "followers"}
+            ],
+            "blackboard": {
+                "reads": ["perception.target.valid"],
+                "writes": ["formation.slot_error_m"],
+                "updated": "while_running",
+                "write_semantics": {"formation.slot_error_m": {"reset_on_start": 999.0}},
+            },
+            "result": {"running": "未到位", "success": "到位"},
+            "persistent": False,
+        },
+    )
+    _w(
+        lab,
+        "tactics/formation_standoff/deploy.subtree.yaml",
+        {
+            "id": "formation_standoff.deploy",
+            "description": "展开",
+            "result": {"running": "未到位", "success": "到位"},
+            "persistent": False,
+            "root": {"type": "action", "ref": "formation.line_slots"},
+        },
+    )
+    _w(
+        lab,
+        "missions/formation_standoff_example.fsm.yaml",
+        {
+            "id": "formation_standoff_example",
+            "initial_state": "DEPLOY",
+            "states": {
+                "DEPLOY": {
+                    "tree": "formation_standoff.deploy_state",
+                    "transitions": [
+                        {"on": "READY", "to": "DONE"},
+                        {"on": "SHAPE_OK", "to": "DONE"},
+                        {"on": "STOP", "to": "DONE"},
+                    ],
+                },
+                "DONE": {"terminal": True},
+            },
+            "events": {
+                "READY": {"meaning": {"tree": "success"}, "description": "展开完成"},
+                "SHAPE_OK": {"meaning": {"expression": {"bb": "formation.shape"}}},
+            },
+        },
+    )
+    exporter = LabExporter(lab)
+    result = exporter.export()
+    acts = result["actions"]["formation_standoff"]
+    assert acts["actions"] == []
+    (step,) = acts["tactic_steps"]
+    assert step["id"] == "formation.line_slots" and step["kind"] == "tactic_step"
+    assert step["used_by"] == ["formation_standoff"]
+    assert step["writes"] == [
+        {"field": "formation.slot_error_m", "updated": "while_running", "reset_on_start": 999.0}
+    ]
+    assert step["result"]["success"] == "到位" and step["persistent"] is False
+    assert step["resources"][0]["scope"] == "followers"
+    fields = acts["blackboard"]["fields"]
+    assert fields["formation.slot_error_m"]["written_by"] == ["formation.line_slots"]
+    assert fields["formation.slot_error_m"]["updated"] == "while_running"
+    assert fields["formation.slot_error_m"]["reset_on_start"] == 999.0
+    assert fields["formation.shape"]["written_by"] == []  # annotated slice: no writer
+    perc = result["actions"]["perception"]["blackboard"]["fields"]
+    assert perc["perception.target.valid"]["written_by"] == ["perception.select"]
+    assert perc["perception.target.valid"]["initial"] is False
+    sub = result["tactics"]["formation_standoff"]["subtrees"][0]
+    assert sub["result"] == {"running": "未到位", "success": "到位"}
+    assert sub["interface"] == {
+        "reads": ["perception.target.valid"],
+        "writes": ["formation.slot_error_m"],
+        "resources": ["locomotion"],
+    }
+    (mission,) = result["tactics"]["formation_standoff"]["missions"]
+    assert mission["events"]["READY"] == {"meaning": {"tree": "success"}, "description": "展开完成"}
+    index = {s["id"]: s for s in result["index"]["slices"]}
+    assert index["formation_standoff"]["semantics"] is True
+    assert result["index"]["format_version"] == "1.1.0"
+    problems = [p for _, p in exporter.report.warnings]
+    assert "触发条件缺少含义：STOP" in problems
+    assert "SHAPE_OK 读取的字段没有写入者：formation.shape" in problems
+    # a slice without annotated contracts claims nothing about writers
+    eng = result["actions"]["engagement"]["blackboard"]["fields"]
+    assert all("written_by" not in f for f in eng.values())

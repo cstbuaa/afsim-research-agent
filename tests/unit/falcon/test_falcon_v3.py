@@ -743,3 +743,57 @@ def test_tree_events_end_a_state_when_its_tree_succeeds(contracts: Contracts) ->
     compiler = Compiler.__new__(Compiler)
     compiler.m = result.model
     assert compiler._semantics("cleaned") == {"tree": "success"}
+
+
+def _annotate(set_root: Path) -> Contracts:
+    """Capability set 1.1: contracts state their writes, fields their writers."""
+    nav = yaml.safe_load((set_root / "action_set/nav.yaml").read_text(encoding="utf-8"))
+    for a in nav["actions"]:
+        a["writes"] = (
+            [{"field": "nav.range_m", "updated": "while_running"}]
+            if a["id"] in ("nav.goto", "nav.hold")
+            else []
+        )
+    nav["actions"][0]["result"] = {"running": "未到达", "success": "到达"}
+    nav["blackboard"]["fields"]["nav.range_m"].update(
+        written_by=["nav.goto", "nav.hold"], updated="while_running", description="到目标点距离"
+    )
+    nav["blackboard"]["fields"]["self.speed_mps"].update(updated="always")
+    _w(set_root, "action_set/nav.yaml", nav)
+    sense = yaml.safe_load((set_root / "action_set/sense.yaml").read_text(encoding="utf-8"))
+    sense["actions"][0]["writes"] = [{"field": "sense.target.valid", "updated": "on_success"}]
+    sense["actions"][1]["writes"] = []
+    fields = sense["blackboard"]["fields"]
+    fields["sense.target.valid"].update(written_by=["sense.scan"], initial=False)
+    fields["sense.mode"].update(written_by=[], description="设计中的模式字段")
+    _w(set_root, "action_set/sense.yaml", sense)
+    return Contracts.load(set_root)
+
+
+def test_conditions_must_read_fields_the_state_keeps_up_to_date(set_root: Path) -> None:
+    contracts = _annotate(set_root)
+    out = _compile(contracts)
+    assert not out.errors, [p.render() for p in out.errors]
+    # a field nothing writes cannot drive a condition
+    bad = SHEET.replace("target_seen = sense.target.valid", 'target_seen = sense.mode == "TRACK"')
+    msgs = [p.message for p in _compile(contracts, bad).errors]
+    assert any("sense.mode" in m and "没有任何动作写入" in m for m in msgs), msgs
+    # a transition of a state whose tree does not update the field
+    bad = SHEET.replace("SHUTDOWN --> DONE : stopped", "SHUTDOWN --> DONE : not sense.target.valid")
+    errs = _compile(contracts, bad).errors
+    assert any("状态 SHUTDOWN" in p.message and "sense.target.valid" in p.message for p in errs), [
+        p.message for p in errs
+    ]
+    # fields the platform updates every tick are fine anywhere (stopped reads self.speed_mps)
+    assert not any("self.speed_mps" in p.message for p in errs)
+
+
+def test_prompt_shows_field_writers_and_results(set_root: Path) -> None:
+    from afsim_research_agent.falcon.v3 import catalog as K
+
+    contracts = _annotate(set_root)
+    text = K.details(contracts, ["nav", "sense"], "subtrees")
+    assert "nav.range_m (double distance) — 到目标点距离；由 nav.goto, nav.hold 写入" in text
+    assert "未实现的字段（没有任何动作写入，不能用作条件）：sense.mode（设计中的模式字段）" in text
+    assert "结果：运行=未到达；成功=到达" in text
+    assert "初值 False" in text

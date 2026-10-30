@@ -262,6 +262,9 @@ class SheetFixer:
                     "独占资源：" + (", ".join(sorted(a.exclusive)) or "无"),
                     "完成判据：" + json.dumps(a.success, ensure_ascii=False),
                     "失败码：" + ", ".join(a.failure_codes),
+                    *([K.result_text(a.result, a.persistent)] if a.result else []),
+                    *(["读 " + ", ".join(a.reads)] if a.reads else []),
+                    *([K._writes_text(c, a)] if a.writes is not None else []),
                 ]
             )
         if ref in c.tactics:
@@ -271,14 +274,20 @@ class SheetFixer:
             )
             if t.section == "missions":
                 return f"战术集任务 {ref}：" + json.dumps(t.raw, ensure_ascii=False)[:3000]
-            return f"战术集{kind} {ref}\n" + K.entry_python(c, t, "_" + ref.split(".")[-1])
+            result = K.result_text(t.raw.get("result"), t.raw.get("persistent"))
+            return (
+                f"战术集{kind} {ref}\n"
+                + (f"# {result}\n" if result else "")
+                + K.entry_python(c, t, "_" + ref.split(".")[-1])
+            )
         if ref in c.blackboard:
             f = c.blackboard[ref]
             return (
                 f"黑板字段 {ref}：类型 {f.type}"
                 + (f"，量纲 {f.dimension}" if f.dimension else "")
                 + (f"，取值 {'/'.join(f.enum)}" if f.enum else "，没有列出取值")
-                + f"，切片 {f.slice}"
+                + f"，切片 {f.slice}\n"
+                + K.field_text(c, ref)
             )
         if ref in K.slices(c):
             return K.details(c, [ref], self.d.r.reference_policy)[:RESULT_LIMIT]

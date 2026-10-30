@@ -226,27 +226,12 @@ def details(contracts: Contracts, wanted: list[str], policy: str = "all") -> str
         return _details_subtrees(contracts, wanted)
     out: list[str] = []
     for sid in wanted:
-        actions = [a for a in contracts.actions.values() if a.slice == sid]
         tactics = [t for t in contracts.tactics.values() if t.slice == sid]
+        actions = _actions_text(contracts, sid)
         if not actions and not tactics:
             continue
         out.append(f"### 切片 `{sid}`")
-        if actions:
-            out.append("动作（叶节点写 `切片.动作(参数=值)`）：")
-            for a in sorted(actions, key=lambda x: x.id):
-                cap = contracts.catalog.capabilities.get(a.id)
-                desc = _short(cap.raw.get("description") if cap else "")
-                params = ", ".join(f"{k}: {_param(v)}" for k, v in a.parameters.items()) or "无参数"
-                extra = []
-                if a.exclusive:
-                    extra.append("独占 " + "/".join(sorted(a.exclusive)))
-                if a.kind == "tactic_step":
-                    extra.append("战术步骤，无独立契约")
-                if a.success:
-                    extra.append("完成判据 " + _short(a.success, 80))
-                out.append(
-                    f"- `{a.id}`({params}) — {desc}" + (f"［{'；'.join(extra)}］" if extra else "")
-                )
+        out += actions
         trees = [t for t in tactics if t.section != "missions"]
         if trees:
             out.append('战术集子树 / 状态树（写 `tactic("id")`，只能覆盖公开参数）：')
@@ -259,10 +244,12 @@ def details(contracts: Contracts, wanted: list[str], policy: str = "all") -> str
                     else ""
                 )
                 uses = (t.raw.get("uses") or {}).get("actions") or []
+                result = result_text(t.raw.get("result"), t.raw.get("persistent"))
                 out.append(
                     f"- `{t.id}`"
                     + (f"（参数 {params}）" if params else "")
                     + f" — {desc}{running}"
+                    + (f"；{result}" if result else "")
                     + (f"［用到 {', '.join(uses)}］" if uses else "")
                 )
         for m in (t for t in tactics if t.section == "missions"):
@@ -282,20 +269,52 @@ def details(contracts: Contracts, wanted: list[str], policy: str = "all") -> str
                     "  触发条件的含义（自己写状态图和条件时照此写）："
                     + "; ".join(f"{k} = {trigger_text(v)}" for k, v in meanings.items())
                 )
-        fields = sorted(
-            p for p, f in contracts.blackboard.items() if f.slice == sid and not internal_field(p)
-        )
-        if fields:
-            shown = []
-            for p in fields:
-                f = contracts.blackboard[p]
-                kind = f.type + (f" {f.dimension}" if f.dimension else "")
-                if f.enum:
-                    kind += " " + "/".join(f.enum)
-                shown.append(f"{p} ({kind})")
-            out.append("黑板字段（条件里直接写字段路径）：" + "; ".join(shown))
+        out += _fields_text(contracts, sid)
         out.append("")
     return "\n".join(out)
+
+
+UPDATED_TEXT = {
+    "constant": "常量",
+    "state_entry": "进入状态时由运行时写入",
+    "always": "平台每拍更新",
+    "while_running": "执行时每拍更新",
+    "on_start": "启动时写入",
+    "on_success": "成功时写入",
+    "on_failure": "失败时写入",
+}
+
+
+def result_text(result: Any, persistent: Any = None) -> str:
+    """The meaning of running / success / failure of an action or tree (capability set 1.1)."""
+    parts = []
+    if isinstance(result, dict):
+        for key, word in (("running", "运行"), ("success", "成功"), ("failure", "失败")):
+            if result.get(key):
+                parts.append(f"{word}={_short(result[key], 90)}")
+    text = "结果：" + "；".join(parts) if parts else ""
+    if persistent is True and "不会自己成功" not in text:
+        text += ("；" if text else "") + "一直运行，不会自己成功"
+    return text
+
+
+def _writes_text(contracts: Contracts, a: Any, common: set[str] | None = None) -> str:
+    shown = []
+    for w in a.writes or ():
+        path = str(w.get("field"))
+        if common and path in common:
+            continue
+        f = contracts.blackboard.get(path)
+        if internal_field(path) or (f is not None and f.internal):
+            continue
+        extra = []
+        if "reset_on_start" in w:
+            extra.append(f"启动时置 {w['reset_on_start']}")
+        for key, word in (("on_success", "成功时"), ("on_failure", "失败时")):
+            if key in w:
+                extra.append(f"{word}={w[key]}")
+        shown.append(path + (f"（{'，'.join(extra)}）" if extra else ""))
+    return ("写 " + ", ".join(shown)) if shown else "不写黑板字段"
 
 
 def _actions_text(contracts: Contracts, sid: str) -> list[str]:
@@ -304,6 +323,17 @@ def _actions_text(contracts: Contracts, sid: str) -> list[str]:
     if not actions:
         return out
     out.append("动作（叶节点写 `切片.动作(参数=值)`）：")
+    # fields every action of the slice writes are listed once (e.g. the vehicle's own state)
+    annotated = [a for a in actions if a.writes is not None]
+    common: set[str] = set()
+    if len(annotated) > 1 and len(annotated) == len(actions):
+        common = set.intersection(*(a.written for a in annotated))
+        common = {
+            f
+            for f in common
+            if not internal_field(f)
+            and not (contracts.blackboard.get(f) and contracts.blackboard[f].internal)
+        }
     for a in sorted(actions, key=lambda x: x.id):
         cap = contracts.catalog.capabilities.get(a.id)
         desc = _short(cap.raw.get("description") if cap else "")
@@ -312,27 +342,82 @@ def _actions_text(contracts: Contracts, sid: str) -> list[str]:
         if a.exclusive:
             extra.append("独占 " + "/".join(sorted(a.exclusive)))
         if a.kind == "tactic_step":
-            extra.append("战术步骤，无独立契约")
-        if a.success:
+            extra.append("战术步骤" if a.writes is not None else "战术步骤，无独立契约")
+        result = result_text(a.result, a.persistent)
+        if result:
+            extra.append(result)
+        elif a.success:
             extra.append("完成判据 " + _short(a.success, 80))
+        if a.writes is not None:
+            text = _writes_text(contracts, a, common)
+            if not (common and text == "不写黑板字段"):
+                extra.append(text)
         out.append(f"- `{a.id}`({params}) — {desc}" + (f"［{'；'.join(extra)}］" if extra else ""))
+    if common:
+        out.append(f"  （以上动作执行时都会更新：{', '.join(sorted(common))}）")
     return out
+
+
+def field_text(contracts: Contracts, path: str) -> str:
+    """One blackboard field with its meaning: who writes it, when, initial values."""
+    f = contracts.blackboard[path]
+    kind = f.type + (f" {f.dimension}" if f.dimension else "")
+    if f.enum:
+        kind += " " + "/".join(f.enum)
+    parts = []
+    if f.description:
+        parts.append(f.description)
+    if f.unwritten:
+        parts.append("没有任何动作写入，不能用作条件")
+    elif f.written_by:
+        how = f.updated if isinstance(f.updated, str) else None
+        parts.append(
+            f"由 {', '.join(f.written_by)} 写入"
+            + (f"，{UPDATED_TEXT.get(how, how)}" if how else "")
+        )
+    elif isinstance(f.updated, str) and f.updated in UPDATED_TEXT:
+        if UPDATED_TEXT[f.updated] not in f.description:
+            parts.append(UPDATED_TEXT[f.updated])
+    if f.reset_on_start is not None:
+        parts.append(f"写入者启动时先置为 {f.reset_on_start}")
+    if f.has_initial:
+        parts.append(f"初值 {f.initial!r}")
+    if f.enum_meaning:
+        parts.append("取值：" + "，".join(f"{k}={v}" for k, v in f.enum_meaning))
+    if f.note and not f.unwritten:
+        parts.append(f"注意：{f.note}")
+    return f"- {path} ({kind})" + (" — " + "；".join(parts) if parts else "")
 
 
 def _fields_text(contracts: Contracts, sid: str) -> list[str]:
     fields = sorted(
-        p for p, f in contracts.blackboard.items() if f.slice == sid and not internal_field(p)
+        p
+        for p, f in contracts.blackboard.items()
+        if f.slice == sid and not internal_field(p) and not f.internal
     )
     if not fields:
         return []
-    shown = []
-    for p in fields:
-        f = contracts.blackboard[p]
-        kind = f.type + (f" {f.dimension}" if f.dimension else "")
-        if f.enum:
-            kind += " " + "/".join(f.enum)
-        shown.append(f"{p} ({kind})")
-    return ["黑板字段（条件里直接写字段路径）：" + "; ".join(shown)]
+    unwritten = [p for p in fields if contracts.blackboard[p].unwritten]
+    out = [
+        "黑板字段（条件里直接写字段路径）。字段只在写入它的动作（或含有这些动作的子树）"
+        "运行时变化：转换条件和树中的条件只能读本状态的树会更新的字段，否则条件在该状态中"
+        "永远不变：",
+        *(field_text(contracts, p) for p in fields if p not in unwritten),
+    ]
+    if unwritten:
+        out.append(
+            "- 未实现的字段（没有任何动作写入，不能用作条件）："
+            + "；".join(
+                p
+                + (
+                    f"（{contracts.blackboard[p].description}）"
+                    if contracts.blackboard[p].description
+                    else ""
+                )
+                for p in unwritten
+            )
+        )
+    return out
 
 
 def _details_subtrees(contracts: Contracts, wanted: list[str]) -> str:
@@ -353,6 +438,9 @@ def _details_subtrees(contracts: Contracts, wanted: list[str]) -> str:
             for t in subs:
                 params = ", ".join(f"{k}={v}" for k, v in t.parameters.items())
                 out.append(f"# {t.id}" + (f"（公开参数 {params}）" if params else ""))
+                result = result_text(t.raw.get("result"), t.raw.get("persistent"))
+                if result:
+                    out.append(f"# {result}")
                 out.append(entry_python(contracts, t, "_" + t.id.split(".")[-1]))
                 out.append("")
             out.append("```")

@@ -34,7 +34,7 @@ from afsim_research_agent.falcon.v3.pyexpr import ExprCompiler, ExprError, Symbo
 from afsim_research_agent.falcon.v3.pytree import TreeSymbols, parse_block
 from afsim_research_agent.ir.diagnostics import Diagnostic
 from afsim_research_agent.ir.units import infer_dimension
-from afsim_research_agent.ir.v2.contracts import Contracts
+from afsim_research_agent.ir.v2.contracts import STATIC_UPDATES, Contracts
 
 V3_KINDS = ("model", "mermaid", "conditions", "pytree", "gaps", "verification")
 STATE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
@@ -293,6 +293,8 @@ class SheetCompiler:
                 )
         self._mission_ref_names(spec)
         self._condition_usage(spec)
+        if not self.pending_triggers:
+            self._writer_checks(spec)
         if self.scenario_events and not self.pending_triggers:
             external = {e["id"] for e in spec["events"] if e["source"] == "external"}
             for eid in sorted(external - set(self.scenario_events)):
@@ -392,6 +394,149 @@ class SheetCompiler:
                 f"状态图使用的触发 '{name}' 没有定义：在这里写 {name} = 表达式"
                 "（计时写 time_in_state() >= 2 * s），或在 model 的 events 中声明它",
             )
+
+    # ------------------------------------------------------------------ writers (set 1.1)
+    def _closure(
+        self, ref: str | None, subs: dict[str, Any], gaps: dict[str, Any]
+    ) -> tuple[set[str], set[str]]:
+        """Actions / tactic steps a state's tree can run, and the fields its gaps write."""
+        actions: set[str] = set()
+        gap_writes: set[str] = set()
+        seen: set[str] = set()
+
+        def gap(name: str) -> None:
+            spec = gaps.get(name.removeprefix("gap.")) or {}
+            gap_writes.update((spec.get("blackboard") or {}).get("writes") or [])
+
+        def walk(node: Any) -> None:
+            if not isinstance(node, dict):
+                return
+            kind = node.get("type")
+            if kind == "action" and node.get("action"):
+                name = str(node["action"])
+                gap(name) if name.startswith("gap.") else actions.add(name)
+            elif kind == "subtree" and node.get("subtree"):
+                visit(str(node["subtree"]))
+            elif kind == "tactic" and node.get("tactic"):
+                visit(str(node["tactic"]))
+            for kid in [node.get("child"), *(node.get("children") or [])]:
+                walk(kid)
+
+        def visit(name: str) -> None:
+            if name in seen:
+                return
+            seen.add(name)
+            if name.startswith("gap."):
+                gap(name)
+            elif name in subs:
+                walk(subs[name])
+            elif name in self.c.tactics:
+                walk(self.c.tactics[name].raw.get("root"))
+
+        if ref:
+            visit(ref)
+        return actions, gap_writes
+
+    def _writer_checks(self, spec: dict[str, Any]) -> None:
+        """A condition may only read a field that something keeps up to date: a field the
+        capability set says nothing writes is refused, and a transition (or a tree
+        condition) of a state may only read fields that the state's tree writes — otherwise
+        the field is frozen in that state and the condition never changes."""
+        exprs = {c["id"]: c["expression"] for c in spec["conditions"]}
+        paths = {c["id"]: f"conditions[{i}]" for i, c in enumerate(spec["conditions"])}
+        used = self._used_names(spec)
+        memo: dict[str, set[str]] = {}
+
+        def fields(cid: str, stack: tuple[str, ...] = ()) -> set[str]:
+            if cid in memo:
+                return memo[cid]
+            out: set[str] = set()
+            for ref in _bb_reads(exprs.get(cid)):
+                out.add(ref)
+            for ref in _condition_refs(exprs.get(cid)):
+                if ref not in stack:
+                    out |= fields(ref, (*stack, cid))
+            memo[cid] = out
+            return out
+
+        def label(cid: str) -> str:
+            return "转换条件" if re.match(r".+_t\d+$", cid) else f"条件 {cid}"
+
+        for cid in sorted(c for c in exprs if c in used):
+            for path in sorted(fields(cid)):
+                f = self.c.blackboard.get(path)
+                if f is not None and f.unwritten:
+                    block, line = self.out.locate(paths[cid])
+                    self.fail(
+                        block,
+                        line,
+                        f"{label(cid)}读取字段 {path}：能力集中没有任何动作写入它，不能用作条件"
+                        + (f"（{f.note}）" if f.note else ""),
+                    )
+        subs = {s["id"]: s["root"] for s in spec["subtrees"]}
+        gaps = spec.get("gaps") or {}
+        reported: set[tuple[str, str, str]] = set()
+        for rid, mission in spec["missions"].items():
+            if "tactic" in mission:
+                continue
+            trees = spec["state_trees"].get(rid, {})
+            for state in mission["states"]:
+                if state in mission["terminal"]:
+                    continue
+                actions, gap_writes = self._closure(trees.get(state), subs, gaps)
+                checks: list[tuple[str, str]] = []  # (condition id, IR path for the line)
+                for i, tr in enumerate(mission["transitions"]):
+                    if tr["from"] == state and tr["on"] in exprs:
+                        checks.append((tr["on"], f"missions.{rid}.transitions[{i}]"))
+                for cid in sorted(self._tree_conditions(trees.get(state), subs)):
+                    if cid in exprs:
+                        checks.append((cid, paths[cid]))
+                for cid, where in checks:
+                    for path in sorted(fields(cid)):
+                        f = self.c.blackboard.get(path)
+                        if (
+                            f is None
+                            or not f.written_by
+                            or f.updated in STATIC_UPDATES
+                            or set(f.written_by) & actions
+                            or path in gap_writes
+                            or (state, cid, path) in reported
+                        ):
+                            continue
+                        reported.add((state, cid, path))
+                        block, line = self.out.locate(where)
+                        self.fail(
+                            block,
+                            line,
+                            f"状态 {state} 的{label(cid)}读取 {path}，它只由 "
+                            f"{', '.join(f.written_by)} 写入；{state} 的树中没有这些动作"
+                            "（或含有它们的子树），该字段在此状态中不会变化。在树中加入相应动作"
+                            "或子树，或改用本状态会更新的字段、计时或树事件",
+                        )
+
+    def _tree_conditions(self, ref: str | None, subs: dict[str, Any]) -> set[str]:
+        """Condition ids used inside the model's own trees reachable from a state tree."""
+        found: set[str] = set()
+        seen: set[str] = set()
+
+        def walk(node: Any) -> None:
+            if not isinstance(node, dict):
+                return
+            if node.get("type") == "condition" and node.get("condition"):
+                found.add(str(node["condition"]))
+            if node.get("type") == "subtree" and node.get("subtree") in subs:
+                visit(str(node["subtree"]))
+            for kid in [node.get("child"), *(node.get("children") or [])]:
+                walk(kid)
+
+        def visit(name: str) -> None:
+            if name not in seen:
+                seen.add(name)
+                walk(subs[name])
+
+        if ref in subs:
+            visit(ref)
+        return found
 
     def _slices(self, model: dict[str, Any]) -> list[str]:
         known = K.slices(self.c)
@@ -877,6 +1022,23 @@ class SheetCompiler:
             self.at(path, key, first + node["_line"])
         for i, kid in enumerate(node.get("children") or []):
             self._map_nodes(f"{path}.children[{i}]", kid, key, first)
+
+
+def _bb_reads(expr: Any) -> set[str]:
+    """Blackboard fields an expression reads (``bb`` operands and function ``field`` args)."""
+    out: set[str] = set()
+    if isinstance(expr, dict):
+        for k, v in expr.items():
+            if k == "bb" and isinstance(v, str):
+                out.add(v)
+            elif k == "field" and isinstance(v, str):
+                out.add(v)
+            else:
+                out |= _bb_reads(v)
+    elif isinstance(expr, list):
+        for v in expr:
+            out |= _bb_reads(v)
+    return out
 
 
 def _condition_refs(expr: Any) -> list[str]:
