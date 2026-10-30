@@ -140,3 +140,12 @@ def test_fields_of_other_kinds_are_ignored() -> None:
         {"id": "a_then_b", "kind": "precedes", "first": "a", "then": "b", "within_s": 0.0}
     )
     assert ob.within_s is None and ob.first == "a"
+
+
+def test_not_before_times_the_first_start_after_the_anchor() -> None:
+    again = Obligation(id="reassess", kind="not_before", action="a.assess", after="a.send", min_s=5)
+    acts = [(0, "p", "a.assess"), (6, "p", "a.send"), (12, "p", "a.assess")]
+    (v,) = check([again], acts, [], end_s=20)
+    assert v.passed and "6 s" in v.detail
+    (v,) = check([again], acts[:2] + [(7, "p", "a.assess")], [], end_s=20)
+    assert not v.passed

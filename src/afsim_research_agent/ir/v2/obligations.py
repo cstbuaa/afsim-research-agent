@@ -7,7 +7,8 @@ action starts) and external events, never the model's own state names, so it hol
 structure the model chooses:
 
 ``not_before``  ``action`` starts no earlier than ``min_s`` after ``after`` first started
-                ("search starts about 10 s after the advance starts"); with ``after`` equal
+                ("search starts about 10 s after the advance starts"; the first start of
+                ``action`` from the anchor on); with ``after`` equal
                 to ``action``: consecutive starts are at least ``min_s`` apart
                 ("re-evaluate every few seconds")
 ``precedes``    ``then`` does not start before ``first`` has started
@@ -247,7 +248,9 @@ def _one(ob, platform, starts, events, step_s, end_s) -> Verdict:
         tb = _first(starts, ob.after)
         if tb is None:
             return Verdict(ob.id, True, f"{platform}: {ob.after} 没有执行", judged=False)
-        ta = _first(starts, ob.action)
+        # the first start of the action from the anchor on (an earlier start, e.g. the first
+        # round of a repeated pipeline, is not the one the requirement times)
+        ta = _first(starts, ob.action, tb)
         if ta is None:
             return Verdict(ob.id, True, f"{platform}: {ob.action} 没有执行", judged=False)
         need = float(ob.min_s or 0.0)

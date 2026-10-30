@@ -215,6 +215,7 @@ class Drafter:
                 for c in run_l2(model, self.c, spec.get("tests") or [])
             ]
             covered: set[str] = set()
+            unmodelled: set[str] = set()
             per_state = state_actions(spec, {k: t.raw for k, t in self.c.tactics.items()})
             per_event = event_actions(spec.get("missions") or {}, per_state)
             instances = [
@@ -239,6 +240,7 @@ class Drafter:
                     after_event=after,
                 )
                 covered |= {v.id for v in verdicts if v.judged}
+                unmodelled |= set(res.idealized)
                 broken = [v for v in verdicts if v.judged and not v.passed]
                 render = res.render()
                 # actions the 2D simulation has no model for succeed at once and write
@@ -276,7 +278,13 @@ class Drafter:
                         ),
                     }
                 )
-            missing = [o for o in self.obligations if o.id not in covered]
+            # an obligation on actions the 2D simulation has no model for cannot be covered
+            # there (they start but do nothing, so the anchor rarely happens): AFSIM judges it
+            missing = [
+                o
+                for o in self.obligations
+                if o.id not in covered and not set(o.actions()) & unmodelled
+            ]
             if missing and spec.get("scenarios"):
                 out.l3.append(
                     {
