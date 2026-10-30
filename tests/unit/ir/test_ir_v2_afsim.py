@@ -235,6 +235,9 @@ def test_state_machine_and_trees_use_native_structure(env) -> None:
     # one next_state per target: FOUND and DONE are merged into one block
     searching = text.split("   state SEARCHING")[1].split("   end_state")[0]
     assert searching.count("next_state DONE") == 1
+    # a cycle of true transitions cannot hang the update: at most 8 state changes per update
+    assert 'PLATFORM.SetAuxData("ir_hops", 0);' in text
+    assert 'if (PLATFORM.AuxDataInt("ir_hops") >= 8)' in searching and "IR_LOOP|" in searching
     assert 'PLATFORM.AuxDataBool("demo_target_valid")' in searching
     assert 'PLATFORM.AuxDataString("ir_sense_watch_tree") == "success"' in searching
     # external event: set by the run file, consumed by the transition
@@ -398,6 +401,8 @@ def test_judge_compares_with_expectation_and_reference(env) -> None:
     j = judge(run, CONSOLE, reference)
     assert not j.passed and any("CLEANUP" in p for p in j.problems)
     assert judge(run, CONSOLE + "CLEANUP|1\n", reference).passed
+    looped = judge(run, CONSOLE + "CLEANUP|1\nIR_LOOP|3|vehicle_0|SEARCHING\n", reference)
+    assert not looped.passed and any("SEARCHING within one update" in p for p in looped.problems)
     # time spent in each state against the reference (generated: SEARCHING for 4 s, the
     # reference 3 s)
     run["expect"]["max_interval_delta_s"] = 0.5
@@ -405,6 +410,8 @@ def test_judge_compares_with_expectation_and_reference(env) -> None:
     assert not j.passed and any("stayed 4s in SEARCHING" in p for p in j.problems), j.problems
     run["expect"]["max_interval_delta_s"] = 2.0
     assert judge(run, CONSOLE + "CLEANUP|1\n", reference).passed
+    looped = judge(run, CONSOLE + "CLEANUP|1\nIR_LOOP|3|vehicle_0|SEARCHING\n", reference)
+    assert not looped.passed and any("SEARCHING within one update" in p for p in looped.problems)
 
 
 def test_cli_compile_and_judge(env, tmp_path: Path, capsys) -> None:

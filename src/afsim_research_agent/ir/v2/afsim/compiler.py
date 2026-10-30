@@ -103,6 +103,9 @@ def subst(text: str, **values: str) -> str:
     return text
 
 
+MAX_HOPS = 8  # state changes per update (guards against cycles of true transitions)
+
+
 def indent(text: str, pad: str) -> list[str]:
     return [pad + line if line.strip() else "" for line in text.strip("\n").splitlines()]
 
@@ -275,7 +278,10 @@ class Compiler:
         for s in mission["states"]:
             lines += self._state(rid, role, s, states[s], trees.get(s))
         lines += [
-            "   on_update currentState = STATE_MACHINE.Evaluate(currentState); end_on_update",
+            # transitions chain within one update; a cycle of transitions that are all true
+            # would never return, so at most MAX_HOPS state changes happen per update
+            '   on_update PLATFORM.SetAuxData("ir_hops", 0); '
+            "currentState = STATE_MACHINE.Evaluate(currentState); end_on_update",
             "end_processor",
             "",
             f"platform_type {self.platform_type(rid)} {self.b.meta.base_platform_type}",
@@ -290,6 +296,7 @@ class Compiler:
         mission = role["mission"]
         entry = [
             'PLATFORM.SetAuxData("ir_entered_s", TIME_NOW);',
+            'PLATFORM.SetAuxData("ir_hops", PLATFORM.AuxDataInt("ir_hops") + 1);',
             *[f'PLATFORM.SetAuxData("{g}", false);' for g in st.guards],
             *(
                 [f'PLATFORM.SetAuxData("{self.P}_tree", "running");']
@@ -325,7 +332,12 @@ class Compiler:
             for t in ordered:
                 targets.setdefault(t["to"], []).append(t)
             for to, group in targets.items():
-                out.append(f"      next_state {to}")
+                out += [
+                    f"      next_state {to}",
+                    f'         if (PLATFORM.AuxDataInt("ir_hops") >= {MAX_HOPS})',
+                    f'         {{ writeln("IR_LOOP|", TIME_NOW, "|", PLATFORM.Name(), "|{s}"); '
+                    "return false; }",
+                ]
                 for t in group:
                     cond, consume = self._trigger(t["on"])
                     out += [

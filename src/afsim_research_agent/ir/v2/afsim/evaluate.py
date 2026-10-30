@@ -95,6 +95,12 @@ def judge(
 ) -> RunJudgement:
     j = RunJudgement(run=run["id"], completed="Simulation complete" in console)
     j.errors = [m.group(0) for m in ERRORS.finditer(console)]
+    loops = sorted(set(re.findall(r"IR_LOOP\|[^|]+\|([^|]+)\|([^\r\n]+)", console)))
+    for platform, state in loops[:5]:
+        j.problems.append(
+            f"{platform}: transitions kept firing from {state} within one update (a cycle "
+            "of conditions that are all true); the update was cut after 8 state changes"
+        )
     j.states = parse_states(console)
     names = [p["name"] for p in run["platforms"]]
     for name in names:
