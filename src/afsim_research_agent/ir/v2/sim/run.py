@@ -298,10 +298,11 @@ def simulate(model: dict[str, Any], contracts: Contracts, raw: dict[str, Any]) -
             sync_vehicle(
                 world, host.vehicles[inst.name], inst.blackboard, contracts.semantics.fields
             )
-            before = inst.state
+            hops = len(inst.trace)
             inst.step(now)
-            if inst.state != before:
-                result.states[inst.name].append((now, inst.state))
+            # every state entered in this update, as AFSIM writes one line per state entry
+            for t in inst.trace[hops:]:
+                result.states[inst.name].append((now, t["to"]))
         world.step(env.step_s)
     for inst in instances:
         result.unresolved |= inst.unresolved
@@ -410,7 +411,16 @@ def run_l2(model: dict[str, Any], contracts: Contracts, tests: list[dict[str, An
         inst.tree_status = g.tree_status
         inst.blackboard.update(g.blackboard)
         for name in g.events:
-            inst.raise_event(_event_name(inst, name))
+            ev = _event_name(inst, name)
+            spec = inst.events.get(ev) or {}
+            if spec.get("source") == "tree":
+                # "the tree ended that way": the state's tree is given that result
+                inst.force_tree = str(spec.get("result") or "success")
+            elif spec.get("source") == "timer":
+                # "the timer ran out": the state has been entered at least that long ago
+                inst.entered_at = min(inst.entered_at, -float(spec.get("after_s") or 0.0))
+            else:
+                inst.raise_event(ev)
         inst.step(0.0)
         problems = []
         # the state the given one leaves for; further transitions in the same tick follow

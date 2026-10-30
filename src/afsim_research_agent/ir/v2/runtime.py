@@ -62,6 +62,8 @@ class Instance:
     issued: list[str] = field(default_factory=list)  # actions started in the last update
     trace: list[dict[str, Any]] = field(default_factory=list)
     unresolved: set[str] = field(default_factory=set)
+    # a single-step test that names a tree event: the current tree ends that way this update
+    force_tree: str | None = None
 
     def __post_init__(self) -> None:
         self.role_model = self.model["roles"][self.role]
@@ -95,6 +97,8 @@ class Instance:
             tree = self.role_model["states"].get(self.state, {}).get("tree")
             if tree is not None and self.state not in self.mission["terminal"]:
                 self.tree_status = self.tick(tree)
+            if self.force_tree is not None:
+                self.tree_status, self.force_tree = self.force_tree, None
             fired = self._transition()
             if fired is None:
                 return

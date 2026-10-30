@@ -931,7 +931,15 @@ async def _draft(
     check = await drafter.verification_stage(control) if control.l1_ok else control
     if not check.verified and budget > 0:
         fixes.append(await fix_sheet(drafter, run, budget))
+        budget -= fixes[-1].steps
         check = drafter.check(verify=True)
+    if check.l1_ok and not (check.l2 or check.l3):
+        # L1 was repaired only after the verification stage was skipped: write the tests and
+        # scenarios now, then use what is left of the repair budget on them
+        check = await drafter.verification_stage(check)
+        if not check.verified and budget > 0:
+            fixes.append(await fix_sheet(drafter, run, budget))
+            check = drafter.check(verify=True)
     return check, fixes
 
 

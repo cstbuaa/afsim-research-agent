@@ -709,3 +709,51 @@ def test_formation_models_follow_the_contract_results_and_writes() -> None:
     bb.update({"t.valid": True, "t.range": 300.0})
     assert StandoffCommand().update(standoff) == (SUCCESS, None)
     assert bb["f.zone"] == "TOO_CLOSE" and bb["f.cmd"] == "WITHDRAW"
+
+
+def test_states_entered_in_one_update_are_all_recorded(contracts: Contracts) -> None:
+    """WAIT -> DRIVE -> SHUTDOWN in the update the go event arrives: both entries count
+    (AFSIM reports every state entry), so a state sequence expectation sees DRIVE."""
+    spec = _spec()
+    spec["conditions"][0]["expression"] = {
+        "compare": {
+            "left": {"bb": "nav.range_m"},
+            "operator": "gte",
+            "right": {"value": -1, "unit": "m"},
+        }
+    }
+    model = normalize(spec, contracts).model
+    result = simulate(model, contracts, spec["scenarios"][0])
+    states = [s for _, s in result.states["car_0"]]
+    assert states[:3] == ["WAIT", "DRIVE", "SHUTDOWN"], result.states
+
+
+def test_l2_tests_may_name_tree_and_timer_events(contracts: Contracts) -> None:
+    spec = _spec()
+    spec["events"] += [
+        {"id": "drive_failed", "source": "tree", "result": "failure"},
+        {"id": "waited", "source": "timer", "after_s": 30},
+    ]
+    spec["missions"]["car"]["transitions"] += [
+        {"from": "DRIVE", "to": "WAIT", "on": "drive_failed"},
+        {"from": "WAIT", "to": "SHUTDOWN", "on": "waited"},
+    ]
+    cases = [
+        {
+            "id": "tree",
+            "given": {
+                "role": "car",
+                "state": "DRIVE",
+                "actions": {"nav.goto": "running"},
+                "events": ["drive_failed"],
+            },
+            "expect": {"next_state": "WAIT"},
+        },
+        {
+            "id": "timer",
+            "given": {"role": "car", "state": "WAIT", "events": ["waited"]},
+            "expect": {"next_state": "SHUTDOWN"},
+        },
+    ]
+    checks = run_l2(normalize(spec, contracts).model, contracts, cases)
+    assert all(c.passed for c in checks), [c.detail for c in checks]
