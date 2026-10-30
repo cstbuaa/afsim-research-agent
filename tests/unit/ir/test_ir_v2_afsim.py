@@ -466,7 +466,8 @@ def test_binding_hooks_fallback_parameters_and_external_flags(env, tmp_path: Pat
     text = (base / "binding.toml").read_text(encoding="utf-8")
     text = text.replace(
         'base_platform_type = "DEMO_VEHICLE"',
-        'base_platform_type = "DEMO_VEHICLE"\nscripts = "script void Demo_Helper() end_script"',
+        'base_platform_type = "DEMO_VEHICLE"\nscripts = "script void Demo_Helper() end_script"\n'
+        "platform_body = 'processor demo_rx DEMO_RX end_processor'",
     )
     text = text.replace("{p:latitude_deg}", "{p?:latitude_deg}")
     text = text.replace(
@@ -489,6 +490,8 @@ def test_binding_hooks_fallback_parameters_and_external_flags(env, tmp_path: Pat
     pkg = Compiler(model, contracts, hooked).package([run])
     text = pkg.behavior
     assert "script void Demo_Helper() end_script" in text
+    ptype = text.split("platform_type IR_")[1].split("end_platform_type")[0]
+    assert "   processor demo_rx DEMO_RX end_processor" in ptype
     assert 'PLATFORM.SetAuxData("demo_lat", 31.0);' in text  # given: the literal
     searching = text.split("   state SEARCHING")[1].split("   end_state")[0]
     assert "Demo_Enter(PLATFORM);" in searching and "Demo_Leave(PLATFORM);" in searching

@@ -6,6 +6,7 @@ A synthetic capability set is used (no lab content).
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import sys
 import types
@@ -508,6 +509,15 @@ def test_conditions_are_checked_against_the_chosen_slices(contracts: Contracts) 
 def test_guessed_values_and_shadowed_mission_triggers(contracts: Contracts) -> None:
     text = SHEET.replace("target_seen = sense.target.valid", 'target_seen = sense.label == "ENEMY"')
     assert any("猜测" in p.message for p in _compile(contracts, text).errors)
+    # comparing with the field's declared initial value ("not set") is not a guess
+    unset = SHEET.replace("target_seen = sense.target.valid", 'target_seen = sense.label != ""')
+    assert any("猜测" in p.message for p in _compile(contracts, unset).errors)
+    label = contracts.blackboard["sense.label"]
+    contracts.blackboard["sense.label"] = dataclasses.replace(label, initial="", has_initial=True)
+    try:
+        assert not any("猜测" in p.message for p in _compile(contracts, unset).errors)
+    finally:
+        contracts.blackboard["sense.label"] = label
     text = """```yaml model
 model: {display_name: 值守, intent: 搜索直到取消}
 roles:

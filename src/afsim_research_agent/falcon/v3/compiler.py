@@ -232,6 +232,12 @@ class SheetCompiler:
                 free_strings={
                     p for p, f in self.c.blackboard.items() if f.type == "string" and not f.enum
                 },
+                # a declared string initial value ("" = not set) may be compared against
+                string_initials={
+                    p: f.initial
+                    for p, f in self.c.blackboard.items()
+                    if f.has_initial and isinstance(f.initial, str)
+                },
             )
         )
         spec["conditions"] = self._conditions()

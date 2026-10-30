@@ -12,6 +12,7 @@ Binding (TOML)::
     includes = ["<file>", ...]                 # include_once'd by the behavior file
     base_platform_type = "<type>"              # each role's platform type derives from it
     scripts = "<helper scripts>"               # written after the includes
+    platform_body = "<lines>"                  # added to every role's platform type
 
     [blackboard.files]                         # slice → YAML file with a `blackboard` map
     <slice> = "<path relative to model_root>"
@@ -89,6 +90,8 @@ class Meta(_Strict):
     base_platform_type: str
     update_interval_s: float = 1.0
     scripts: str = ""  # helper scripts written after the includes
+    # added inside every role's platform type (e.g. message receivers the slices need)
+    platform_body: str = ""
 
 
 class BlackboardBinding(_Strict):

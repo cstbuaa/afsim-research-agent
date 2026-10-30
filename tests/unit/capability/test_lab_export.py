@@ -399,3 +399,25 @@ def test_format_1_1_semantics_are_exported_and_checked(lab: Path) -> None:
     # a slice without annotated contracts claims nothing about writers
     eng = result["actions"]["engagement"]["blackboard"]["fields"]
     assert all("written_by" not in f for f in eng.values())
+
+
+def test_flat_mission_names_its_state_trees(lab: Path) -> None:
+    """Missions with a flat state list name their state trees in ``state_trees``."""
+    _w(
+        lab,
+        "missions/centralized_threat_allocation.fsm.yaml",
+        {
+            "initial_state": "ASSESSING",
+            "states": ["ASSESSING", "COMPLETE"],
+            "transitions": [{"from": "ASSESSING", "to": "COMPLETE", "when": "done"}],
+            "events": {"done": {"meaning": {"tree": "success"}, "description": "完成"}},
+            "state_trees": {"ASSESSING": "threat_allocation.leader_assessing"},
+        },
+    )
+    result = LabExporter(lab).export()
+    (mission,) = [
+        m
+        for m in result["tactics"]["threat_allocation"]["missions"]
+        if m["id"].endswith("centralized_threat_allocation")
+    ]
+    assert mission["state_trees"] == {"ASSESSING": "threat_allocation.leader_assessing"}

@@ -61,6 +61,7 @@ class Symbols:
     elsewhere: dict[str, str] = field(default_factory=dict)  # field of another slice → slice
     internal: set[str] = field(default_factory=set)  # interface plumbing, not tactical state
     free_strings: set[str] = field(default_factory=set)  # string fields without listed values
+    string_initials: dict[str, str] = field(default_factory=dict)  # declared initial ("not set")
 
 
 def quantity(value: Any) -> dict[str, Any] | None:
@@ -144,7 +145,12 @@ class ExprCompiler:
         return parts[0] if len(parts) == 1 else {"all": parts}
 
     def _enum(self, a: dict[str, Any], b: dict[str, Any], node: ast.AST) -> None:
-        if "bb" in a and a["bb"] in self.s.free_strings and isinstance(b.get("literal"), str):
+        if (
+            "bb" in a
+            and a["bb"] in self.s.free_strings
+            and isinstance(b.get("literal"), str)
+            and self.s.string_initials.get(a["bb"]) != b["literal"]
+        ):
             raise ExprError(
                 f"字段 {a['bb']} 没有列出取值，与字符串 '{b['literal']}' 比较是在猜测；"
                 "改用有取值列表的字段、数值字段或计时事件",

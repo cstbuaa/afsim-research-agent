@@ -278,6 +278,7 @@ class Compiler:
             "",
             f"platform_type {self.platform_type(rid)} {self.b.meta.base_platform_type}",
             f"   processor ir_behavior {proc} end_processor",
+            *indent(self.b.meta.platform_body.strip(), "   "),
             "end_platform_type",
             "",
         ]

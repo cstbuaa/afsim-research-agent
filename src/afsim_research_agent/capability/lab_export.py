@@ -681,6 +681,8 @@ class LabExporter:
                     transitions.append({"from": name, "to": t["to"], "when": t.get("on")})
         else:
             names = list(states)
+        if isinstance(raw.get("state_trees"), dict):  # flat missions name their state trees
+            trees.update({str(k): str(v) for k, v in raw["state_trees"].items()})
         for t in raw.get("transitions") or []:
             transitions.append(
                 {"from": t["from"], "to": t["to"], "when": t.get("when") or t.get("event")}
