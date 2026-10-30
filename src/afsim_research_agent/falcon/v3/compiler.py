@@ -492,8 +492,12 @@ class SheetCompiler:
                     continue
                 actions, gap_writes = self._closure(trees.get(state), subs, gaps)
                 checks: list[tuple[str, str]] = []  # (condition id, IR path for the line)
+                outgoing = [tr["on"] for tr in mission["transitions"] if tr["from"] == state]
+                decided = _complementary(outgoing, exprs)
                 for i, tr in enumerate(mission["transitions"]):
-                    if tr["from"] == state and tr["on"] in exprs:
+                    # a state that leaves on X or on not X decides at once on the values it
+                    # entered with: reading fields its tree does not update is fine there
+                    if tr["from"] == state and tr["on"] in exprs and tr["on"] not in decided:
                         checks.append((tr["on"], f"missions.{rid}.transitions[{i}]"))
                 for cid in sorted(self._tree_conditions(trees.get(state), subs)):
                     if cid in exprs:
@@ -518,7 +522,8 @@ class SheetCompiler:
                             f"状态 {state} 的{label(cid)}读取 {path}，它只由 "
                             f"{', '.join(f.written_by)} 写入；{state} 的树中没有这些动作"
                             "（或含有它们的子树），该字段在此状态中不会变化。在树中加入相应动作"
-                            "或子树，或改用本状态会更新的字段、计时，或用树事件表达"
+                            "或子树，或改用本状态会更新的字段、计时；只做判断的状态可成对写出"
+                            "互补的转换（X 与 not X），立即按进入时的值转出；或用树事件表达"
                             '"本状态的树完成"（events 中声明 {source: tree, result: success}）',
                         )
 
@@ -1204,3 +1209,15 @@ def _strip_lines(spec: dict[str, Any]) -> None:
 
 def compile_sheet(text: str, contracts: Contracts, **kw: Any) -> Compiled:
     return SheetCompiler(text, contracts, **kw).compile()
+
+
+def _complementary(cids: list[str], exprs: dict[str, Any]) -> set[str]:
+    """Transition conditions that come in X / not X pairs among one state's transitions."""
+    out: set[str] = set()
+    for a in cids:
+        for b in cids:
+            if a == b or a not in exprs or b not in exprs:
+                continue
+            if exprs[b] in ({"not": exprs[a]}, {"not": {"condition_ref": a}}):
+                out |= {a, b}
+    return out

@@ -829,6 +829,19 @@ def test_conditions_must_read_fields_the_state_keeps_up_to_date(set_root: Path) 
     ]
     # fields the platform updates every tick are fine anywhere (stopped reads self.speed_mps)
     assert not any("self.speed_mps" in p.message for p in errs)
+    # a decision state (tree `pass`) leaving on X or on not X decides on its entry values
+    decide = SHEET.replace(
+        "  OBSERVE --> MOVE : lost_timeout\n",
+        "  OBSERVE --> DECIDE : lost_timeout\n"
+        "  DECIDE --> OBSERVE : target_seen\n  DECIDE --> MOVE : not target_seen\n",
+    ).replace("def SHUTDOWN():", "def DECIDE():\n    pass\n\ndef SHUTDOWN():")
+    out = _compile(contracts, decide)
+    assert not out.errors, [p.render() for p in out.errors]
+    tree = out.spec["state_trees"]["scout"]["DECIDE"]
+    assert tree is not None
+    # one-sided, the same read is reported
+    one = decide.replace("  DECIDE --> MOVE : not target_seen\n", "")
+    assert any("状态 DECIDE" in p.message for p in _compile(contracts, one).errors)
 
 
 def test_prompt_shows_field_writers_and_results(set_root: Path) -> None:

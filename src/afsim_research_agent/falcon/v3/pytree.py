@@ -122,7 +122,10 @@ class _Translator:
         if not nodes:
             if not any(isinstance(s, ast.Pass) for s in stmts):
                 self.fail(where, "树是空的")
-            return None
+                return None
+            # `pass`: no work in this state; a tree that succeeds at once (a decision state
+            # whose transitions only test values it entered with)
+            return self.condition(ast.Constant(value=True), stmts[0])
         if len(nodes) == 1:
             return nodes[0]
         return self.node({"type": "sequence_with_memory", "children": nodes}, stmts[0])
