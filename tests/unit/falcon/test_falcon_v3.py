@@ -200,7 +200,7 @@ def guard():
 
 def SHUTDOWN():
     nav.stop()
-    tactic("sense.shutdown_state")
+    sense.off()
 ```
 
 ```yaml gaps
@@ -436,14 +436,14 @@ def test_draft_loop_repairs_and_writes_the_package(set_root: Path, tmp_path: Pat
     report = json.loads((pkg / "validation_report.json").read_text(encoding="utf-8"))
     assert report["status"] == "draft_valid" and report["gaps"] == ["smoke_screen"]
     review = (pkg / "falcon_review.md").read_text(encoding="utf-8")
-    assert "缺口 `smoke_screen`" in review and "不允许" in review
+    assert "缺口 `smoke_screen`" in review and "自己写" in review
     # the structure prompt sees the slice index; the control prompt sees the slices in full
     assert (
         "切片 `nav`" in prompts["v3:structure"][0]
         and "Drive to a point." not in prompts["v3:structure"][0]
     )
     assert "Drive to a point." in prompts["v3:control"][0]
-    assert "不允许整体引用战术集任务" in prompts["v3:structure"][0]
+    assert "不能引用战术集任务和状态树" in prompts["v3:structure"][0]
     assert "nav.hodl" in prompts["v3:repair:pytree"][0]
     # an existing package is never overwritten
     with pytest.raises(FileExistsError):
@@ -543,3 +543,49 @@ def test_undefined_triggers_are_filed_for_the_conditions_block(contracts: Contra
     out = _compile(contracts, text)
     keys = {p.block for p in out.errors if "seen_timer" in p.message}
     assert keys == {"mermaid:scout", "conditions"}
+
+
+def test_subtree_policy_learns_from_state_trees_without_referencing_them(
+    contracts: Contracts,
+) -> None:
+    from afsim_research_agent.falcon.v3 import catalog as K
+    from afsim_research_agent.falcon.v3.compare import compare
+    from afsim_research_agent.ir.v2.runtime import RUNNING, Instance
+
+    text = SHEET.replace(
+        '        tactic("sense.search")', '        tactic("sense.searching_state")'
+    )
+    out = _compile(contracts, text, reference_policy="subtrees")
+    assert any("只能参照" in p.message for p in out.errors)
+    ref = """```yaml model
+model: {display_name: 值守, intent: 搜索直到取消}
+roles:
+  scout: {capability_class: ground_vehicle, mission: {tactic: sense.watch}}
+```
+"""
+    assert any(
+        "不允许整体引用" in p.message
+        for p in _compile(contracts, ref, reference_policy="subtrees").errors
+    )
+    # subtrees are listed with their trees; state trees and missions only as examples
+    details = K.details(contracts, ["sense"], "subtrees")
+    assert "可引用的战术集子树" in details and "def _search():" in details
+    assert "范例 sense.searching_state" in details and "范例：战术集任务 `sense.watch`" in details
+    # keep_running: a failing child is reported as running
+    text = SHEET.replace(
+        "def SHUTDOWN():\n    nav.stop()",
+        "def SHUTDOWN():\n    with keep_running():\n        assert sense.target.valid\n    nav.stop()",
+    )
+    out = _compile(contracts, text, reference_policy="subtrees")
+    assert not out.errors, [p.render() for p in out.errors]
+    result = normalize(out.spec, contracts)
+    assert result.ok, [d.render() for d in result.diagnostics]
+    tree = result.model["roles"]["scout"]["states"]["SHUTDOWN"]["tree"]
+    assert tree["children"][0]["type"] == "failure_as_running"
+    inst = Instance("scout_0", "scout", 0, result.model, contracts, host=None)  # type: ignore[arg-type]
+    assert inst.tick(tree["children"][0]) == RUNNING
+    # structural comparison against the tactic set's mission with the same states
+    rows = compare(result.model, contracts)
+    assert [(r["state"], r["same"], r["extra"]) for r in rows] == [
+        ("SHUTDOWN", False, ["nav.stop"])  # sense.watch shuts down with sense.off only
+    ]

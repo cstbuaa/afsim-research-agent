@@ -33,7 +33,9 @@ COMPOSITES = (
     "weighted_random",
     "parallel",
 )
-DECORATORS = ("inverter", "succeeder", "negator", "repeat")
+# failure_as_running: a failure of the child is reported as running (e.g. keep searching
+# while no target is found); compiled to selector(child, a leaf that returns running)
+DECORATORS = ("inverter", "succeeder", "negator", "repeat", "failure_as_running")
 LEAVES = ("action", "condition", "tactic", "subtree")
 NODE_TYPES = COMPOSITES + DECORATORS + LEAVES
 

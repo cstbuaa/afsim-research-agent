@@ -118,6 +118,7 @@ class SheetCompiler:
         model_id: str,
         roles_hint: dict[str, dict[str, Any]] | None = None,
         allow_mission_ref: bool = True,
+        reference_policy: str = "all",  # "subtrees": state trees and missions are examples
         scenario_parameters: dict[str, dict[str, Any]] | None = None,
         pending_triggers: bool = False,
         slices: list[str] | None = None,
@@ -130,7 +131,8 @@ class SheetCompiler:
         self.pending_triggers = pending_triggers
         self.model_id = model_id
         self.roles_hint = roles_hint or {}
-        self.allow_mission_ref = allow_mission_ref
+        self.reference_policy = reference_policy
+        self.allow_mission_ref = allow_mission_ref and reference_policy == "all"
         self.scenario_parameters = scenario_parameters or {}
         blocks, problems = split_sheet(text)
         self.out = Compiled(None, list(problems))
@@ -238,7 +240,17 @@ class SheetCompiler:
         event_ids = {e["id"] for e in spec["events"]}
         tree_symbols = TreeSymbols(
             actions=set(self.c.actions),
-            tactics={t.id for t in self.c.tactics.values() if t.section != "missions"},
+            tactics={
+                t.id
+                for t in self.c.tactics.values()
+                if t.section == "subtrees"
+                or (t.section == "state_trees" and self.reference_policy == "all")
+            },
+            examples={
+                t.id
+                for t in self.c.tactics.values()
+                if t.section == "state_trees" and self.reference_policy != "all"
+            },
             gaps={str(k): str(v.get("kind")) for k, v in gaps.items() if isinstance(v, dict)},
             parameters=set(spec["parameters"]),
             expr=self.expr,

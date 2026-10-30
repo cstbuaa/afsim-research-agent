@@ -23,6 +23,25 @@ RULES = """你在为作战仿真编写战术行为模型。模型分七层，你
 不能用一串相近的动作去冒充缺失的能力；"看起来相近"但参数、黑板或资源对不上的条目不要引用。
 只用目录中出现的动作 ID、战术集 ID 和黑板字段，不要编造。"""
 
+RULES_SUBTREES = """你在为作战仿真编写战术行为模型。模型分七层，你只写上三层：任务状态机、状态树、子树；
+动作、黑板、仲裁、能力层由程序从能力集引用、推导和校验。你写的是"战术稿"：若干带标签的 Markdown 代码块。
+
+本次的写法：
+1. 任务状态机和每个状态的树都由你自己写。能力集里的战术集任务和状态树只作范例：
+   参照它们如何划分阶段、写触发、组合子树，但不能引用它们；
+2. 树中要做的事能由战术集子树完成 → `tactic("id")` 引用子树；
+3. 子树能力不够（缺少某项工作、参数或时序不合需求）→ 仿照已有子树的写法，用动作、条件和其他子树
+   在本稿新建子树（小写函数）；
+4. 需要能力集没有的动作 → 在 yaml gaps 登记 kind: action 缺口，树里写 `gap("id", 参数=值)`；
+   逻辑复杂、值得复用但写不出来的子树 → 登记 kind: subtree 缺口。
+不能用一串相近的动作去冒充缺失的能力；"看起来相近"但参数、黑板或资源对不上的条目不要引用。
+只用目录中出现的动作 ID、战术集 ID 和黑板字段，不要编造。"""
+
+
+def rules(policy: str) -> str:
+    return RULES_SUBTREES if policy == "subtrees" else RULES
+
+
 MODEL_GUIDE = """```yaml model``` 块：
 - model: {display_name, intent}
 - 条件不能是常量 True / False；外部请求一律写成 external 事件，不写成条件。
@@ -59,7 +78,8 @@ CONTROL_GUIDE = """```python conditions``` 块：每行 `条件名 = 表达式`�
 - 函数体里依次写多句 = 带记忆的顺序（逐个完成，运行中的子节点下次继续）；
 - 控制节点：`with parallel("all"):`（"one" 一个成功即成功，或写数字），`with sequence():`、`with selector():`（带记忆），
   `with reactive_sequence():`、`with reactive_selector():`（每次从头检查），`with repeat(until_done=True):`（完成一次后保持成功，
-  避免重复下达；也可 count=次数、duration=时长），`with inverter():`、`with succeeder():`；
+  避免重复下达；也可 count=次数、duration=时长），`with inverter():`、`with succeeder():`，`with keep_running():`（下面的节点失败时报告"运行中"，
+  如没有目标时继续搜索，而不是让整棵树失败）；
   `if 条件: …`、`else: …`；`try: …` `except: …`（前者失败时执行后者）；
 - 同一时刻要持续做的几件事（边走边搜、边跟踪边保持队形）放进 parallel；并行分支不能同时占用同一独占资源；
 - 一直运行的动作（如保持位置）放在顺序节点前面会挡住后面的节点，此时用 parallel；
@@ -156,7 +176,9 @@ def _clauses(clauses: list[dict[str, Any]]) -> str:
     return "\n".join(f"- {c['id']}：{c['text']}" for c in clauses) or "（无）"
 
 
-def _hints(roles: dict[str, Any], scenario: dict[str, Any], allow_mission_ref: bool) -> str:
+def _hints(
+    roles: dict[str, Any], scenario: dict[str, Any], allow_mission_ref: bool, policy: str = "all"
+) -> str:
     lines = []
     if roles:
         lines.append("角色（照用这些角色 ID）：" + json.dumps(roles, ensure_ascii=False))
@@ -169,11 +191,16 @@ def _hints(roles: dict[str, Any], scenario: dict[str, Any], allow_mission_ref: b
             "想定提供的参数（在 parameters 中照抄名称与类型，value 写成名称本身）："
             + json.dumps(shown, ensure_ascii=False)
         )
-    lines.append(
-        "本次允许整体引用战术集任务。"
-        if allow_mission_ref
-        else "本次不允许整体引用战术集任务：每个角色都要写自己的状态图（状态树仍可引用战术集）。"
-    )
+    if policy == "subtrees":
+        lines.append(
+            "本次不能引用战术集任务和状态树：每个角色都要写自己的状态图和状态树，可引用战术集子树。"
+        )
+    else:
+        lines.append(
+            "本次允许整体引用战术集任务。"
+            if allow_mission_ref
+            else "本次不允许整体引用战术集任务：每个角色都要写自己的状态图（状态树仍可引用战术集）。"
+        )
     return "\n".join(lines)
 
 
@@ -187,6 +214,7 @@ def structure_prompt(
     tactic_brief: str = "",
     state_names: dict[str, list[str]] | None = None,
     scenario_events: dict[str, str] | None = None,
+    policy: str = "all",
 ) -> str:
     names = ""
     if scenario_events:
@@ -195,10 +223,10 @@ def structure_prompt(
             + "；".join(f"{k}（{v}）" for k, v in scenario_events.items())
         )
     if state_names:
-        names = "\n状态命名（自己写状态图时使用这些名称，可按需求增减）：" + "；".join(
+        names += "\n状态命名（自己写状态图时使用这些名称，可按需求增减）：" + "；".join(
             f"{r}: {', '.join(v)}" for r, v in state_names.items()
         )
-    return f"""{RULES}
+    return f"""{rules(policy)}
 
 ## 需求
 {requirement}
@@ -207,7 +235,7 @@ def structure_prompt(
 {_clauses(clauses)}
 {tactic_brief}
 ## 约定
-{_hints(roles, scenario, allow_mission_ref)}{names}
+{_hints(roles, scenario, allow_mission_ref, policy)}{names}
 
 ## 能力集切片索引
 {index}
@@ -229,6 +257,7 @@ def control_prompt(
     states: dict[str, list[str]],
     pending: list[str] | None = None,
     mission_refs: list[str] | None = None,
+    policy: str = "all",
 ) -> str:
     need = "；".join(f"{r}: {', '.join(states.get(r, []))}" for r in roles_needing_trees)
     if pending:
@@ -241,7 +270,9 @@ def control_prompt(
             "\n角色 " + ", ".join(mission_refs) + " 引用了战术集任务：任务的转换与触发已自带，"
             "不要为它们写条件；只在需要替换某状态的树时写该状态函数"
         )
-    return f"""{RULES}
+    if policy == "subtrees":
+        need += "\n每个非结束状态都要写状态函数（不能引用战术集状态树）；子树可引用或仿照新建。"
+    return f"""{rules(policy)}
 
 ## 需求
 {requirement}

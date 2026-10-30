@@ -1045,6 +1045,7 @@
             "succeeder",
             "negator",
             "repeat",
+            "failure_as_running",
             "action",
             "condition",
             "tactic",

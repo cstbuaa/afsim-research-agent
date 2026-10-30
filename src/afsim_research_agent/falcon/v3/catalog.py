@@ -76,6 +76,61 @@ def trigger_text(sem: dict[str, Any]) -> str:
     return "?"
 
 
+def tree_python(contracts: Contracts, raw: dict[str, Any], indent: str = "    ") -> list[str]:
+    """A tactic-set tree in the sheet's Python form (an example to learn from). Tactic-set
+    ``sequence`` / ``selector`` resume at the running child, as ``with sequence():`` does."""
+    kind = str(raw.get("type"))
+    kids = raw.get("children") or ([raw["child"]] if raw.get("child") else [])
+    if kind == "action":
+        if raw.get("operation") == "cancel":
+            return [f"{indent}# 取消正在执行的 {raw.get('action')}"]
+        params = ", ".join(f"{k}={v!r}" for k, v in (raw.get("params") or {}).items())
+        return [f"{indent}{raw.get('action')}({params})"]
+    if kind == "condition":
+        sem = contracts.semantics.tactic_conditions.get(str(raw.get("condition"))) or {}
+        if "expression" in sem:
+            return [f"{indent}assert {expr_text(sem['expression'])}"]
+        return [f"{indent}assert {raw.get('condition')}  # 事件 {sem.get('event', '?')} 已发生"]
+    if kind == "subtree":
+        ref = str(raw.get("subtree"))
+        return [f'{indent}tactic("{ref}")']
+    if kind == "timeout":
+        head = (
+            f"{indent}# 战术集的 timeout（IR 没有此节点）：反复执行下面的节点直到成功，"
+            f"{raw.get('duration_s')} s 内不成功则失败；可用计时条件加 selector 表达"
+        )
+        return [head, *[x for k in kids for x in tree_python(contracts, k, indent)]]
+    if kind == "parallel":
+        policy = str(raw.get("success_policy") or "one")
+        arg = f'"{policy}"' if policy != "threshold" else str(raw.get("threshold") or 1)
+        head = f"{indent}with parallel({arg}):"
+    elif kind == "repeat":
+        if raw.get("until_done"):
+            head = f"{indent}with repeat(until_done=True):"
+        elif raw.get("count"):
+            head = f"{indent}with repeat(count={raw['count']}):"
+        else:
+            head = f"{indent}with repeat(duration={raw.get('duration_s')} * s):"
+    elif kind in ("sequence", "selector"):
+        head = f"{indent}with {kind}():"
+    else:
+        head = f"{indent}with {kind}():"
+    body = [x for k in kids for x in tree_python(contracts, k, indent + "    ")]
+    return [head, *(body or [f"{indent}    pass"])]
+
+
+def entry_python(contracts: Contracts, entry: Any, name: str) -> str:
+    raw = entry.raw
+    lines = tree_python(contracts, raw.get("root") or {}, "    ")
+    if str(raw.get("no_target_result", "")).upper() == "RUNNING":
+        lines = [
+            "    with keep_running():  # 战术集标注：没有目标时保持运行",
+            *["    " + x for x in lines],
+        ]
+    desc = _short(raw.get("description"), 120)
+    return "\n".join([f"def {name}():" + (f"  # {desc}" if desc else ""), *lines])
+
+
 def internal_field(path: str) -> bool:
     """Interface plumbing of the action contracts (request ids, execution status)."""
     return ".request." in path or path.startswith("execution.")
@@ -162,8 +217,12 @@ def _param(spec: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def details(contracts: Contracts, wanted: list[str]) -> str:
-    """Actions (contract summary), tactic-set entries and blackboard fields of the slices."""
+def details(contracts: Contracts, wanted: list[str], policy: str = "all") -> str:
+    """Actions (contract summary), tactic-set entries and blackboard fields of the slices.
+    ``policy="subtrees"``: subtrees are listed with their trees (to reference or imitate);
+    state trees and missions are shown as examples only."""
+    if policy == "subtrees":
+        return _details_subtrees(contracts, wanted)
     out: list[str] = []
     for sid in wanted:
         actions = [a for a in contracts.actions.values() if a.slice == sid]
@@ -234,5 +293,97 @@ def details(contracts: Contracts, wanted: list[str]) -> str:
                     kind += " " + "/".join(f.enum)
                 shown.append(f"{p} ({kind})")
             out.append("黑板字段（条件里直接写字段路径）：" + "; ".join(shown))
+        out.append("")
+    return "\n".join(out)
+
+
+def _actions_text(contracts: Contracts, sid: str) -> list[str]:
+    out: list[str] = []
+    actions = [a for a in contracts.actions.values() if a.slice == sid]
+    if not actions:
+        return out
+    out.append("动作（叶节点写 `切片.动作(参数=值)`）：")
+    for a in sorted(actions, key=lambda x: x.id):
+        cap = contracts.catalog.capabilities.get(a.id)
+        desc = _short(cap.raw.get("description") if cap else "")
+        params = ", ".join(f"{k}: {_param(v)}" for k, v in a.parameters.items()) or "无参数"
+        extra = []
+        if a.exclusive:
+            extra.append("独占 " + "/".join(sorted(a.exclusive)))
+        if a.kind == "tactic_step":
+            extra.append("战术步骤，无独立契约")
+        if a.success:
+            extra.append("完成判据 " + _short(a.success, 80))
+        out.append(f"- `{a.id}`({params}) — {desc}" + (f"［{'；'.join(extra)}］" if extra else ""))
+    return out
+
+
+def _fields_text(contracts: Contracts, sid: str) -> list[str]:
+    fields = sorted(
+        p for p, f in contracts.blackboard.items() if f.slice == sid and not internal_field(p)
+    )
+    if not fields:
+        return []
+    shown = []
+    for p in fields:
+        f = contracts.blackboard[p]
+        kind = f.type + (f" {f.dimension}" if f.dimension else "")
+        if f.enum:
+            kind += " " + "/".join(f.enum)
+        shown.append(f"{p} ({kind})")
+    return ["黑板字段（条件里直接写字段路径）：" + "; ".join(shown)]
+
+
+def _details_subtrees(contracts: Contracts, wanted: list[str]) -> str:
+    out: list[str] = []
+    for sid in wanted:
+        tactics = [t for t in contracts.tactics.values() if t.slice == sid]
+        actions = _actions_text(contracts, sid)
+        if not actions and not tactics:
+            continue
+        out.append(f"### 切片 `{sid}`")
+        out += actions
+        subs = sorted((t for t in tactics if t.section == "subtrees"), key=lambda x: x.id)
+        if subs:
+            out.append(
+                '可引用的战术集子树（写 `tactic("id")`；能力不够时，仿照它们的写法用动作新建子树）：'
+            )
+            out.append("```python")
+            for t in subs:
+                params = ", ".join(f"{k}={v}" for k, v in t.parameters.items())
+                out.append(f"# {t.id}" + (f"（公开参数 {params}）" if params else ""))
+                out.append(entry_python(contracts, t, "_" + t.id.split(".")[-1]))
+                out.append("")
+            out.append("```")
+        examples = sorted((t for t in tactics if t.section == "state_trees"), key=lambda x: x.id)
+        if examples:
+            out.append("范例：战术集的状态树（只能参照写法，不能引用；状态树要自己写）：")
+            out.append("```python")
+            for t in examples:
+                out.append(f"# 范例 {t.id}")
+                out.append(entry_python(contracts, t, "EXAMPLE"))
+                out.append("")
+            out.append("```")
+        for m in (t for t in tactics if t.section == "missions"):
+            trans = "; ".join(
+                f"{x.get('from')}→{x.get('to')} 当 {x.get('when')}"
+                for x in m.raw.get("transitions") or []
+            )
+            out.append(
+                f"范例：战术集任务 `{m.id}`（不能引用，参照它写自己的状态图）：初始 "
+                f"{m.raw.get('initial_state')}；{trans}"
+            )
+            trees = m.raw.get("state_trees") or {}
+            if trees:
+                out.append(
+                    "  各状态用的状态树：" + "; ".join(f"{k} → {v}" for k, v in trees.items())
+                )
+            meanings = contracts.semantics.events.get(m.id) or {}
+            if meanings:
+                out.append(
+                    "  触发条件的含义（自己写状态图和条件时照此写）："
+                    + "; ".join(f"{k} = {trigger_text(v)}" for k, v in meanings.items())
+                )
+        out += _fields_text(contracts, sid)
         out.append("")
     return "\n".join(out)

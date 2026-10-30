@@ -237,6 +237,9 @@ class Instance:
         if kind == "inverter":
             status = self.tick(kids[0])
             return {SUCCESS: FAILURE, FAILURE: SUCCESS}.get(status, status)
+        if kind == "failure_as_running":
+            status = self.tick(kids[0])
+            return RUNNING if status == FAILURE else status
         if kind == "succeeder":
             return SUCCESS
         if kind == "negator":

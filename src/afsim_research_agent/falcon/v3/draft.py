@@ -21,7 +21,7 @@ import json
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,6 +32,8 @@ from afsim_research_agent.falcon.sheet.blocks import Block, SheetProblem, join_s
 from afsim_research_agent.falcon.sheet.generate import merge
 from afsim_research_agent.falcon.v3 import catalog as K
 from afsim_research_agent.falcon.v3 import prompts as P
+from afsim_research_agent.falcon.v3.compare import compare as compare_tactics
+from afsim_research_agent.falcon.v3.compare import render as render_comparison
 from afsim_research_agent.falcon.v3.compiler import Compiled, compile_sheet
 from afsim_research_agent.ir.diagnostics import Diagnostic
 from afsim_research_agent.ir.v2 import Contracts, normalize
@@ -74,7 +76,10 @@ class V3Request(BaseModel):
     display_name: str | None = None
     roles: dict[str, RoleHint] = Field(default_factory=dict)
     scenario_parameters: dict[str, ScenarioParameter] = Field(default_factory=dict)
-    allow_mission_ref: bool = True
+    allow_mission_ref: bool = False
+    # "subtrees": tactic-set subtrees may be referenced; state trees and missions are shown as
+    # examples the model learns from and writes its own; "all": everything may be referenced
+    reference_policy: Literal["subtrees", "all"] = "subtrees"
     # state names to use per role (e.g. to line up with an evaluation scenario)
     state_names: dict[str, list[str]] = Field(default_factory=dict)
     # external events the scenario raises: id → description (names line up with the run)
@@ -146,6 +151,7 @@ class Drafter:
             model_id=self.r.model_id,
             roles_hint={k: v.model_dump() for k, v in self.r.roles.items()},
             allow_mission_ref=self.r.allow_mission_ref,
+            reference_policy=self.r.reference_policy,
             scenario_parameters={k: v.model_dump() for k, v in self.r.scenario_parameters.items()},
             scenario_events=dict(self.r.scenario_events),
             pending_triggers=pending,
@@ -229,7 +235,9 @@ class Drafter:
     def _context(self, check: Check) -> str:
         parts = [f"当前战术稿：\n{self.sheet}"]
         if self.slices:
-            parts.append("能力集详细内容：\n" + K.details(self.c, self.slices))
+            parts.append(
+                "能力集详细内容：\n" + K.details(self.c, self.slices, self.r.reference_policy)
+            )
         return "\n\n".join(parts)
 
     # ------------------------------------------------------------------ stages
@@ -261,6 +269,7 @@ class Drafter:
             self.r.allow_mission_ref,
             state_names=self.r.state_names,
             scenario_events=self.r.scenario_events,
+            policy=self.r.reference_policy,
         )
         await self.ask("v3:structure", prompt, STRUCTURE_KINDS)
         check = self.check(pending=True)
@@ -309,10 +318,11 @@ class Drafter:
             self.r.requirement,
             self.clauses,
             self.sheet,
-            K.details(self.c, self.slices),
+            K.details(self.c, self.slices, self.r.reference_policy),
             roles,
             states,
             pending=self._pending(structure.compiled),
+            policy=self.r.reference_policy,
             mission_refs=[
                 r
                 for r, m in ((structure.compiled.spec or {}).get("missions") or {}).items()
@@ -484,7 +494,12 @@ def _review(request: V3Request, drafter: Drafter, check: Check, status: str) -> 
     spec = check.compiled.spec or {}
     lines = [f"# Falcon v3 审阅：{request.display_name or request.model_id}", ""]
     lines.append(f"- 状态：{status}；IR 2.0；能力集切片：{', '.join(drafter.slices)}")
-    lines.append(f"- 整体引用战术集任务：{'允许' if request.allow_mission_ref else '不允许'}")
+    policy = (
+        "可引用战术集子树；任务状态机与状态树自己写（战术集任务和状态树只作范例）"
+        if request.reference_policy == "subtrees"
+        else ("允许整体引用战术集任务" if request.allow_mission_ref else "不允许整体引用战术集任务")
+    )
+    lines.append(f"- 引用方式：{policy}")
     lines.append("")
     lines.append("## 引用、新建与缺口")
     missions = {r: m for r, m in (spec.get("missions") or {}).items()}
@@ -537,6 +552,10 @@ def _review(request: V3Request, drafter: Drafter, check: Check, status: str) -> 
         lines.append(f"- L3 {s['id']}：{'通过' if s['passed'] else '未通过'}")
         lines += ["  " + x for x in s["render"].splitlines()[1:]]
     lines.append("")
+    if check.model is not None:
+        rows = compare_tactics(check.model, drafter.c)
+        if rows:
+            lines += [*render_comparison(rows), ""]
     lines.append("## 需求条款")
     implements = check.compiled.implements
     for c in drafter.clauses:
@@ -596,6 +615,7 @@ def write_package(
             for s in check.l3
         ],
         "gaps": sorted(gaps),
+        "tactic_comparison": compare_tactics(check.model, drafter.c) if check.model else [],
     }
     (staging / "validation_report.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

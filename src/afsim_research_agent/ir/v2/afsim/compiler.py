@@ -534,6 +534,13 @@ class Compiler:
                 w = kid.get("weight") if kind in ("priority_selector", "weighted_random") else None
                 out += self._node(kid, pad + "   ", w)
             return [*out, f"{pad}end_{tag}"]
+        if kind == "failure_as_running":
+            return [
+                f"{pad}selector",
+                *self._node(kids[0], pad + "   "),
+                f"{pad}   behavior_node {self._running_leaf()}",
+                f"{pad}end_selector",
+            ]
         if kind in ("inverter", "succeeder", "negator"):
             return [
                 f"{pad}decorator {kind}",

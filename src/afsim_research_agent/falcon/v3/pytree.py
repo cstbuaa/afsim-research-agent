@@ -18,6 +18,7 @@ several statements                          ``sequence_with_memory`` (resumes at
 ``with parallel("all"):``                   ``parallel`` (``"one"``, ``"all"`` or a count)
 ``with repeat(until_done=True):``           ``repeat`` (``count=n`` / ``duration=10 * s``)
 ``with inverter():`` / ``with succeeder():``  decorators
+``with keep_running():``                    ``failure_as_running`` (failure → running)
 ``if c: A`` / ``else: B``                   ``sequence(c, A)`` / ``selector(sequence(c, A), B)``
 ``try: A`` ``except: B``                    ``selector_with_memory(A, B)``
 ==========================================  ==============================================
@@ -47,8 +48,9 @@ CONTROLS = {
     "inverter": "inverter",
     "succeeder": "succeeder",
     "negator": "negator",
+    "keep_running": "failure_as_running",
 }
-DECORATORS = ("repeat", "inverter", "succeeder", "negator")
+DECORATORS = ("repeat", "inverter", "succeeder", "negator", "keep_running")
 
 
 @dataclass
@@ -61,10 +63,11 @@ class TreeProblem:
 @dataclass
 class TreeSymbols:
     actions: set[str]
-    tactics: set[str]  # tactic-set subtrees and state trees
+    tactics: set[str]  # tactic-set entries the sheet may reference
     gaps: dict[str, str]  # gap id → kind
     parameters: set[str]
     expr: ExprCompiler
+    examples: set[str] = field(default_factory=set)  # entries shown as examples only
 
 
 @dataclass
@@ -165,6 +168,14 @@ class _Translator:
             ref = str(call.args[0].value)
             params = self.params(call)
             if name == "tactic":
+                if ref in self.s.examples:
+                    self.fail(
+                        call,
+                        f"'{ref}' 是战术集的状态树，只能参照它的写法，不能引用：请自己写这个状态的树，"
+                        '其中用到的战术集子树可以用 tactic("…") 引用',
+                        difflib.get_close_matches(ref, sorted(self.s.tactics), n=5, cutoff=0.4),
+                    )
+                    return None
                 if ref not in self.s.tactics:
                     self.fail(
                         call,

@@ -467,7 +467,10 @@ class _Normalizer:
             self.d.error("TREE001", path, f"'{kind}' takes no children")
         if kind in COMPOSITES and not node.children:
             self.d.error("TREE001", path, f"'{kind}' needs at least one child")
-        if kind in ("inverter", "succeeder", "negator", "repeat") and len(node.children) != 1:
+        if (
+            kind in ("inverter", "succeeder", "negator", "repeat", "failure_as_running")
+            and len(node.children) != 1
+        ):
             self.d.error("TREE001", path, f"decorator '{kind}' takes exactly one child")
         if node.policy is not None and kind != "parallel":
             self.d.error("IR002", f"{path}.policy", "policy only applies to parallel")
