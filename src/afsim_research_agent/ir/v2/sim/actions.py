@@ -332,6 +332,14 @@ class FormationSlots(ActionModel):
 
     def update(self, ctx: ActionContext) -> Status:
         state = ctx.shared.setdefault("formation", {"error": 0.0, "at": ctx.now})
+        away = ctx.options.get("away_m")
+        if away is not None:
+            # a shape whose slots are not the ones the error fields measure (e.g. the column,
+            # when the fields measure the line slots): the followers are away from them
+            state["at"] = ctx.now
+            for key in self.KEYS:
+                ctx.write(key, float(away))
+            return RUNNING, None
         dt = max(0.0, ctx.now - float(state.get("at", ctx.now)))
         floor = float(ctx.options.get("floor_m", 2.0))
         rate = float(ctx.options.get("converge_mps", 4.0))

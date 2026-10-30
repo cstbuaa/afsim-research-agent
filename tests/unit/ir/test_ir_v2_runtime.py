@@ -635,6 +635,11 @@ def test_formation_models_converge_and_initial_values_apply(contracts: Contracts
         world.step(1.0)
         line.update(ctx(opts))
     assert bb["f.left"] == 20.0 and bb["f.right"] == 20.0
+    column = FormationSlots()
+    column.start(ctx({"mode": "COLUMN", "away_m": 999.0}))
+    assert bb["f.left"] == 999.0
+    line.start(ctx(opts))  # back to the line: the errors start over
+    assert bb["f.left"] == 40.0
     bb.update({"t.valid": True, "t.range": 620.0})
     StandoffCommand().update(ctx({"desired_m": 500, "tolerance_m": 50}))
     assert bb["f.zone"] == "TOO_FAR"

@@ -38,6 +38,8 @@ from afsim_research_agent.falcon.v3 import catalog as K
 from afsim_research_agent.ir.v2.sim import simulate
 
 RESULT_LIMIT = 5000
+MAX_READS = 4  # consecutive show calls without an edit before show is refused
+STALL = 8  # steps without beating the best score: stop
 HISTORY = 5
 SHOW_LINES = 120
 
@@ -150,6 +152,7 @@ class SheetFixer:
         self.best = (self.score(self.last), _copy(drafter.blocks), self.last)
         self.refused = 0
         self.shown: dict[tuple[Any, ...], tuple[str, int]] = {}
+        self.reads = 0  # consecutive show calls
 
     # ------------------------------------------------------------------ scoring
     @staticmethod
@@ -225,6 +228,11 @@ class SheetFixer:
         block = self._block(key)
         if block is None:
             return f"没有块 {key}；现有：{', '.join(b.key for b in self.d.blocks)}"
+        if self.reads >= MAX_READS:
+            return (
+                f"已经连续查看 {self.reads} 次而没有修改。问题和出错行已在检查结果里给出：请直接 edit；"
+                "认为问题出在测试或仿真本身、而不是模型时，用 ask_human 说明"
+            )
         seen = self.shown.get((key, start, end))
         if seen is not None and seen[0] == block.text:
             return (
@@ -402,6 +410,8 @@ class SheetFixer:
             if kind not in ("model", "mermaid", "conditions", "pytree", "gaps", "verification"):
                 return f"块名 {key} 不对"
             current = texts.get(key)
+            if current is None and kind == "verification":
+                return "验证块由验证阶段编写，纠错循环不能新建它；先修 L1 问题"
             if "text" in ch:
                 texts[key] = _strip_fence(str(ch["text"]))
                 continue
@@ -583,6 +593,8 @@ async def fix_sheet(drafter: Any, run: ModelRunner, max_steps: int = 20) -> FixO
             continue
         a = action.args
         reason = str(a.get("reason") or action.thought)[:300]
+        if action.action in ("edit", "revert"):
+            fixer.reads = 0
         if action.action == "finish":
             outcome.summary = str(a.get("summary") or action.thought)[:500]
             result = fixer.check()
@@ -593,6 +605,7 @@ async def fix_sheet(drafter: Any, run: ModelRunner, max_steps: int = 20) -> FixO
             result = fixer.check()
         elif action.action == "show":
             result = fixer.show(str(a.get("block", "")), a.get("start"), a.get("end"))
+            fixer.reads += 1
         elif action.action == "lookup":
             result = fixer.lookup(str(a.get("id", "")))
         elif action.action == "explain":
@@ -615,6 +628,16 @@ async def fix_sheet(drafter: Any, run: ModelRunner, max_steps: int = 20) -> FixO
                 "seconds": round(time.perf_counter() - started, 2),
             }
         )
+        best_step = getattr(fixer, "best_step", 0)
+        if (
+            fixer.score(fixer.last) <= fixer.best[0]
+            and fixer.score(fixer.last) < outcome.score_start
+        ):
+            fixer.best_step = step
+            best_step = step
+        if step - max(best_step, 0) >= STALL and action.action not in ("finish", "ask_human"):
+            records[-1]["result"] += f"\n（连续 {STALL} 步没有改进，结束）"
+            break
         if action.action in ("finish", "ask_human"):
             if action.action == "finish" and not fixer.solved:
                 records[-1]["result"] += "\n（检查尚未全部通过；按最好的版本结束）"
