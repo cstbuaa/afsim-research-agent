@@ -283,7 +283,8 @@ class Drafter:
             missing = [
                 o
                 for o in self.obligations
-                if o.id not in covered and not set(o.actions()) & unmodelled
+                if o.id not in covered
+                and not any(a in unmodelled or not self._modelled(a) for a in o.actions())
             ]
             if missing and spec.get("scenarios"):
                 out.l3.append(
@@ -350,15 +351,29 @@ class Drafter:
         self.rounds.append(record)
         return True
 
+    def _modelled(self, action: str) -> bool:
+        """Whether the 2D simulation has a model for the action."""
+        from afsim_research_agent.ir.v2.sim.actions import MODELS
+
+        sem = self.c.semantics.actions.get(action)
+        return sem is not None and sem.get("model") in MODELS
+
     def _blind_fields(self, spec: dict[str, Any], idealized: set[str]) -> set[str]:
-        """Fields the model's conditions read that only actions without a 2D model write."""
+        """Fields the model's conditions read that only actions without a 2D model write
+        (``idealized``: such actions seen in the run; any action of the capability set
+        without a 2D model counts too, whether it ran or not)."""
         from afsim_research_agent.falcon.v3.compiler import _bb_reads
 
+        def unmodelled(action: str) -> bool:
+            return action in idealized or not self._modelled(action)
+
         out: set[str] = set()
+        if not idealized:
+            return out
         for c in spec.get("conditions") or []:
             for path in _bb_reads(c.get("expression")):
                 f = self.c.blackboard.get(path)
-                if f is not None and f.written_by and set(f.written_by) <= idealized:
+                if f is not None and f.written_by and all(unmodelled(a) for a in f.written_by):
                     out.add(path)
         return out
 

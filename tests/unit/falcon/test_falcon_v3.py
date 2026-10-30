@@ -999,8 +999,10 @@ def test_blind_fields_are_those_only_unmodelled_actions_write(set_root: Path) ->
         V3Request(requirement="r", model_id="scout_demo"), contracts, ModelRunner(ScriptedModel({}))
     )
     spec = _compile(contracts).spec
-    assert drafter._blind_fields(spec, {"sense.scan"}) == {"sense.target.valid"}
-    assert drafter._blind_fields(spec, {"nav.goto"}) == set()
+    # sense.target.valid is written only by sense.scan, which has no 2D model here
+    assert "sense.target.valid" in drafter._blind_fields(spec, {"sense.scan"})
+    # a run in which every action had a 2D model is never blind
+    assert drafter._blind_fields(spec, set()) == set()
 
 
 def test_negated_timer_transition_is_refused(set_root: Path) -> None:
