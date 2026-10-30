@@ -476,7 +476,7 @@ roles:
 ```
 
 ```python conditions
-cancelled = False
+cancelled = sense.target.valid
 ```
 """
     out = _compile(contracts, text)
@@ -501,3 +501,24 @@ def test_a_state_never_left_in_the_simulation_goes_back_to_the_model(contracts: 
     problems = drafter._stuck(check)
     assert {k for k, _ in problems} == {"mermaid:scout", "conditions"}
     assert "一直停在 MOVE" in problems[0][1] and "target_seen" in problems[0][1]
+
+
+def test_scenario_events_constants_and_nested_verification(contracts: Contracts) -> None:
+    text = SHEET.replace("target_seen = sense.target.valid", "target_seen = True")
+    assert any("是常量" in p.message for p in _compile(contracts, text).errors)
+    out = _compile(contracts, SHEET, scenario_events={"stop_request": "上级结束任务"})
+    messages = " | ".join(p.message for p in out.errors)
+    assert "不会发出外部事件 cancelled" in messages and "stop_request" in messages
+    nested = SHEET.replace(
+        "```yaml verification\ntests:", "```yaml verification\nverification:\n tests:"
+    )
+    nested = nested.replace("\nscenarios:", "\n scenarios:")
+    lines = nested.split("```yaml verification")[1]
+    body = lines.split("```")[0]
+    indented = "\n".join(
+        (" " + x if x and not x.startswith(("verification", " tests", " scenarios")) else x)
+        for x in body.split("\n")
+    )
+    nested = nested.replace(body, indented)
+    out = _compile(contracts, nested)
+    assert len(out.spec["tests"]) == 1 and len(out.spec["scenarios"]) == 1

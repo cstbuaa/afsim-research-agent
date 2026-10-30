@@ -121,8 +121,10 @@ class SheetCompiler:
         scenario_parameters: dict[str, dict[str, Any]] | None = None,
         pending_triggers: bool = False,
         slices: list[str] | None = None,
+        scenario_events: dict[str, str] | None = None,
     ) -> None:
         self.slices_override = slices
+        self.scenario_events = scenario_events or {}
         self.c = contracts
         # structure stage: a bare name in a transition is a condition to be written later
         self.pending_triggers = pending_triggers
@@ -243,6 +245,8 @@ class SheetCompiler:
         )
         self._trees(spec, tree_symbols, event_ids)
         verification = self.yaml_block("verification")
+        if isinstance(verification.get("verification"), dict):
+            verification = verification["verification"]
         vlines = (
             _key_lines(self.out.blocks["verification"]) if "verification" in self.out.blocks else {}
         )
@@ -266,6 +270,23 @@ class SheetCompiler:
             for t in m["transitions"] + m["global"]
         }
         self._mission_ref_names(spec)
+        if self.scenario_events and not self.pending_triggers:
+            external = {e["id"] for e in spec["events"] if e["source"] == "external"}
+            for eid in sorted(external - set(self.scenario_events)):
+                self.fail(
+                    "model",
+                    self.mlines.get(eid),
+                    f"想定不会发出外部事件 {eid}；外部事件只能是 {', '.join(self.scenario_events)}",
+                    list(self.scenario_events),
+                )
+            own = [m for m in spec["missions"].values() if "tactic" not in m]
+            for eid in sorted(set(self.scenario_events) - external):
+                if own:
+                    self.fail(
+                        "model",
+                        self.mlines.get("events"),
+                        f"想定会发出外部事件 {eid}（{self.scenario_events[eid]}），模型没有声明和使用它",
+                    )
         for e in spec["events"]:
             if e["id"] not in used and not self.pending_triggers:
                 self.fail(
@@ -527,6 +548,13 @@ class SheetCompiler:
                 continue
             if _refers(expr, name):
                 self.fail("conditions", line, f"条件 {name} 引用了它自己")
+                continue
+            if "literal" in expr:
+                self.fail(
+                    "conditions",
+                    line,
+                    f"条件 {name} 是常量；外部请求写成 external 事件，不需要的条件删去",
+                )
                 continue
             self.at(f"conditions[{len(out)}]", "conditions", line)
             self.at(f"conditions.{name}", "conditions", line)

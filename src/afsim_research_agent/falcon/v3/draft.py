@@ -77,6 +77,8 @@ class V3Request(BaseModel):
     allow_mission_ref: bool = True
     # state names to use per role (e.g. to line up with an evaluation scenario)
     state_names: dict[str, list[str]] = Field(default_factory=dict)
+    # external events the scenario raises: id → description (names line up with the run)
+    scenario_events: dict[str, str] = Field(default_factory=dict)
     slices: list[str] | None = None  # override the slices the structure names
     capability_set: Path | None = None  # default: the configured capability set
     max_repair: int = Field(default=3, ge=0, le=6)
@@ -145,6 +147,7 @@ class Drafter:
             roles_hint={k: v.model_dump() for k, v in self.r.roles.items()},
             allow_mission_ref=self.r.allow_mission_ref,
             scenario_parameters={k: v.model_dump() for k, v in self.r.scenario_parameters.items()},
+            scenario_events=dict(self.r.scenario_events),
             pending_triggers=pending,
             slices=self.r.slices,
         )
@@ -257,6 +260,7 @@ class Drafter:
             {k: v.model_dump() for k, v in self.r.scenario_parameters.items()},
             self.r.allow_mission_ref,
             state_names=self.r.state_names,
+            scenario_events=self.r.scenario_events,
         )
         await self.ask("v3:structure", prompt, STRUCTURE_KINDS)
         check = self.check(pending=True)

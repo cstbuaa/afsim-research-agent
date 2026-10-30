@@ -25,6 +25,7 @@ RULES = """你在为作战仿真编写战术行为模型。模型分七层，你
 
 MODEL_GUIDE = """```yaml model``` 块：
 - model: {display_name, intent}
+- 条件不能是常量 True / False；外部请求一律写成 external 事件，不写成条件。
 - slices: [本任务要用的能力集切片 ID]（从下面的切片索引中选；下一步只展示这些切片的详细内容，
   条件只能读这些切片的黑板字段：要判断目标、传感器等状态，就要选上对应的切片）
 - roles: {角色ID: {capability_class, count, description}}；角色 ID 用小写英文。
@@ -185,8 +186,14 @@ def structure_prompt(
     allow_mission_ref: bool,
     tactic_brief: str = "",
     state_names: dict[str, list[str]] | None = None,
+    scenario_events: dict[str, str] | None = None,
 ) -> str:
     names = ""
+    if scenario_events:
+        names += (
+            "\n想定会发出的外部事件（需求中的外部请求照用这些事件 ID，在 events 中声明为 external）："
+            + "；".join(f"{k}（{v}）" for k, v in scenario_events.items())
+        )
     if state_names:
         names = "\n状态命名（自己写状态图时使用这些名称，可按需求增减）：" + "；".join(
             f"{r}: {', '.join(v)}" for r, v in state_names.items()
