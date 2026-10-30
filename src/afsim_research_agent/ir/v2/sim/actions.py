@@ -324,7 +324,10 @@ class FormationSlots(ActionModel):
             state.update(
                 mode=mode, error=float(ctx.options.get("initial_error_m", 60.0)), at=ctx.now
             )
-        ctx.write("formation.mode", mode)
+        if ctx.options.get("write_mode"):
+            # only when the real platform is known to write the shape this way: a field the
+            # simulation sets but the platform does not would let a guessed condition pass
+            ctx.write("formation.mode", mode)
         return self.update(ctx)
 
     def update(self, ctx: ActionContext) -> Status:

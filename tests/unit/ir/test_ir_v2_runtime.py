@@ -629,7 +629,7 @@ def test_formation_models_converge_and_initial_values_apply(contracts: Contracts
         return ActionContext(world, Vehicle("v", 0, 0), bb, fields, {}, {}, options, shared)
 
     line = FormationSlots()
-    opts = {"mode": "LINE", "initial_error_m": 40.0, "converge_mps": 4.0}
+    opts = {"mode": "LINE", "initial_error_m": 40.0, "converge_mps": 4.0, "write_mode": True}
     assert line.start(ctx(opts))[0] == RUNNING and bb["f.left"] == 40.0 and bb["f.mode"] == "LINE"
     for _ in range(5):
         world.step(1.0)
