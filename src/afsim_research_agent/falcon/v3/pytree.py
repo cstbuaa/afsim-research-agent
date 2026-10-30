@@ -5,10 +5,10 @@ is that state's tree; any other function (lower case) is a subtree of the model 
 call by name. Nothing is executed; the text is only parsed with :func:`ast.parse`.
 
 ==========================================  ==============================================
-``movement.move_to_point(latitude_deg=…)``  action leaf (action-set id, contract params)
-``tactic("perception.track_selected_target")``  tactic-set subtree / state tree
+``nav.goto(lat_deg=…)``                     action leaf (action-set id, contract params)
+``tactic("sense.track")``                   tactic-set subtree / state tree
 ``gap("smoke_screen", duration_s=30 * s)``  placeholder of a gap listed in ``yaml gaps``
-``standoff_track()``                        a subtree written in this sheet
+``observe()``                               a subtree written in this sheet
 ``assert target_acquired``                  condition leaf (a condition name or expression)
 several statements                          ``sequence_with_memory`` (resumes at the
                                             running child, the usual behavior-tree sequence)

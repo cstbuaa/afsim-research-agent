@@ -3,7 +3,7 @@
 Only a small subset is accepted; nothing is executed (``ast.parse`` only):
 
 ==========================================  ==========================================
-``perception.selected_target.valid``         ``{bb: perception.selected_target.valid}``
+``sense.target.valid``                       ``{bb: sense.target.valid}``
 ``a and b`` / ``a or b`` / ``not a``         ``all`` / ``any`` / ``not``
 ``x <= line_tolerance``                      ``compare`` (``==  !=  <  <=  >  >=``)
 ``x < 500 * m`` or ``x < "500 m"``           quantity ``{value: 500, unit: m}``
