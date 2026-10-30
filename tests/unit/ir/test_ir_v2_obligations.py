@@ -122,3 +122,14 @@ def test_responses_are_judged_where_the_event_leads() -> None:
         after_event={"m1": after["m"]},
     )
     assert v.passed and not v.judged
+
+
+def test_periodic_not_before_uses_consecutive_starts() -> None:
+    every = Obligation(id="every_5s", kind="not_before", action="a.x", after="a.x", min_s=5)
+    ok = [(0, "p", "a.x"), (6, "p", "a.x"), (12, "p", "a.x")]
+    (v,) = check([every], ok, [], end_s=20)
+    assert v.passed and v.judged
+    (v,) = check([every], [(0, "p", "a.x"), (1, "p", "a.x")], [], end_s=20)
+    assert not v.passed and "1 s" in v.detail
+    (v,) = check([every], [(0, "p", "a.x")], [], end_s=20)
+    assert not v.judged

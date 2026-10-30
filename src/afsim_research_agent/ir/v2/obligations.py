@@ -7,7 +7,9 @@ action starts) and external events, never the model's own state names, so it hol
 structure the model chooses:
 
 ``not_before``  ``action`` starts no earlier than ``min_s`` after ``after`` first started
-                ("search starts about 10 s after the advance starts")
+                ("search starts about 10 s after the advance starts"); with ``after`` equal
+                to ``action``: consecutive starts are at least ``min_s`` apart
+                ("re-evaluate every few seconds")
 ``precedes``    ``then`` does not start before ``first`` has started
                 ("stop first, then deploy")
 ``response``    after the external event ``on_event``, ``action`` starts within ``within_s``
@@ -211,6 +213,21 @@ def _first(starts: dict[str, list[float]], action: str | None, since: float = fl
 
 
 def _one(ob, platform, starts, events, step_s, end_s) -> Verdict:
+    if ob.kind == "not_before" and ob.after == ob.action:
+        # "repeat no more often than every min_s": consecutive starts of the same action
+        times = sorted(starts.get(ob.action or "", []))
+        if len(times) < 2:
+            return Verdict(ob.id, True, f"{platform}: {ob.action} 只执行了一次", judged=False)
+        need = float(ob.min_s or 0.0)
+        gaps = [b - a for a, b in zip(times, times[1:], strict=False)]
+        gap = min(gaps)
+        ok = gap >= need - _slack(need, step_s)
+        return Verdict(
+            ob.id,
+            ok,
+            f"{platform}: {ob.action} 相邻两次开始最短间隔 {gap:g} s"
+            + ("" if ok else f"，要求不短于 {need:g} s"),
+        )
     if ob.kind == "not_before":
         tb = _first(starts, ob.after)
         if tb is None:

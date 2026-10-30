@@ -875,6 +875,16 @@ def test_self_transitions_are_refused(set_root: Path) -> None:
     assert any("自环" in m for m in msgs), msgs
 
 
+def test_tree_success_of_parallel_with_route_is_refused(set_root: Path) -> None:
+    contracts = _annotate(set_root)
+    sheet = SHEET.replace(
+        '  lost_timeout: {after: "20 s"}\n',
+        '  lost_timeout: {after: "20 s"}\n  all_done: {source: tree, result: success}\n',
+    ).replace("  MOVE --> OBSERVE : target_seen\n", "  MOVE --> OBSERVE : all_done\n")
+    msgs = [p.message for p in _compile(contracts, sheet).errors]
+    assert any("all_done" in m and "repeat(until_done=True)" in m for m in msgs), msgs
+
+
 def test_ring_contradictions() -> None:
     from afsim_research_agent.falcon.v3.compiler import _atoms, _contradict
 

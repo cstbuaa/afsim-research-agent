@@ -679,6 +679,19 @@ class SheetCompiler:
                     continue
                 ref = trees.get(tr["from"])
                 root = subs.get(ref) if ref in subs else {"type": "tactic", "tactic": ref}
+                if ref is not None and result == "success" and _all_with_until_done(root):
+                    block, line = self.out.locate(f"missions.{rid}.transitions[{i}]")
+                    self.fail(
+                        block,
+                        line,
+                        f'树事件 {tr["on"]} 要等 {tr["from"]} 的 parallel("all") 中所有分支都'
+                        "完成才触发，其中 repeat(until_done=True) 的分支（如沿路线走完）要到"
+                        "工作全部结束才完成——想定中的路线比仿真测试长时，事件会迟迟不来。"
+                        '表达"发现目标""到位"这类时刻，改用字段条件（如 '
+                        "perception.selected_target.valid）；确实要等全部完成时，用 "
+                        "sequence 把它们串起来",
+                    )
+                    continue
                 if ref is None or result in self._outcomes(root, subs):
                     continue
                 word = "成功" if result == "success" else "失败"
@@ -1431,3 +1444,25 @@ def _overlap(oa: str, a: float, ob: str, b: float) -> bool:
     lo, lo_in = (x[0], x[1]) if (x[0], not x[1]) > (y[0], not y[1]) else (y[0], y[1])
     hi, hi_in = (x[2], x[3]) if (x[2], x[3]) < (y[2], y[3]) else (y[2], y[3])
     return lo < hi or (lo == hi and lo_in and hi_in)
+
+
+def _all_with_until_done(root: Any) -> bool:
+    """A parallel("all") root with several branches, one of them repeat(until_done=True)."""
+    node = root
+    while (
+        isinstance(node, dict)
+        and node.get("type") in ("subtree", "tactic")
+        and node.get("children")
+    ):
+        node = node["children"][0]
+    if not isinstance(node, dict) or node.get("type") != "parallel":
+        return False
+    if (node.get("policy") or {}).get("type", "all") != "all":
+        return False
+    kids = node.get("children") or []
+    return len(kids) >= 2 and any(
+        isinstance(k, dict)
+        and k.get("type") == "repeat"
+        and (k.get("repeat") or {}).get("until_done")
+        for k in kids
+    )
