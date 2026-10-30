@@ -340,16 +340,22 @@ class Drafter:
         """Requirement obligations: given by the request, or written by the model from the
         requirement clauses (independent of the draft, so a missed clause shows up)."""
         known = set(self.c.actions)
+        if self.slices:
+            allowed = set(K.closure(self.c, self.slices))
+            known = {a for a, c in self.c.actions.items() if c.slice in allowed}
         events = set(self.r.scenario_events)
         raw: list[dict[str, Any]] = []
         if self.r.obligations is not None:
             raw = list(self.r.obligations)
         elif self.r.extract_obligations:
             classes = {v.capability_class for v in self.r.roles.values()} or None
+            # only the slices the structure chose (with what their tactic-set entries use):
+            # an obligation naming another slice's action would pull the draft there
+            slices = K.closure(self.c, self.slices) if self.slices else None
             prompt = P.obligations_prompt(
                 self.r.requirement,
                 self.clauses,
-                K.action_list(self.c, classes),
+                K.action_list(self.c, classes, slices),
                 self.r.scenario_events,
             )
             answer = await self.run("v3:obligations", prompt, ObligationAnswer)
@@ -866,9 +872,12 @@ def _score(check: Check) -> tuple[int, int, int]:
     return (0 if check.l1_ok else 1, len(check.problems), failed)
 
 
-async def _draft(drafter: Drafter, run: ModelRunner) -> tuple[Check, list[Any]]:
+async def _draft(
+    drafter: Drafter, run: ModelRunner, structure: Check | None = None
+) -> tuple[Check, list[Any]]:
     request = drafter.r
-    structure = await drafter.structure_stage()
+    if structure is None:
+        structure = await drafter.structure_stage()
     control = await drafter.control_stage(structure)
     budget = request.fix_steps
     fixes: list[Any] = []
@@ -913,12 +922,16 @@ async def run_draft3(
     try:
         # shared by every candidate: the clauses and the obligations the drafts are judged on
         await lead.clauses_stage()
+        # the obligations are written once the structure has chosen the slices
+        structure = await lead.structure_stage()
         await lead.obligations_stage()
         for _ in range(request.candidates - 1):
             d = Drafter(request, contracts, run)
             d.clauses, d.obligations, d.notes = list(lead.clauses), list(lead.obligations), []
             drafters.append(d)
-        outcomes = await asyncio.gather(*(_draft(d, run) for d in drafters))
+        outcomes = await asyncio.gather(
+            _draft(lead, run, structure), *(_draft(d, run) for d in drafters[1:])
+        )
         ranked = sorted(range(len(drafters)), key=lambda i: _score(outcomes[i][0]))
         best = ranked[0]
         drafter, (check, fixes) = drafters[best], outcomes[best]

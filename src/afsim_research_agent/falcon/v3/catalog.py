@@ -208,7 +208,9 @@ def index(contracts: Contracts, classes: set[str] | None = None) -> str:
     return "\n".join(lines)
 
 
-def action_list(contracts: Contracts, classes: set[str] | None = None) -> str:
+def action_list(
+    contracts: Contracts, classes: set[str] | None = None, slices: list[str] | None = None
+) -> str:
     """Every action with its description and the tactic-set subtrees that use it (for
     writing requirement obligations, which name actions)."""
     used: dict[str, list[str]] = {}
@@ -221,6 +223,8 @@ def action_list(contracts: Contracts, classes: set[str] | None = None) -> str:
     lines = []
     for a in sorted(contracts.actions.values(), key=lambda x: x.id):
         if classes and a.platform_classes and not classes & set(a.platform_classes):
+            continue
+        if slices is not None and a.slice not in slices:
             continue
         cap = contracts.catalog.capabilities.get(a.id)
         desc = _short((cap.raw.get("description") if cap else "") or a.description, 100)
