@@ -263,12 +263,29 @@
           "title": "Id",
           "type": "string"
         },
+        "result": {
+          "anyOf": [
+            {
+              "enum": [
+                "success",
+                "failure"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Result"
+        },
         "source": {
           "enum": [
             "tactic",
             "timer",
             "message",
-            "external"
+            "external",
+            "tree"
           ],
           "title": "Source",
           "type": "string"

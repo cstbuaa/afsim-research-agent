@@ -719,3 +719,27 @@ def test_fix_loop_stops_reading_and_cannot_write_the_verification_block(
     )
     assert outcome.steps == STALL
     assert any("连续查看" in r["result"] for r in outcome.log)
+
+
+def test_tree_events_end_a_state_when_its_tree_succeeds(contracts: Contracts) -> None:
+    from afsim_research_agent.ir.v2.sim import simulate
+
+    text = SHEET.replace("SHUTDOWN --> DONE : stopped", "SHUTDOWN --> DONE : cleaned").replace(
+        '  lost_timeout: {after: "20 s"}',
+        '  lost_timeout: {after: "20 s"}\n  cleaned: {source: tree, result: success}',
+    )
+    out = _compile(contracts, text)
+    assert not out.errors, [p.render() for p in out.errors]
+    assert {"id": "cleaned", "source": "tree", "result": "success"} in out.spec["events"]
+    result = normalize(out.spec, contracts)
+    assert result.ok, [d.render() for d in result.diagnostics]
+    scenario = out.spec["scenarios"][0] | {
+        "expect": [{"id": "done", "role": "scout", "reaches": "DONE", "within_s": 8}]
+    }
+    sim = simulate(result.model, contracts, scenario)
+    assert sim.passed, sim.render()
+    from afsim_research_agent.ir.v2.afsim.compiler import Compiler
+
+    compiler = Compiler.__new__(Compiler)
+    compiler.m = result.model
+    assert compiler._semantics("cleaned") == {"tree": "success"}

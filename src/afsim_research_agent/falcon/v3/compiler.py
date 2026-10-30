@@ -529,11 +529,19 @@ class SheetCompiler:
                     self.fail("model", line, f"事件 {eid} 的 after 写成时长，如 2 s")
                 else:
                     event["after_s"] = float(after)
-            if source not in ("external", "timer"):
+            if source == "tree":
+                result = spec.get("result", "success")
+                if result not in ("success", "failure"):
+                    self.fail(
+                        "model", line, f"事件 {eid}：tree 事件的 result 写 success 或 failure"
+                    )
+                    continue
+                event["result"] = result
+            elif source not in ("external", "timer"):
                 self.fail(
                     "model",
                     line,
-                    f"事件 {eid}：模型只写 external 或 timer 事件（战术集任务的事件自动带入）",
+                    f"事件 {eid}：模型只写 external、timer 或 tree 事件（战术集任务的事件自动带入）",
                 )
                 continue
             out.append(event)

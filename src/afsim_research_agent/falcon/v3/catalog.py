@@ -68,7 +68,8 @@ def trigger_text(sem: dict[str, Any]) -> str:
     if "after_s" in sem:
         return f"进入状态 {sem['after_s']:g} s 后（timer 事件）"
     if "tree" in sem:
-        return "本状态的树" + ("成功" if sem["tree"] == "success" else "失败") + "时"
+        word = "成功" if sem["tree"] == "success" else "失败"
+        return f"本状态的树{word}时（写成 tree 事件：{{source: tree, result: {sem['tree']}}}）"
     if "expression" in sem:
         return expr_text(sem["expression"])
     if "event" in sem:

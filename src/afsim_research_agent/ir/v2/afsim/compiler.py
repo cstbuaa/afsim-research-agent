@@ -383,6 +383,8 @@ class Compiler:
 
     def _semantics(self, name: str) -> dict[str, Any] | None:
         ev = self._event(name)
+        if ev is not None and ev.get("source") == "tree":
+            return {"tree": ev.get("result")}
         if ev is None or ev.get("source") != "tactic":
             return None
         return self.c.semantics.event(ev.get("tactic"), ev.get("text"))
@@ -403,6 +405,8 @@ class Compiler:
                 f'(TIME_NOW - PLATFORM.AuxDataDouble("ir_entered_s")) >= {num(ev["after_s"])}',
                 [],
             )
+        if source == "tree":
+            return f'PLATFORM.AuxDataString("{self.P}_tree") == "{ev.get("result")}"', []
         if source == "tactic":
             sem = self._semantics(name)
             if sem is None:

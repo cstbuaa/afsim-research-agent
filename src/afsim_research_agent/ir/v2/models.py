@@ -71,11 +71,13 @@ class Event(_Strict):
     """A transition trigger that is not a blackboard condition."""
 
     id: str
-    source: Literal["tactic", "timer", "message", "external"]
+    source: Literal["tactic", "timer", "message", "external", "tree"]
     description: str = ""
     tactic: str | None = None  # source=tactic: the tactic-set mission that raises it
     text: str | None = None  # source=tactic: the trigger as the tactic set writes it
     after_s: float | None = None  # source=timer: seconds in the current state
+    # source=tree: the current state's tree finished with this result (e.g. cleanup done)
+    result: Literal["success", "failure"] | None = None
 
 
 # --------------------------------------------------------------------- layer 4

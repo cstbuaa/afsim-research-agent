@@ -132,6 +132,8 @@ class Instance:
             return name in self.latched
         if source == "timer":
             return self.time_in_state >= float(event.get("after_s") or 0.0)
+        if source == "tree":
+            return self.tree_status == event.get("result")
         if source == "tactic":
             sem = self.contracts.semantics.event(event.get("tactic"), event.get("text"))
             if sem is None:

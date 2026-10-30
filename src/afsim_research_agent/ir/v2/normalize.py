@@ -358,6 +358,8 @@ class _Normalizer:
             p = f"events.{e.id}"
             if e.source == "timer" and e.after_s is None:
                 self.d.error("IR002", p, "a timer event needs after_s")
+            if e.source == "tree" and e.result is None:
+                self.d.error("IR002", p, "a tree event needs result (success or failure)")
             if e.source == "tactic":
                 entry = self.c.tactics.get(e.tactic or "")
                 if entry is None or entry.section != "missions":

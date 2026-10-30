@@ -53,7 +53,8 @@ MODEL_GUIDE = """```yaml model``` 块：
 - parameters: {名称: {value: "10 s" | 数 | 字符串, description, basis: explicit|inferred|unknown|user_specified, rationale}}
   数值写成"数 单位"（m、km、m/s、km/h、s、min、deg）。想定提供的参数照抄给出的名称和类型，value 写成名称本身。
 - blackboard: {mission.<名称>: {type: bool|int|double|string, default}}（只声明能力集没有的新字段，一般不需要）
-- events: {事件ID: {source: external, description}} 或 {事件ID: {after: "30 s", description}}（进入状态后计时）；
+- events: {事件ID: {source: external, description}}、{事件ID: {after: "30 s", description}}（进入状态后计时）
+  或 {事件ID: {source: tree, result: success}}（本状态的树完成时，如关机清理做完；不要用字段去猜"做完了没有"）；
   每个事件都要在状态图中作为某条转换的触发（直接写事件 ID），外部请求不要再写成条件
 - assumptions: [{statement}]（模型依赖、需要人确认的前提）
 - implements: {条款ID: [角色.状态 或 子树名]}（每条需求条款都要出现）
