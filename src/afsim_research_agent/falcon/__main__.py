@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -251,6 +252,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return exc.exit_code
     except Exception as exc:  # noqa: BLE001 - report model/service failures without a traceback
         print(f"运行失败：{type(exc).__name__}: {str(exc)[:300]}", file=sys.stderr)
+        if os.environ.get("FALCON_TRACEBACK"):
+            # program frames only (file, line, function); no model output is included
+            import traceback
+
+            for frame in traceback.extract_tb(exc.__traceback__)[-8:]:
+                print(f"  {frame.filename}:{frame.lineno} {frame.name}", file=sys.stderr)
         print(
             "诊断记录：models/<model_id>.failure.json（调用阶段、耗时，不含模型输出）",
             file=sys.stderr,
