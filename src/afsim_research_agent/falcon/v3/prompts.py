@@ -25,13 +25,15 @@ RULES = """你在为作战仿真编写战术行为模型。模型分七层，你
 
 MODEL_GUIDE = """```yaml model``` 块：
 - model: {display_name, intent}
-- slices: [本任务要用的能力集切片 ID]（从下面的切片索引中选；下一步只展示这些切片的详细内容）
+- slices: [本任务要用的能力集切片 ID]（从下面的切片索引中选；下一步只展示这些切片的详细内容，
+  条件只能读这些切片的黑板字段：要判断目标、传感器等状态，就要选上对应的切片）
 - roles: {角色ID: {capability_class, count, description}}；角色 ID 用小写英文。
   若整体引用战术集任务：在角色下写 mission: {tactic: <战术集任务 ID>, role: <可选>, params: {…}}，此时不写该角色的状态图。
 - parameters: {名称: {value: "10 s" | 数 | 字符串, description, basis: explicit|inferred|unknown|user_specified, rationale}}
   数值写成"数 单位"（m、km、m/s、km/h、s、min、deg）。想定提供的参数照抄给出的名称和类型，value 写成名称本身。
 - blackboard: {mission.<名称>: {type: bool|int|double|string, default}}（只声明能力集没有的新字段，一般不需要）
-- events: {事件ID: {source: external, description}} 或 {事件ID: {after: "30 s", description}}（进入状态后计时）
+- events: {事件ID: {source: external, description}} 或 {事件ID: {after: "30 s", description}}（进入状态后计时）；
+  每个事件都要在状态图中作为某条转换的触发（直接写事件 ID），外部请求不要再写成条件
 - assumptions: [{statement}]（模型依赖、需要人确认的前提）
 - implements: {条款ID: [角色.状态 或 子树名]}（每条需求条款都要出现）
 
@@ -60,6 +62,10 @@ CONTROL_GUIDE = """```python conditions``` 块：每行 `条件名 = 表达式`�
 - 同一时刻要持续做的几件事（边走边搜、边跟踪边保持队形）放进 parallel；并行分支不能同时占用同一独占资源；
 - 一直运行的动作（如保持位置）放在顺序节点前面会挡住后面的节点，此时用 parallel；
 - 树里不能给黑板赋值。
+- 战术集已有某阶段的状态树时，优先让状态函数只写一句 `tactic("…")` 直接引用它；
+- 状态树里不要用 assert 重复写进入该状态的转换条件（进入时它已成立，之后的变化由状态图的转换处理）；
+  assert 只用于树内部的分支判断，否则条件一变树就整体失败、什么也不做；
+- 条件读描述战场状态的字段；请求编号、执行状态等接口字段不能用；带取值列表的字段只能与列出的取值比较。
 
 ```yaml gaps``` 块（只有需要缺口时才写）：
 gaps:

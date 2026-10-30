@@ -82,7 +82,13 @@ def set_root(tmp_path: Path) -> Path:
         "action_set/sense.yaml",
         {
             "resources": {"sensor": {"mode": "exclusive"}},
-            "blackboard": {"fields": {"sense.target.valid": {"type": "boolean"}}},
+            "blackboard": {
+                "fields": {
+                    "sense.target.valid": {"type": "boolean"},
+                    "sense.mode": {"type": "string", "enum": ["SEARCH", "TRACK"]},
+                    "sense.request.id": {"type": "string"},
+                }
+            },
             "actions": [
                 {
                     "id": "sense.scan",
@@ -439,3 +445,21 @@ def test_draft_loop_repairs_and_writes_the_package(set_root: Path, tmp_path: Pat
     # an existing package is never overwritten
     with pytest.raises(FileExistsError):
         asyncio.run(run_draft3(request, ScriptedModel(script), out_dir=tmp_path / "out"))
+
+
+def test_conditions_are_checked_against_the_chosen_slices(contracts: Contracts) -> None:
+    text = SHEET.replace(
+        "target_seen = sense.target.valid",
+        'target_seen = sense.mode == "LOCKED"\nbusy = sense.request.id != ""\nloop = loop',
+    ).replace(
+        '  lost_timeout: {after: "20 s"}',
+        '  lost_timeout: {after: "20 s"}\n  spare: {source: external}',
+    )
+    out = _compile(contracts, text)
+    messages = " | ".join(p.message for p in out.errors)
+    assert "SEARCH, TRACK" in messages and "接口字段" in messages and "引用了它自己" in messages
+    assert "事件 spare 没有被任何转换使用" in messages
+    # a field of a slice the sheet did not choose
+    only_nav = SHEET.replace("slices: [nav, sense]", "slices: [nav]")
+    out = _compile(contracts, only_nav)
+    assert any("属于切片 sense" in p.message for p in out.errors)

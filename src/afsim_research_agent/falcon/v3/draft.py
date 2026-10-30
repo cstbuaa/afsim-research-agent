@@ -146,6 +146,7 @@ class Drafter:
             allow_mission_ref=self.r.allow_mission_ref,
             scenario_parameters={k: v.model_dump() for k, v in self.r.scenario_parameters.items()},
             pending_triggers=pending,
+            slices=self.r.slices,
         )
 
     def check(self, *, pending: bool = False, verify: bool = False) -> Check:
@@ -178,9 +179,18 @@ class Drafter:
                 )
         return out
 
-    async def ask(self, stage: str, prompt: str, kinds: tuple[str, ...]) -> None:
+    async def ask(
+        self, stage: str, prompt: str, kinds: tuple[str, ...], single: str | None = None
+    ) -> None:
         answer = await self.run(stage, prompt, TextAnswer)
-        self.notes += merge(self.blocks, answer.text, kinds)
+        before = {b.key for b in self.blocks if b.kind in kinds}
+        if single is not None:
+            # one expected block: take it even when the fence label is off
+            self.notes += merge(self.blocks, answer.text, kinds, target=Block(single, None, "", 0))
+        else:
+            self.notes += merge(self.blocks, answer.text, kinds)
+        if not any(b.kind in kinds for b in self.blocks) and not before:
+            self.notes.append(f"{stage} 的回答中没有 {'/'.join(kinds)} 代码块")
 
     async def repair(self, check: Check, kinds: tuple[str, ...], stage: str) -> bool:
         """One round: every block with problems is rewritten once. False: nothing to do."""
@@ -254,27 +264,12 @@ class Drafter:
         return check
 
     def _slices(self, compiled: Compiled) -> list[str]:
-        known = K.slices(self.c)
-        if self.r.slices:
-            return [s for s in self.r.slices if s in known]
+        if not compiled.slices:
+            return K.slices(self.c)
         block = compiled.blocks.get("model")
-        wanted: list[str] = []
-        if block is not None:
-            try:
-                data = yaml.safe_load(block.text) or {}
-            except yaml.YAMLError:
-                data = {}
-            wanted = [str(s) for s in (data.get("slices") or []) if str(s) in known]
-            for role in (data.get("roles") or {}).values():
-                mission = (role or {}).get("mission") if isinstance(role, dict) else None
-                ref = mission.get("tactic") if isinstance(mission, dict) else mission
-                entry = self.c.tactics.get(str(ref or ""))
-                if entry is not None and entry.slice not in wanted:
-                    wanted.append(entry.slice)
-        if not wanted:
+        if block is not None and "slices:" not in block.text and not self.r.slices:
             self.notes.append("结构稿没有给出 slices，控制稿展示全部切片")
-            return known
-        return wanted
+        return compiled.slices
 
     def _states(self, compiled: Compiled) -> dict[str, list[str]]:
         spec = compiled.spec or {}
@@ -308,7 +303,7 @@ class Drafter:
 
     async def verification_stage(self, control: Check) -> Check:
         prompt = P.verification_prompt(self.r.requirement, self.sheet, self._summary(control))
-        await self.ask("v3:verification", prompt, ("verification",))
+        await self.ask("v3:verification", prompt, ("verification",), single="verification")
         check = self.check(verify=True)
         if not check.l1_ok:
             if await self.repair(check, ("verification",), "verification"):

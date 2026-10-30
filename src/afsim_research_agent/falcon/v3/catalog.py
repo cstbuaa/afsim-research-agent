@@ -29,6 +29,46 @@ def slices(contracts: Contracts) -> list[str]:
     return sorted(found)
 
 
+def internal_field(path: str) -> bool:
+    """Interface plumbing of the action contracts (request ids, execution status)."""
+    return ".request." in path or path.startswith("execution.")
+
+
+def closure(contracts: Contracts, wanted: list[str]) -> list[str]:
+    """The slices named plus those their tactic-set entries use (e.g. a formation state
+    tree that runs a perception subtree)."""
+    out = [s for s in wanted]
+    todo = list(out)
+    while todo:
+        sid = todo.pop()
+        for entry in contracts.tactics.values():
+            if entry.slice != sid:
+                continue
+            for ref in _refs(entry.raw):
+                target = contracts.actions.get(ref) or contracts.tactics.get(ref)
+                if target is not None and target.slice not in out:
+                    out.append(target.slice)
+                    todo.append(target.slice)
+    return out
+
+
+def _refs(raw: Any) -> list[str]:
+    found: list[str] = []
+    if isinstance(raw, dict):
+        for key in ("action", "subtree"):
+            if isinstance(raw.get(key), str):
+                found.append(raw[key])
+        if isinstance(raw.get("state_trees"), dict):
+            found += [str(v) for v in raw["state_trees"].values()]
+        for value in raw.values():
+            if isinstance(value, dict | list):
+                found += _refs(value)
+    elif isinstance(raw, list):
+        for item in raw:
+            found += _refs(item)
+    return found
+
+
 def index(contracts: Contracts, classes: set[str] | None = None) -> str:
     """One paragraph per slice: its actions, tactic-set trees and missions (ids only)."""
     lines = []
@@ -130,9 +170,7 @@ def details(contracts: Contracts, wanted: list[str]) -> str:
                 + f"：初始 {m.raw.get('initial_state')}；{trans}"
             )
         fields = sorted(
-            p
-            for p, f in contracts.blackboard.items()
-            if f.slice == sid and ".request." not in p and not p.startswith("execution.")
+            p for p, f in contracts.blackboard.items() if f.slice == sid and not internal_field(p)
         )
         if fields:
             shown = []

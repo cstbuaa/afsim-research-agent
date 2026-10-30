@@ -48,9 +48,12 @@ class ExprError(ValueError):
 
 @dataclass
 class Symbols:
-    fields: set[str]  # blackboard fields (capability set + declared mission.*)
+    fields: set[str]  # blackboard fields the sheet may read (its slices + declared mission.*)
     parameters: set[str]
     conditions: set[str] = field(default_factory=set)
+    enums: dict[str, tuple[str, ...]] = field(default_factory=dict)  # field → allowed strings
+    elsewhere: dict[str, str] = field(default_factory=dict)  # field of another slice → slice
+    internal: set[str] = field(default_factory=set)  # interface plumbing, not tactical state
 
 
 def quantity(value: Any) -> dict[str, Any] | None:
@@ -122,17 +125,21 @@ class ExprCompiler:
                     raise ExprError(f"{call[0]}() 只能写成 {call[0]}(…) >= 时长", self._line(node))
                 parts.append(self._call(call, right))
             else:
-                parts.append(
-                    {
-                        "compare": {
-                            "left": self.operand(left),
-                            "operator": OPS[type(op)],
-                            "right": self.operand(right),
-                        }
-                    }
-                )
+                lhs, rhs = self.operand(left), self.operand(right)
+                self._enum(lhs, rhs, node)
+                self._enum(rhs, lhs, node)
+                parts.append({"compare": {"left": lhs, "operator": OPS[type(op)], "right": rhs}})
             left = right
         return parts[0] if len(parts) == 1 else {"all": parts}
+
+    def _enum(self, a: dict[str, Any], b: dict[str, Any], node: ast.AST) -> None:
+        allowed = self.s.enums.get(str(a.get("bb"))) if "bb" in a else None
+        if allowed and isinstance(b.get("literal"), str) and b["literal"] not in allowed:
+            raise ExprError(
+                f"字段 {a['bb']} 的取值只能是 {', '.join(allowed)}，没有 '{b['literal']}'",
+                self._line(node),
+                list(allowed),
+            )
 
     def _function(self, node: ast.AST) -> tuple[str, list[ast.expr]] | None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
@@ -184,8 +191,20 @@ class ExprCompiler:
         raise ExprError(f"不支持的取值写法：{ast.unparse(node)[:60]}", self._line(node))
 
     def field(self, path: str, node: ast.AST) -> dict[str, Any]:
+        if path in self.s.internal:
+            raise ExprError(
+                f"'{path}' 是动作执行的接口字段（请求编号、执行状态），不能作为战术条件；"
+                "用描述战场状态的字段，或用事件",
+                self._line(node),
+            )
         if path in self.s.fields:
             return {"bb": path}
+        if path in self.s.elsewhere:
+            raise ExprError(
+                f"字段 '{path}' 属于切片 {self.s.elsewhere[path]}，它不在 yaml model 的 slices 中；"
+                "把该切片加入 slices，或改用已选切片的字段",
+                self._line(node),
+            )
         raise ExprError(
             f"'{path}' 不是能力集或本模型声明的黑板字段",
             self._line(node),

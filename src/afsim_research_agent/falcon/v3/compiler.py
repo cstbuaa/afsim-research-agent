@@ -28,6 +28,8 @@ import yaml
 
 from afsim_research_agent.falcon.sheet.blocks import Block, SheetProblem, split_sheet
 from afsim_research_agent.falcon.sheet.mermaid import parse_diagram
+from afsim_research_agent.falcon.v3 import catalog as K
+from afsim_research_agent.falcon.v3.catalog import internal_field
 from afsim_research_agent.falcon.v3.pyexpr import ExprCompiler, ExprError, Symbols, quantity
 from afsim_research_agent.falcon.v3.pytree import TreeSymbols, parse_block
 from afsim_research_agent.ir.diagnostics import Diagnostic
@@ -58,6 +60,7 @@ class Compiled:
     source: dict[str, tuple[str, int]] = field(default_factory=dict)  # IR path → (block, line)
     blocks: dict[str, Block] = field(default_factory=dict)
     implements: dict[str, list[str]] = field(default_factory=dict)
+    slices: list[str] = field(default_factory=list)  # slices the sheet may use (closure)
 
     @property
     def errors(self) -> list[SheetProblem]:
@@ -117,7 +120,9 @@ class SheetCompiler:
         allow_mission_ref: bool = True,
         scenario_parameters: dict[str, dict[str, Any]] | None = None,
         pending_triggers: bool = False,
+        slices: list[str] | None = None,
     ) -> None:
+        self.slices_override = slices
         self.c = contracts
         # structure stage: a bare name in a transition is a condition to be written later
         self.pending_triggers = pending_triggers
@@ -201,9 +206,27 @@ class SheetCompiler:
             glines = _key_lines(self.out.blocks["gaps"])
             for gid in gaps:
                 self.at(f"gaps.{gid}", "gaps", glines.get(str(gid)))
-        fields = set(self.c.blackboard) | set(spec["blackboard"])
+        self.slices = self._slices(model)
+        self.out.slices = list(self.slices)
+        allowed = set(self.slices)
+        fields = {
+            p for p, f in self.c.blackboard.items() if f.slice in allowed and not internal_field(p)
+        } | set(spec["blackboard"])
         cond_names = self._condition_names()
-        self.expr = ExprCompiler(Symbols(fields, set(spec["parameters"]), cond_names))
+        self.expr = ExprCompiler(
+            Symbols(
+                fields,
+                set(spec["parameters"]),
+                cond_names,
+                enums={p: f.enum for p, f in self.c.blackboard.items() if f.enum},
+                elsewhere={
+                    p: str(f.slice)
+                    for p, f in self.c.blackboard.items()
+                    if f.slice not in allowed and not internal_field(p)
+                },
+                internal={p for p in self.c.blackboard if internal_field(p)},
+            )
+        )
         spec["conditions"] = self._conditions()
         roles = self._roles(model.get("roles") or {}, spec)
         spec["roles"] = roles
@@ -233,8 +256,41 @@ class SheetCompiler:
                     )
         if not spec["missions"] and not self.out.errors:
             self.fail("model", None, "没有任何角色的任务状态机")
+        used = {
+            t["on"]
+            for m in spec["missions"].values()
+            if "tactic" not in m
+            for t in m["transitions"] + m["global"]
+        }
+        for e in spec["events"]:
+            if e["id"] not in used and not self.pending_triggers:
+                self.fail(
+                    "model",
+                    self.mlines.get(e["id"]),
+                    f"事件 {e['id']} 没有被任何转换使用：转换写成 `A --> B : {e['id']}`，或删去该事件",
+                )
         self.out.spec = spec
         return self.out
+
+    def _slices(self, model: dict[str, Any]) -> list[str]:
+        known = K.slices(self.c)
+        wanted = self.slices_override
+        if wanted is None:
+            raw = model.get("slices")
+            wanted = [str(x) for x in raw] if isinstance(raw, list) else None
+        if wanted is None:
+            return known
+        for sid in wanted:
+            if sid not in known:
+                self.fail("model", self.mlines.get("slices"), f"'{sid}' 不是能力集的切片", known)
+        chosen = [sid for sid in wanted if sid in known]
+        for role in (model.get("roles") or {}).values():
+            mission = role.get("mission") if isinstance(role, dict) else None
+            ref = mission.get("tactic") if isinstance(mission, dict) else mission
+            entry = self.c.tactics.get(str(ref or ""))
+            if entry is not None and entry.slice not in chosen:
+                chosen.append(entry.slice)
+        return K.closure(self.c, chosen)
 
     # ------------------------------------------------------------------ model block
     def _meta(self, model: dict[str, Any]) -> dict[str, Any]:
@@ -434,7 +490,11 @@ class SheetCompiler:
             except ExprError as exc:
                 self.fail("conditions", line + exc.line_offset, f"{name}: {exc}", exc.candidates)
                 continue
+            if _refers(expr, name):
+                self.fail("conditions", line, f"条件 {name} 引用了它自己")
+                continue
             self.at(f"conditions[{len(out)}]", "conditions", line)
+            self.at(f"conditions.{name}", "conditions", line)
             out.append({"id": name, "expression": expr})
         return out
 
@@ -672,6 +732,16 @@ class SheetCompiler:
             self.at(path, key, first + node["_line"])
         for i, kid in enumerate(node.get("children") or []):
             self._map_nodes(f"{path}.children[{i}]", kid, key, first)
+
+
+def _refers(expr: Any, name: str) -> bool:
+    if isinstance(expr, dict):
+        if expr.get("condition_ref") == name:
+            return True
+        return any(_refers(v, name) for v in expr.values())
+    if isinstance(expr, list):
+        return any(_refers(v, name) for v in expr)
+    return False
 
 
 def _direct_ref(root: dict[str, Any]) -> str | None:
