@@ -329,7 +329,8 @@ class FormationSlots(ActionModel):
     error is within it (as the platform's formation steps do); without it, it keeps
     running. The followers are not simulated vehicles, only their slot errors are; which
     fields receive the error is decided by the contract (a shape whose step writes no
-    error field leaves them as they are)."""
+    error field leaves them as they are); ``keys`` names the generic keys written (default:
+    the left / right slot errors)."""
 
     KEYS = ("formation.left_error", "formation.right_error")
 
@@ -354,7 +355,7 @@ class FormationSlots(ActionModel):
         state["error"] = max(floor, float(state.get("error", floor)) - rate * dt)
         state["at"] = ctx.now
         away = ctx.options.get("away_m")
-        for key in self.KEYS:
+        for key in ctx.options.get("keys") or self.KEYS:
             # ``away_m``: the error fields measure another shape's slots (e.g. the line,
             # while this shape is the column) and the followers are away from them
             ctx.write(key, float(away) if away is not None else state["error"])

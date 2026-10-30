@@ -797,3 +797,12 @@ def test_prompt_shows_field_writers_and_results(set_root: Path) -> None:
     assert "未实现的字段（没有任何动作写入，不能用作条件）：sense.mode（设计中的模式字段）" in text
     assert "结果：运行=未到达；成功=到达" in text
     assert "初值 False" in text
+
+
+def test_step_results_in_conditions_point_to_tree_events(contracts: Contracts) -> None:
+    for wrong in ("nav.goto.result == 1", "tactic('sense.search').result"):
+        bad = SHEET.replace(
+            "stopped = self.speed_mps <= 0.1 and time_in_state() >= 2 * s", f"stopped = {wrong}"
+        )
+        msgs = [p.message for p in _compile(contracts, bad).errors]
+        assert any("source: tree, result: success" in m for m in msgs), msgs

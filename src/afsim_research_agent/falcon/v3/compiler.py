@@ -511,7 +511,8 @@ class SheetCompiler:
                             f"状态 {state} 的{label(cid)}读取 {path}，它只由 "
                             f"{', '.join(f.written_by)} 写入；{state} 的树中没有这些动作"
                             "（或含有它们的子树），该字段在此状态中不会变化。在树中加入相应动作"
-                            "或子树，或改用本状态会更新的字段、计时或树事件",
+                            "或子树，或改用本状态会更新的字段、计时，或用树事件表达"
+                            '"本状态的树完成"（events 中声明 {source: tree, result: success}）',
                         )
 
     def _tree_conditions(self, ref: str | None, subs: dict[str, Any]) -> set[str]:
@@ -775,7 +776,9 @@ class SheetCompiler:
                     (
                         name,
                         line,
-                        f"条件 {name} 是常量；外部请求写成 external 事件，不需要的条件删去",
+                        f"条件 {name} 是常量；外部请求写成 external 事件，"
+                        '"本状态的树完成"写成 tree 事件（{source: tree, result: success}），'
+                        "等一段时间写成 timer 事件，不需要的条件删去",
                         [],
                     )
                 )

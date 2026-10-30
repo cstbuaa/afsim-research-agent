@@ -37,6 +37,12 @@ OPS = {
 }
 _QUANTITY = re.compile(r"^\s*(?P<num>-?\d+(?:\.\d+)?)\s*(?P<unit>[A-Za-z/°_]+)\s*$")
 FUNCTIONS = {"time_in_state": "time_in_state_gte", "elapsed_since": "elapsed_since_gte"}
+# how to say "the state's tree (or a step in it) has finished" — not a field or a condition
+TREE_EVENT_HINT = (
+    '。条件里不能读动作或子树的结果；要表达"本状态的树完成（成功 / 失败）"，在 yaml model 的 '
+    "events 中声明树事件，如 `column_done: {source: tree, result: success}`，并在状态图中用它作转换；"
+    "要表达某个量到位，读写入它的字段"
+)
 
 
 class ExprError(ValueError):
@@ -112,7 +118,11 @@ class ExprCompiler:
         path = dotted(node)
         if path is not None:
             return self.field(path, node)
-        raise ExprError(f"不支持的条件写法：{ast.unparse(node)[:60]}", self._line(node))
+        text = ast.unparse(node)
+        hint = (
+            TREE_EVENT_HINT if re.search(r"\.(result|status|done|success)\b|tactic\(", text) else ""
+        )
+        raise ExprError(f"不支持的条件写法：{text[:60]}{hint}", self._line(node))
 
     def compare(self, node: ast.Compare) -> dict[str, Any]:
         parts = []
@@ -195,7 +205,11 @@ class ExprCompiler:
         path = dotted(node)
         if path is not None:
             return self.field(path, node)
-        raise ExprError(f"不支持的取值写法：{ast.unparse(node)[:60]}", self._line(node))
+        text = ast.unparse(node)
+        hint = (
+            TREE_EVENT_HINT if re.search(r"\.(result|status|done|success)\b|tactic\(", text) else ""
+        )
+        raise ExprError(f"不支持的取值写法：{text[:60]}{hint}", self._line(node))
 
     def field(self, path: str, node: ast.AST) -> dict[str, Any]:
         if path in self.s.internal:
@@ -212,8 +226,13 @@ class ExprCompiler:
                 "把该切片加入 slices，或改用已选切片的字段",
                 self._line(node),
             )
+        hint = (
+            TREE_EVENT_HINT
+            if re.search(r"\.(result|status|done|success|complete|finished)$", path)
+            else ""
+        )
         raise ExprError(
-            f"'{path}' 不是能力集或本模型声明的黑板字段",
+            f"'{path}' 不是能力集或本模型声明的黑板字段{hint}",
             self._line(node),
             difflib.get_close_matches(path, sorted(self.s.fields), n=5, cutoff=0.5),
         )
