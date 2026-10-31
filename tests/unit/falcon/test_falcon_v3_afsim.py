@@ -188,3 +188,25 @@ def test_infrastructure_failures_get_no_repair_round(
     _, history = asyncio.run(D._afsim_rounds(drafter, drafter.run, check, [], cfg, tmp_path))
     assert len(history.rounds) == 1 and not history.passed
     assert any("基础设施" in n for n in drafter.notes)
+
+
+def test_loop_feedback_names_the_transitions() -> None:
+    from afsim_research_agent.ir.v2.afsim.evaluate import judge
+
+    console = (
+        "IR_STATE|0|blue_m1|WAITING_TASK\n"
+        "IR_STATE|1|blue_m1|ENGAGING\nIR_STATE|1|blue_m1|REATTACKING\n"
+        "IR_STATE|1|blue_m1|ENGAGING\nIR_LOOP|1|blue_m1|ENGAGING\n"
+    )
+    j = judge(_run().model_dump(), console, None)
+    loop = next(i for i in j.issues if i.code == "IR_LOOP")
+    assert loop.data["chain"] == ["ENGAGING", "REATTACKING", "ENGAGING"]
+    mission = {
+        "transitions": [
+            {"from": "ENGAGING", "to": "REATTACKING", "on": "fired"},
+            {"from": "REATTACKING", "to": "ENGAGING", "on": "reattack_allowed"},
+        ],
+        "global": [],
+    }
+    text = feedback([j], [_run()], None, {"member": mission})
+    assert "ENGAGING -(fired)-> REATTACKING -(reattack_allowed)-> ENGAGING" in text

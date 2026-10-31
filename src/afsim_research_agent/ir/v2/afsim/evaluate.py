@@ -318,10 +318,14 @@ def judge(
         return j
     if not j.completed and not j.errors:
         j.add(Issue("NOT_COMPLETED", RUN))
-    loops = sorted(set(re.findall(r"IR_LOOP\|[^|]+\|([^|]+)\|([^\r\n]+)", console)))
-    for platform, state in loops[:5]:
-        j.add(Issue("IR_LOOP", MODEL, platform, {"state": state.strip()}))
     j.states = parse_states(console)
+    first_loop: dict[tuple[str, str], float] = {}
+    for t, platform, state in re.findall(r"IR_LOOP\|([^|]+)\|([^|]+)\|([^\r\n]+)", console):
+        first_loop.setdefault((platform, state.strip()), float(t))
+    for (platform, state), t in sorted(first_loop.items())[:5]:
+        # the states entered in that update: the path the transitions kept taking
+        chain = [s for ts, s in j.states.get(platform, []) if ts == t][:12]
+        j.add(Issue("IR_LOOP", MODEL, platform, {"state": state, "t": t, "chain": chain}))
     names = [p["name"] for p in run["platforms"]]
     if j.completed and not j.errors:
         if not any(n in j.states for n in names):

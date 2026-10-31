@@ -1074,7 +1074,11 @@ async def _afsim_rounds(
             run_once, check.model or {}, drafter.c, obligations, cfg, out
         )
         passed = error is None and bool(results) and all(r.passed for r in results or [])
-        text = "" if passed else feedback(results, runs, error)
+        missions = {
+            rid: role.get("mission")
+            for rid, role in ((check.model or {}).get("roles") or {}).items()
+        }
+        text = "" if passed else feedback(results, runs, error, missions)
         local = error or "\n".join(r.render() for r in results or [])
         history.rounds.append(AfsimRound(index, passed, text, local, out))
         drafter.notes.append(f"AFSIM 第 {index + 1} 次运行：{'通过' if passed else '未通过'}")

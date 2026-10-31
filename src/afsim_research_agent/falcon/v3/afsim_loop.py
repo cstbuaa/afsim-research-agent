@@ -84,7 +84,10 @@ def run_once(
 
 
 def feedback(
-    results: list[RunJudgement] | None, runs: list[RunConfig], compile_error: str | None
+    results: list[RunJudgement] | None,
+    runs: list[RunConfig],
+    compile_error: str | None,
+    missions: dict[str, Any] | None = None,  # role → mission (to name looping transitions)
 ) -> str:
     """What a failed AFSIM round tells the repair loop (sanitized, see the module doc)."""
     if compile_error is not None:
@@ -125,11 +128,33 @@ def feedback(
                     + (f"，击毁 {e['kills']}" if e["kills"] else "")
                 )
         issues = list(getattr(res, "issues", []) or [])
+        roles = {p.name: p.role for p in run.platforms}
         for issue in issues:
-            lines.append("  问题：" + _issue(issue, labels, targets, anon))
+            line = "  问题：" + _issue(issue, labels, targets, anon)
+            if issue.code == "IR_LOOP" and missions:
+                path = _loop_path(
+                    issue.data.get("chain") or [], missions.get(roles.get(issue.platform or "", ""))
+                )
+                if path:
+                    line += f"。这一拍的路径：{path}——这些转换条件在进入各状态时已经同时成立"
+            lines.append(line)
         if not issues and (not res.completed or res.errors):
             lines.append("  问题：AFSIM 没有完成仿真（细节只在本地记录）")
     return "\n".join(lines)
+
+
+def _loop_path(chain: list[str], mission: Any) -> str:
+    """A -(condition)-> B -(condition)-> ... for the states entered in one update."""
+    if not chain or not isinstance(mission, dict):
+        return ""
+    trans = list(mission.get("transitions") or []) + [
+        {"from": "*", **g} for g in mission.get("global") or []
+    ]
+    out = [chain[0]]
+    for a, b in zip(chain, chain[1:], strict=False):
+        on = next((t["on"] for t in trans if t["from"] in (a, "*") and t["to"] == b), "?")
+        out.append(f"-({on})-> {b}")
+    return " ".join(out)
 
 
 def _issue(issue: Any, labels: dict[str, str], targets: dict[str, str], anon: Any) -> str:
