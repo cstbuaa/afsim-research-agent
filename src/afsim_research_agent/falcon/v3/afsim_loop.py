@@ -88,6 +88,7 @@ def feedback(
     runs: list[RunConfig],
     compile_error: str | None,
     missions: dict[str, Any] | None = None,  # role → mission (to name looping transitions)
+    failure_meanings: dict[str, str] | None = None,  # action id → contract's failure meaning
 ) -> str:
     """What a failed AFSIM round tells the repair loop (sanitized, see the module doc)."""
     if compile_error is not None:
@@ -133,9 +134,13 @@ def feedback(
             for action, f in acts.items():
                 # a code the capability set states; anything else is a native string
                 code = f["code"] if f.get("known") else "代码只在本地记录"
+                meaning = (failure_meanings or {}).get(action)
                 lines.append(
                     f"  {labels[name]} 动作失败：{action}（{code}；{f['count']} 次，"
                     f"首次 {f['first_s']:g} s）"
+                    # what the capability set says a failure means: often an input an
+                    # earlier step should have produced (no candidate passed the filter)
+                    + (f"；能力集对失败的说明：{meaning}" if meaning else "")
                 )
         issues = list(getattr(res, "issues", []) or [])
         roles = {p.name: p.role for p in run.platforms}

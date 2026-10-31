@@ -239,3 +239,7 @@ def test_action_failures_reach_the_feedback_with_stated_codes_only() -> None:
         and "member_1 动作失败：engagement.aim_selected_weapon（代码只在本地记录" in text
     )
     assert "member_0 交战：开火 0 次，命中 0 次" in text  # shots counted even when none
+    text = feedback(
+        [j], [_run()], None, failure_meanings={"engagement.fire_selected_weapon": "没有就绪武器"}
+    )
+    assert "首次 3 s）；能力集对失败的说明：没有就绪武器" in text
