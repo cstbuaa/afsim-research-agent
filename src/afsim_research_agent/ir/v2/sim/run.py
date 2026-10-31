@@ -317,7 +317,25 @@ def simulate(model: dict[str, Any], contracts: Contracts, raw: dict[str, Any]) -
     result.duration_s = env.duration_s
     result.dropped = set(host.dropped)
     result.checks = [_check(e, result) for e in sc.expect]
+    known = {k for inst in instances for k, v in inst.events.items() if _external(v)}
+    for name in dict.fromkeys(ev.event for ev in sc.events):
+        if not any(_event_name(inst, name) in inst.events for inst in instances):
+            # an event the model does not have does nothing: the scenario only seems to
+            # test the branch it was meant to trigger
+            result.checks.append(
+                Check(
+                    f"event:{name}",
+                    False,
+                    f"scenario event {name} is not an event of the model (external events: "
+                    f"{sorted(known) or 'none'}); a lost target, a failed sensor or a stopped "
+                    "vehicle is made with faults or a hostile's remove_s, not with an event",
+                )
+            )
     return result
+
+
+def _external(event: Any) -> bool:
+    return not isinstance(event, dict) or event.get("source") in (None, "external")
 
 
 def _event_name(inst: Instance, name: str) -> str:

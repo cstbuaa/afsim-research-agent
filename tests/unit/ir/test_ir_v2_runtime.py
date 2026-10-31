@@ -817,3 +817,12 @@ def test_visits_in_order_checks_a_subsequence(contracts: Contracts) -> None:
     checks = {c.id: c for c in result.checks}
     assert not checks["pair"].passed and "visits_in_order" in checks["pair"].detail
     assert checks["order"].passed and not checks["wrong"].passed
+
+
+def test_a_scenario_event_the_model_lacks_fails(contracts: Contracts) -> None:
+    spec = _spec()
+    sc = spec["scenarios"][0]
+    sc["events"] = [{"at_s": 3, "event": "go"}, {"at_s": 9, "event": "target_lost_simulated"}]
+    result = simulate(normalize(spec, contracts).model, contracts, sc)
+    bad = [c for c in result.checks if not c.passed]
+    assert [c.id for c in bad] == ["event:target_lost_simulated"] and "faults" in bad[0].detail
