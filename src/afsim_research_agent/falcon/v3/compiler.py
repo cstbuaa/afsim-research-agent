@@ -507,9 +507,11 @@ class SheetCompiler:
                     for path in sorted(fields(cid)):
                         f = self.c.blackboard.get(path)
                         if (
+                            # (also for fields a callback refreshes: the callback may serve
+                            # another role, e.g. a follower's received broadcast, while this
+                            # role's tree only clears the field)
                             f is not None
                             and f.written_by
-                            and f.updated not in STATIC_UPDATES
                             and path not in gap_writes
                             and (state, cid, path) not in reported
                             and path in _wanted_true(exprs.get(cid))

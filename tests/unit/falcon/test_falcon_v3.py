@@ -1055,6 +1055,8 @@ def test_a_state_waiting_for_true_needs_a_writer_that_can_set_it(set_root: Path)
     sense["actions"][0]["writes"] = [
         {"field": "sense.target.valid", "updated": "while_running", "only": False}
     ]
+    # a callback refreshes the field too (for another role): still refused here
+    sense["blackboard"]["fields"]["sense.target.valid"]["updated"] = "always"
     _w(set_root, "action_set/sense.yaml", sense)
     contracts = Contracts.load(set_root)
     msgs = [p.message for p in _compile(contracts).errors]
