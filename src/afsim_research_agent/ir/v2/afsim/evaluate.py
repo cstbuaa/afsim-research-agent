@@ -304,13 +304,18 @@ def judge(
     )
     j = RunJudgement(run=run["id"], completed=done)
     j.errors = [m.group(0) for m in ERRORS.finditer(console)]
-    for err in parse_errors(console):
+    errs = parse_errors(console)
+    for err in errs:
         pos = where(err) if where else {}
         # input errors come from the generated files and the lab files the binding names:
         # the compiler or the binding is wrong, not the drafted sheet; a runtime error inside
         # a state's node may come from the values the model gave
         source = MODEL if err["stage"] == "runtime" and pos.get("state") else INFRASTRUCTURE
         j.add(Issue("AFSIM_ERROR", source, None, {**err, **pos}))
+    if any(e["stage"] == "input" for e in errs):
+        # the input was refused: nothing ran, so markers, sequences and obligations would
+        # only repeat that
+        return j
     if not j.completed and not j.errors:
         j.add(Issue("NOT_COMPLETED", RUN))
     loops = sorted(set(re.findall(r"IR_LOOP\|[^|]+\|([^|]+)\|([^\r\n]+)", console)))

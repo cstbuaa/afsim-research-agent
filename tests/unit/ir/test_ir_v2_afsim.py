@@ -639,8 +639,9 @@ def test_input_errors_are_placed_and_belong_to_the_infrastructure() -> None:
     assert (
         locate(dict(err, file="lab/model/x.txt"), "ir_demo_behavior.txt", BEHAVIOR, manifest) == {}
     )
-    j = judge(_member_run(), INPUT_ERROR, None, where=lambda e: pos)
+    j = judge(_member_run(markers=["WEAPON_HIT"]), INPUT_ERROR, None, where=lambda e: pos)
     assert not j.passed and j.infrastructure
+    assert [i.code for i in j.issues] == ["AFSIM_ERROR"]  # nothing ran: no follow-on findings
     assert j.issues[0].code == "AFSIM_ERROR" and j.issues[0].source == INFRASTRUCTURE
 
 
