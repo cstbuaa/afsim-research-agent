@@ -729,7 +729,8 @@ def test_fix_tools_avoid_rereading_and_diagnose_skipped_states(contracts: Contra
 
     fixer = SheetFixer(_fix_drafter(contracts, SHEET.replace("nav.hold()", "nav.hodl()")))
     assert "def OBSERVE" in fixer.show("pytree:scout")
-    assert "没有改动" in fixer.show("pytree:scout")
+    again = fixer.show("pytree:scout")  # shown again (the earlier step may be out of view)
+    assert "def OBSERVE" in again and "没有变化" in again and "edit" in again
     summary = fixer.summary()
     assert ">| " in summary and "nav.hodl()" in summary  # the failing line is shown in place
     scenario = {
@@ -741,6 +742,8 @@ def test_fix_tools_avoid_rereading_and_diagnose_skipped_states(contracts: Contra
         }
     }
     assert "进入 B 后同一拍就因 ready 离开" in _skipped(scenario)[0]
+    hint = _skipped(scenario, {"ready": '{"bb": "x"}'})[0]
+    assert 'conditions 块里 ready = {"bb": "x"}' in hint
 
 
 def test_fix_loop_stops_reading_and_cannot_write_the_verification_block(

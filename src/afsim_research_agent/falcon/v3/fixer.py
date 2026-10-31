@@ -195,7 +195,7 @@ class SheetFixer:
                 if not s["passed"]:
                     keep = 24 if s.get("afsim") else 6
                     lines += ["    " + x for x in s["render"].splitlines()[1:keep]]
-                    lines += ["    " + x for x in _skipped(s)]
+                    lines += ["    " + x for x in _skipped(s, self._conditions())]
             for key, line in self.d._stuck(check)[:4]:
                 lines.append(f"提示（{key}）：{line[2:]}")
             if not check.l2 and not check.l3 and not self.l1_only:
@@ -205,6 +205,15 @@ class SheetFixer:
         elif self.solved:
             lines.append("全部检查通过，可以 finish。")
         return "\n".join(lines)
+
+    def _conditions(self) -> dict[str, str]:
+        """Condition id → its expression, compact (for diagnostics)."""
+        spec = self.last.compiled.spec if getattr(self.last, "compiled", None) else None
+        out = {}
+        for c in (spec or {}).get("conditions") or []:
+            if isinstance(c, dict) and c.get("id"):
+                out[str(c["id"])] = _clip(json.dumps(c.get("expression"), ensure_ascii=False), 240)
+        return out
 
     def _block(self, key: str) -> Block | None:
         return next((b for b in self.d.blocks if b.key == key), None)
@@ -235,25 +244,30 @@ class SheetFixer:
         block = self._block(key)
         if block is None:
             return f"没有块 {key}；现有：{', '.join(b.key for b in self.d.blocks)}"
-        if self.reads >= MAX_READS:
-            return (
-                f"已经连续查看 {self.reads} 次而没有修改。问题和出错行已在检查结果里给出：请直接 edit；"
-                "认为问题出在测试或仿真本身、而不是模型时，用 ask_human 说明"
-            )
+        # the content is always shown again: a pointer to an earlier step ("see step 1")
+        # left a model that had lost that step from its history re-reading the same lines
+        # until the loop ran out (formation batch 10)
+        note = ""
         seen = self.shown.get((key, start, end))
         if seen is not None and seen[0] == block.text:
-            return (
-                f"块 {key} 自第 {seen[1]} 步查看以来没有改动，内容见那一步的结果；"
-                "需要改就直接 edit（old 写原文片段），或 explain 某个问题"
+            note = (
+                f"\n（与第 {seen[1]} 步看到的相同，战术稿没有变化。下一步请用 edit 修改"
+                "（old 抄上面的原文片段），或用 ask_human 说明为什么不该改模型）"
             )
-        self.shown[(key, start, end)] = (block.text, self.step)
+        elif self.reads >= MAX_READS:
+            note = (
+                f"\n（已经连续查看 {self.reads} 次而没有修改。问题和出错行已在检查结果里给出："
+                "下一步请直接 edit；认为问题出在测试或仿真本身时用 ask_human 说明）"
+            )
+        else:
+            self.shown[(key, start, end)] = (block.text, self.step)
         rows = block.numbered().splitlines()
         first = block.line
         lo = int(start) - first if isinstance(start, int) else 0
         hi = int(end) - first + 1 if isinstance(end, int) else lo + SHOW_LINES
         part = rows[max(0, lo) : max(lo + 1, hi)]
         more = "" if hi >= len(rows) else f"\n（还有 {len(rows) - hi} 行，用 start/end 查看）"
-        return f"```{block.label}\n" + "\n".join(part) + "\n```" + more
+        return f"```{block.label}\n" + "\n".join(part) + "\n```" + more + note
 
     def lookup(self, ref: str) -> str:
         c = self.d.c
@@ -495,15 +509,19 @@ class SheetFixer:
         return self.last
 
 
-def _skipped(scenario: dict[str, Any]) -> list[str]:
+def _skipped(scenario: dict[str, Any], conditions: dict[str, str] | None = None) -> list[str]:
     """States entered and left in the same update: the leaving trigger already held."""
     out = []
     for name, moves in (scenario.get("transitions") or {}).items():
         for a, b in zip(moves, moves[1:], strict=False):
             if a["t"] == b["t"] and a["to"] == b["from"]:
+                expr = (conditions or {}).get(str(b["on"]))
                 out.append(
                     f"诊断：{name} 在 {a['t']:g} s 进入 {a['to']} 后同一拍就因 {b['on']} 离开，"
-                    f"即进入 {a['to']} 时 {b['on']} 已成立；检查它读的字段在这一刻的值"
+                    f"即进入 {a['to']} 时 {b['on']} 已成立"
+                    + (f"（conditions 块里 {b['on']} = {expr}）" if expr else "")
+                    + f"；{a['to']} 的树还没做完就离开了。改 conditions 块里这个条件，让它只在"
+                    f" {a['to']} 的工作完成后成立（或改用树的结果）"
                 )
     return out[:4]
 

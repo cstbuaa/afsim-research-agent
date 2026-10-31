@@ -803,3 +803,17 @@ def test_reaches_within_counts_from_an_event(contracts: Contracts) -> None:
     assert not checks["from_start"].passed and "after_event" in checks["from_start"].detail
     assert checks["from_go"].passed, checks["from_go"].detail
     assert not checks["no_event"].passed and "not raised" in checks["no_event"].detail
+
+
+def test_visits_in_order_checks_a_subsequence(contracts: Contracts) -> None:
+    spec = _spec()
+    sc = spec["scenarios"][0]
+    sc["expect"] = [
+        {"id": "pair", "role": "car", "state_sequence": ["DRIVE", "SHUTDOWN"]},
+        {"id": "order", "role": "car", "visits_in_order": ["WAIT", "SHUTDOWN"]},
+        {"id": "wrong", "role": "car", "visits_in_order": ["SHUTDOWN", "DRIVE"]},
+    ]
+    result = simulate(normalize(spec, contracts).model, contracts, sc)
+    checks = {c.id: c for c in result.checks}
+    assert not checks["pair"].passed and "visits_in_order" in checks["pair"].detail
+    assert checks["order"].passed and not checks["wrong"].passed

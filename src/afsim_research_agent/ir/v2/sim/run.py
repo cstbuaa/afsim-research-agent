@@ -85,6 +85,8 @@ class Expectation(_Strict):
     role: str
     instance: int = 0
     state_sequence: list[str] | None = None  # visited states, consecutive duplicates removed
+    visits_in_order: list[str] | None = None  # these states visited in this order (others may
+    # come between)
     final_state: str | None = None
     reaches: str | None = None
     within_s: float | None = None  # counted from the start, or from after_event
@@ -326,6 +328,12 @@ def _event_name(inst: Instance, name: str) -> str:
     return slug if slug in inst.events else name
 
 
+def _in_order(visited: list[str], wanted: list[str]) -> bool:
+    """``wanted`` is a subsequence of ``visited``."""
+    it = iter(visited)
+    return all(any(v == w for v in it) for w in wanted)
+
+
 def _check(e: Expectation, result: SimResult) -> Check:
     name = f"{e.role}_{e.instance}"
     seq = result.states.get(name)
@@ -334,7 +342,15 @@ def _check(e: Expectation, result: SimResult) -> Check:
     visited = [s for _, s in seq]
     problems = []
     if e.state_sequence is not None and visited != e.state_sequence:
-        problems.append(f"visited {visited}, expected {e.state_sequence}")
+        hint = (
+            " (state_sequence is the whole visit sequence; to check only that these states "
+            "come in this order write visits_in_order)"
+            if _in_order(visited, e.state_sequence)
+            else ""
+        )
+        problems.append(f"visited {visited}, expected {e.state_sequence}{hint}")
+    if e.visits_in_order is not None and not _in_order(visited, e.visits_in_order):
+        problems.append(f"visited {visited}, expected in this order {e.visits_in_order}")
     if e.final_state is not None and visited[-1] != e.final_state:
         problems.append(f"ended in {visited[-1]}, expected {e.final_state}")
     if e.reaches is not None:
