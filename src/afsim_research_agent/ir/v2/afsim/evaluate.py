@@ -117,6 +117,9 @@ class RunJudgement:
     caveats: list[str] = field(default_factory=list)  # findings of switched-off rules
     # platform → {"fired": n, "hits": n, "kills": n, "targets": {target: hits}}
     engagements: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # platform → action → {"code": code, "known": stated in the capability set, "count": n,
+    # "first_s": t}: actions that failed (IR_FAIL, first failure per state entry)
+    failures: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
 
     def add(self, issue: Issue, rules: dict[str, bool] | None = None, rule: str = "") -> None:
         if rule and not {**RULES, **(rules or {})}.get(rule, True):
@@ -295,6 +298,7 @@ def judge(
     events_text: str | None = None,  # the run's event_output file
     where: Any = None,  # error → {role, state, action} (see locate)
     log_text: str | None = None,  # mission's own log file (log_file output/$(CASE).log)
+    failure_codes: dict[str, list[str]] | None = None,  # action → codes the capability set states
 ) -> RunJudgement:
     expect = run.get("expect") or {}
     rules = dict(expect.get("rules") or {})
@@ -319,6 +323,15 @@ def judge(
     if not j.completed and not j.errors:
         j.add(Issue("NOT_COMPLETED", RUN))
     j.states = parse_states(console)
+    for t, platform, action, status in re.findall(
+        r"^IR_FAIL\|([^|]+)\|([^|]+)\|([^|]+)\|([^\r\n]*)", console, re.M
+    ):
+        code = status.split(":", 1)[1].strip() if ":" in status else status.strip()
+        known = code in set((failure_codes or {}).get(action, []))
+        rec = j.failures.setdefault(platform, {}).setdefault(
+            action, {"code": code, "known": known, "count": 0, "first_s": float(t)}
+        )
+        rec["count"] += 1
     first_loop: dict[tuple[str, str], float] = {}
     for t, platform, state in re.findall(r"IR_LOOP\|([^|]+)\|([^|]+)\|([^\r\n]+)", console):
         first_loop.setdefault((platform, state.strip()), float(t))
@@ -536,6 +549,7 @@ def _judge_saved(package: Path, run: dict[str, Any], console: str) -> RunJudgeme
         event_actions=manifest.get("event_actions"),
         events_text=text(out / f"{case}.evt"),
         log_text=text(out / f"{case}.log"),
+        failure_codes=manifest.get("failure_codes"),
         where=(lambda e: locate(e, behavior_file, behavior_text or "", manifest))
         if behavior_text
         else None,

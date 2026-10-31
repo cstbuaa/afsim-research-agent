@@ -14,7 +14,8 @@ Conventions of the generated input (all names start with ``ir_`` / ``IR_``):
   run the initial state's ``on_entry``);
 - every ``on_entry`` writes ``IR_STATE|<time>|<platform>|<state>`` for the evaluator, and
   the first execution of each action leaf in a state writes ``IR_ACT|<time>|<platform>|<action>``
-  (requirement obligations are judged on these);
+  (requirement obligations are judged on these) and its first failure
+  ``IR_FAIL|<time>|<platform>|<action>|FAILURE:<code>``;
 - every run writes an event-pipe recording ``output/<run>.aer`` for replay in mystic
   (``record = false`` in the run config turns it off) and, unless the run configures its own,
   an event log ``output/<run>.evt`` with the standard platform and weapon events the judge
@@ -226,6 +227,15 @@ class Compiler:
             "obligations": list(obligations or []),
             "role_actions": {r: sorted(a) for r, a in sorted(self.role_actions.items())},
             "nodes": dict(sorted(self.nodes.items())),
+            # the failure codes the capability set states for each action the model runs
+            # (feedback names a code only when it is one of these)
+            "failure_codes": {
+                a: list(self.c.actions[a].failure_codes)
+                for a in sorted(
+                    set().union(*self.role_actions.values()) if self.role_actions else []
+                )
+                if a in self.c.actions
+            },
             "processors": dict(sorted(self.processors.items())),
             # role → external event → actions of the states the event leads to (and after)
             "event_actions": {
@@ -333,6 +343,11 @@ class Compiler:
         ]
         # the evaluator's action starts (IR_ACT) are reported once per state entry
         entry += [f'PLATFORM.SetAuxData("{leaf.name}_act", false);' for leaf in st.leaves]
+        entry += [
+            f'PLATFORM.SetAuxData("{leaf.name}_fail", false);'
+            for leaf in st.leaves
+            if leaf.kind == "script"
+        ]
         seen: list[str] = []
         for leaf in st.leaves:
             if leaf.enter.strip() and leaf.enter not in seen:
@@ -757,6 +772,11 @@ class Compiler:
                 *_activation(name, action),
                 f"      string st = {func}(PLATFORM);",
                 f'      PLATFORM.SetAuxData("{name}_run", st == "RUNNING");',
+                # the first failure after the state was entered, with its code (IR_FAIL)
+                '      if (st != "SUCCESS" && st != "RUNNING" && '
+                f'!PLATFORM.AuxDataBool("{name}_fail"))',
+                f'      {{ PLATFORM.SetAuxData("{name}_fail", true); '
+                f'writeln("IR_FAIL|", TIME_NOW, "|", PLATFORM.Name(), "|{action}|", st); }}',
                 '      if (st == "SUCCESS") { return Success(); }',
                 f'      if (st == "RUNNING") {{ return Running("{action}"); }}',
                 "      return Failure(st);",

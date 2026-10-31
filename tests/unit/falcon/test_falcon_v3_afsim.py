@@ -210,3 +210,32 @@ def test_loop_feedback_names_the_transitions() -> None:
     }
     text = feedback([j], [_run()], None, {"member": mission})
     assert "ENGAGING -(fired)-> REATTACKING -(reattack_allowed)-> ENGAGING" in text
+
+
+def test_action_failures_reach_the_feedback_with_stated_codes_only() -> None:
+    from afsim_research_agent.ir.v2.afsim.evaluate import judge
+
+    console = (
+        "IR_STATE|0|blue_m1|FIRING\n"
+        "IR_FAIL|3|blue_m1|engagement.fire_selected_weapon|FAILURE:NO_READY_WEAPON\n"
+        "IR_FAIL|5|blue_m1|engagement.fire_selected_weapon|FAILURE:NO_READY_WEAPON\n"
+        "IR_FAIL|4|blue_m2|engagement.aim_selected_weapon|FAILURE:NATIVE_SECRET_CODE\n"
+    )
+    j = judge(
+        _run().model_dump(),
+        console,
+        None,
+        failure_codes={"engagement.fire_selected_weapon": ["NO_READY_WEAPON"]},
+        events_text="",
+    )
+    assert j.failures["blue_m1"]["engagement.fire_selected_weapon"]["count"] == 2
+    text = feedback([j], [_run()], None)
+    assert (
+        "member_0 动作失败：engagement.fire_selected_weapon（NO_READY_WEAPON；2 次，首次 3 s）"
+        in text
+    )
+    assert (
+        "NATIVE_SECRET" not in text
+        and "member_1 动作失败：engagement.aim_selected_weapon（代码只在本地记录" in text
+    )
+    assert "member_0 交战：开火 0 次，命中 0 次" in text  # shots counted even when none

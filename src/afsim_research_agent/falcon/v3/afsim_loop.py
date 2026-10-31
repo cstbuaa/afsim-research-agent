@@ -120,12 +120,22 @@ def feedback(
             more = f" …（共 {len(seq)} 次进入）" if len(seq) > 40 else ""
             lines.append(f"  {labels[name]} 状态轨迹：{path}{more}")
         for name, e in res.engagements.items():
-            if name in labels and (e["fired"] or e["hits"]):
+            if name in labels:
                 hit = "，".join(f"{targets.get(t, t)} {n} 次" for t, n in e["targets"].items())
                 lines.append(
                     f"  {labels[name]} 交战：开火 {e['fired']} 次，命中 {e['hits']} 次"
                     + (f"（{hit}）" if hit else "")
                     + (f"，击毁 {e['kills']}" if e["kills"] else "")
+                )
+        for name, acts in (getattr(res, "failures", {}) or {}).items():
+            if name not in labels:
+                continue
+            for action, f in acts.items():
+                # a code the capability set states; anything else is a native string
+                code = f["code"] if f.get("known") else "代码只在本地记录"
+                lines.append(
+                    f"  {labels[name]} 动作失败：{action}（{code}；{f['count']} 次，"
+                    f"首次 {f['first_s']:g} s）"
                 )
         issues = list(getattr(res, "issues", []) or [])
         roles = {p.name: p.role for p in run.platforms}
