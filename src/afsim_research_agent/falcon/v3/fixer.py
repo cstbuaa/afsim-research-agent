@@ -196,6 +196,8 @@ class SheetFixer:
                     keep = 24 if s.get("afsim") else 6
                     lines += ["    " + x for x in s["render"].splitlines()[1:keep]]
                     lines += ["    " + x for x in _skipped(s, self._conditions())]
+                    spec = self.last.compiled.spec if getattr(self.last, "compiled", None) else None
+                    lines += ["    " + x for x in _never_entered(s, spec or {})]
             for key, line in self.d._stuck(check)[:4]:
                 lines.append(f"提示（{key}）：{line[2:]}")
             if not check.l2 and not check.l3 and not self.l1_only:
@@ -528,6 +530,66 @@ def _skipped(scenario: dict[str, Any], conditions: dict[str, str] | None = None)
                     f" {a['to']} 的工作完成后成立（或改用树的结果）"
                 )
     return out[:4]
+
+
+def _never_entered(entry: dict[str, Any], spec: dict[str, Any]) -> list[str]:
+    """States a scenario expects but the run never entered: how they are entered, and what
+    in the scenario could make that happen (a scenario without a fault, a removed hostile or
+    an event cannot test a loss or a recovery branch)."""
+    scenario = next(
+        (
+            x
+            for x in spec.get("scenarios") or []
+            if isinstance(x, dict) and x.get("id") == entry.get("id")
+        ),
+        None,
+    )
+    if scenario is None:
+        return []
+    out = []
+    for e in scenario.get("expect") or []:
+        if not isinstance(e, dict):
+            continue
+        role, inst = e.get("role"), int(e.get("instance") or 0)
+        visited = [s for _, s in (entry.get("states") or {}).get(f"{role}_{inst}", [])]
+        wanted = list(e.get("state_sequence") or e.get("visits_in_order") or [])
+        wanted += [e["reaches"]] if e.get("reaches") else []
+        mission = (spec.get("missions") or {}).get(role) or {}
+        for state in dict.fromkeys(w for w in wanted if w not in visited):
+            ways = [
+                f"{t.get('from')} -({t.get('on')})-> {state}"
+                for t in mission.get("transitions") or []
+                if t.get("to") == state
+            ] + [
+                f"任意状态 -({g.get('on')})-> {state}"
+                for g in mission.get("global") or []
+                if g.get("to") == state
+            ]
+            stimuli = []
+            faults = scenario.get("faults") or []
+            stimuli.append(
+                "faults："
+                + (
+                    "，".join(
+                        f"{f.get('at_s')} s {', '.join(k for k in f if k not in ('at_s', 'role', 'instance'))}"
+                        for f in faults
+                    )
+                    or "无"
+                )
+            )
+            removed = [
+                h.get("id") for h in scenario.get("hostiles") or [] if h.get("remove_s") is not None
+            ]
+            stimuli.append("移除的敌方：" + ("，".join(map(str, removed)) or "无"))
+            events = [f"{ev.get('event')}@{ev.get('at_s')}" for ev in scenario.get("events") or []]
+            stimuli.append("外部事件：" + ("，".join(events) or "无"))
+            out.append(
+                f"诊断：想定期望 {role} 进入 {state}，但从未进入；进入它的转换："
+                f"{'；'.join(ways) or '无'}。这个想定里的外部刺激：{'；'.join(stimuli)}。"
+                "若这一支需要测试，在想定中制造让该转换成立的情况（如 faults 关传感器、"
+                "敌方 remove_s、事件）；若是模型漏了转换，就改模型"
+            )
+    return out[:3]
 
 
 def _strip_fence(text: str) -> str:

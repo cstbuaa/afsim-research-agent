@@ -1024,3 +1024,25 @@ def test_negated_timer_transition_is_refused(set_root: Path) -> None:
     )
     msgs = [p.message for p in _compile(contracts, sheet).errors]
     assert any("立即转出" in m for m in msgs), msgs
+
+
+def test_never_entered_states_are_explained_with_the_scenario_stimuli() -> None:
+    from afsim_research_agent.falcon.v3.fixer import _never_entered
+
+    spec = {
+        "missions": {
+            "car": {"transitions": [{"from": "TRACK", "to": "LOST", "on": "target_lost"}]}
+        },
+        "scenarios": [
+            {
+                "id": "s1",
+                "hostiles": [{"id": "h1"}],
+                "events": [{"at_s": 50, "event": "cancelled"}],
+                "expect": [{"id": "e", "role": "car", "visits_in_order": ["TRACK", "LOST"]}],
+            }
+        ],
+    }
+    entry = {"id": "s1", "states": {"car_0": [[0, "TRACK"]]}}
+    (hint,) = _never_entered(entry, spec)
+    assert "TRACK -(target_lost)-> LOST" in hint and "faults：无" in hint
+    assert "移除的敌方：无" in hint and "cancelled@50" in hint
