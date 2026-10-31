@@ -33,31 +33,49 @@ def _run() -> RunConfig:
 
 
 def test_feedback_names_roles_actions_and_notes_only() -> None:
-    j = RunJudgement(run="strike", completed=True)
-    j.states = {
-        "blue_m1": [(0.0, "WAITING_TASK"), (1.0, "VALIDATING"), (1.0, "HOLDING")],
-        "red_1": [(0.0, "X")],
-    }
-    j.errors = ["***** ERROR: Could not open D:/lab/model/native_file.txt"]
-    j.completed = False
-    j.problems = [
-        "console has no line matching 'IR_ACT\\\\|[^|]+\\\\|blue_m1\\\\|engagement\\\\.fire_selected_weapon'",
-        "console has no line matching 'WEAPON_HIT\\\\|red_1'",
-        "console has no line matching 'NATIVE_SECRET\\\\|1'",
-        "blue_m2: transitions kept firing from HOLDING within one update (a cycle of "
-        "conditions that are all true); the update was cut after 8 state changes",
-        "requirement obligation stop_on_end: blue_m1: 事件 cancelled 在 60 s，之后 "
-        "engagement.cease_fire 没有执行，要求 10 s 内",
+    from afsim_research_agent.ir.v2.afsim.evaluate import Issue, judge
+
+    run = _run().model_dump()
+    run["expect"]["markers"].append(r"IR_ACT\|[^|]+\|blue_m1\|engagement\.fire_selected_weapon")
+    run["expect"]["events"] = [
+        {"kind": "WEAPON_HIT", "by": "member", "target": "red_2", "note": "命中第 2 个敌方目标"}
     ]
-    text = feedback([j], [_run()], None)
+    console = (
+        "IR_STATE|0|blue_m1|WAITING_TASK\nIR_STATE|1|blue_m1|VALIDATING\n"
+        "IR_STATE|1|blue_m1|HOLDING\nIR_STATE|0|blue_m2|WAITING_TASK\n"
+        "IR_STATE|0|blue_lead|ASSESSING\nIR_LOOP|3|blue_m2|HOLDING\n"
+        "IR_STATE|0|red_1|X\n"
+        "***** ERROR: Could not find processor NATIVE_FIXTURE\n"
+        "         'D:/lab/model/native_file.txt', line 26, near column 65\n"
+    )
+    evt = (
+        "1.0 WEAPON_FIRED blue_m1 red_1 blue_m1_gun_1 Engagement: 1\n"
+        "1.5 WEAPON_HIT blue_m1 red_1 blue_m1_gun_1 Engagement: 1 Result: DAMAGED\n"
+    )
+    j = judge(run, console, None, events_text=evt)
+    j.add(
+        Issue(
+            "OBLIGATION",
+            "model",
+            None,
+            {
+                "id": "stop_on_end",
+                "detail": "blue_m1: 事件 cancelled 在 60 s，之后 cease_fire 没有执行",
+            },
+        )
+    )
+    assert j.infrastructure
+    text = feedback([j], [RunConfig.model_validate(run)], None)
     assert "member_0 从未开始动作 engagement.fire_selected_weapon" in text
-    assert "成员车命中第 1 个敌方目标" in text
-    assert "member_1 在 HOLDING" in text and "stop_on_end" in text
+    assert "成员车命中第 1 个敌方目标" in text  # a marker with its note
+    assert "命中第 2 个敌方目标——出现 0 次" in text  # an event expectation with its note
+    assert "member_0 交战：开火 1 次，命中 1 次（目标 1 1 次）" in text
+    assert "member_1 在 HOLDING" in text and "stop_on_end" in text and "member_0: 事件" in text
     assert "member_0 状态轨迹：WAITING_TASK@0 -> VALIDATING@1 -> HOLDING@1" in text
-    # nothing local leaks: platform names, native markers, paths, positions, raw errors
-    for leak in ("blue_", "red_1", "NATIVE_SECRET", "D:/", "native_file", "45n", "X@"):
+    assert "出在绑定或编译器" in text
+    # nothing local leaks: platform names, native names, paths, positions, raw errors
+    for leak in ("blue_", "red_", "NATIVE", "D:/", "native_file", "45n", "X@", "line 26"):
         assert leak not in text, leak
-    assert "AFSIM 没有完成仿真（输入错误" in text
 
 
 def test_compile_error_is_not_echoed() -> None:
@@ -104,7 +122,16 @@ def test_rounds_repair_and_rerun(contracts, tmp_path: Path, monkeypatch) -> None
         calls.append(sheet_hash(drafter.sheet))
         j = RunJudgement(run="strike", completed=True)
         if len(calls) == 1:
-            j.problems = ["console has no line matching 'WEAPON_HIT\\\\|red_1'"]
+            from afsim_research_agent.ir.v2.afsim.evaluate import Issue
+
+            j.add(
+                Issue(
+                    "MARKER",
+                    "run",
+                    None,
+                    {"pattern": "WEAPON_HIT\\|red_1", "note": "成员车命中第 1 个敌方目标"},
+                )
+            )
         return [j], [_run()], None
 
     class Fix:
@@ -124,3 +151,40 @@ def test_rounds_repair_and_rerun(contracts, tmp_path: Path, monkeypatch) -> None
     assert [r.passed for r in history.rounds] == [False, True] and history.passed
     assert len(fixes) == 1 and len(set(calls)) == 2 and check.verified
     assert "成员车命中第 1 个敌方目标" in history.rounds[0].feedback
+
+
+def test_infrastructure_failures_get_no_repair_round(
+    contracts,  # noqa: F811
+    tmp_path: Path,
+    monkeypatch,
+) -> None:  # noqa: ANN001, F811
+    import asyncio
+
+    from afsim_research_agent.falcon.llm import ModelRunner, ScriptedModel
+    from afsim_research_agent.falcon.sheet.blocks import split_sheet
+    from afsim_research_agent.falcon.v3 import draft as D
+    from afsim_research_agent.falcon.v3.afsim_loop import AfsimConfig
+    from afsim_research_agent.ir.v2.afsim.evaluate import Issue
+
+    drafter = D.Drafter(
+        D.V3Request(requirement="r", model_id="scout_demo"),
+        contracts,
+        ModelRunner(ScriptedModel({})),
+    )
+    drafter.blocks = split_sheet(SHEET)[0]
+    check = drafter.check(verify=True)
+
+    def fake_run(model, contracts, obligations, cfg, out):  # noqa: ANN001, ANN202
+        j = RunJudgement(run="strike", completed=False)
+        j.add(Issue("AFSIM_ERROR", "infrastructure", None, {"message": "x", "kind": "other"}))
+        return [j], [_run()], None
+
+    async def no_fix(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise AssertionError("no repair round for an infrastructure failure")
+
+    monkeypatch.setattr(D, "run_once", fake_run)
+    monkeypatch.setattr(D, "fix_sheet", no_fix)
+    cfg = AfsimConfig(binding=tmp_path / "b.toml", runs=[], mission="mission", rounds=2)
+    _, history = asyncio.run(D._afsim_rounds(drafter, drafter.run, check, [], cfg, tmp_path))
+    assert len(history.rounds) == 1 and not history.passed
+    assert any("基础设施" in n for n in drafter.notes)

@@ -65,6 +65,10 @@ Run configuration (TOML)::
     sequence = ["<state>", ...]                # optional
     markers = ['<regex>', ...]                 # console must contain each (optional)
     [expect.marker_notes]                      # marker → its meaning (drafting feedback)
+    [[expect.events]]                          # counts in the event log output/<run>.evt
+    kind = "WEAPON_HIT"; by = "<role>"; target = "<platform>"; min = 1; note = "<meaning>"
+    [expect.rules]                             # judge rules switched off for this run
+    inert_is_failure = false
     [reference]                                # the handwritten version's evidence
     console = "<console log, relative to model_root>"
     state_pattern = '<regex with one group: the state name; a time group named t>'
@@ -171,6 +175,19 @@ class RunEvent(_Strict):
     platform: str | None = None  # None: every platform of the run
 
 
+class EventExpectation(_Strict):
+    """At least ``min`` events of ``kind`` in the run's event log, fired by a platform of
+    role ``by`` and/or on platform ``target``, with ``result`` (e.g. KILLED) when given.
+    ``note`` says in words what it checks; drafting feedback uses it, not the names."""
+
+    kind: Literal["WEAPON_FIRED", "WEAPON_HIT", "WEAPON_MISSED", "PLATFORM_BROKEN"]
+    by: str | None = None
+    target: str | None = None
+    result: str | None = None
+    min: int = Field(default=1, ge=0)
+    note: str = ""
+
+
 class RunExpect(_Strict):
     sequence: list[str] | None = None
     # regular expressions the console must contain (the scenario's own checks, e.g. that
@@ -179,6 +196,10 @@ class RunExpect(_Strict):
     # marker → what it checks, in words a drafting model may see (the marker itself may
     # name native output); markers without a note are only counted in feedback
     marker_notes: dict[str, str] = Field(default_factory=dict)
+    # counts in AFSIM's event log (see EventExpectation)
+    events: list[EventExpectation] = Field(default_factory=list)
+    # judge rules switched off for this run (e.g. inert_is_failure = false)
+    rules: dict[str, bool] = Field(default_factory=dict)
     # with a handwritten reference: the time spent in each state may differ from the
     # reference by at most this much (a state left far too early or too late fails the run)
     max_interval_delta_s: float | None = None
@@ -204,6 +225,8 @@ class RunConfig(_Strict):
     expect: RunExpect = Field(default_factory=RunExpect)
     # write an event-pipe recording (output/<run>.aer) that mystic replays
     record: bool = True
+    # write AFSIM's standard event log output/<run>.evt (unless the run configures its own)
+    record_events: bool = True
     reference: Reference | None = None
 
     @classmethod

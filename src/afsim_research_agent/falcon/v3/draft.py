@@ -1080,6 +1080,14 @@ async def _afsim_rounds(
         drafter.notes.append(f"AFSIM 第 {index + 1} 次运行：{'通过' if passed else '未通过'}")
         if passed or index == cfg.rounds:
             break
+        if any(getattr(r, "infrastructure", False) for r in results or []):
+            # the binding, the compiler or the lab files failed: editing the sheet cannot
+            # repair it, so no repair round is spent on it
+            drafter.notes.append(
+                "AFSIM 运行失败出在绑定、编译器或实验室文件（基础设施），不交给战术稿修复；"
+                "见 afsim_rounds.md"
+            )
+            break
         before = sheet_hash(drafter.sheet)
         drafter.afsim_note = AfsimNote(before, text)
         fixes.append(await fix_sheet(drafter, run, cfg.steps))

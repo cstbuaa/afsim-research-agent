@@ -575,3 +575,123 @@ def test_tactic_set_parallel_and_repeat(env) -> None:
     assert tree["children"][0]["repeat"] == {"until_done": True}
     text = Compiler(model, fresh, binding).package([run]).behavior
     assert "success_policy succeed_on_one" in text and "decorator repeater until_done" in text
+
+
+# ---------------------------------------------------------------- run evidence (issues)
+INPUT_ERROR = """***** FATAL: Could not process input files.
+    ***** ERROR: Duplicate next_state ENGAGING in state ENGAGING
+             'ir_demo_behavior.txt', line 3, near column 26
+
+Reading of simulation input failed
+"""
+
+EVT = """0.00000 PLATFORM_ADDED blue_m1 Type: IR_DEMO_MEMBER Side: blue \\
+1.00000 WEAPON_FIRED blue_m1 red_1 blue_m1_main_gun_1 Engagement: 1 Start_Time: 1.00000 \\
+ Truth: Slant_Range: 657.047 m
+1.51700 WEAPON_HIT blue_m1 red_1 blue_m1_main_gun_1 Engagement: 1 Start_Time: 1.00000 \\
+ Intercept_Pk: 1 Pk: 1 Damage_Factor: 0.25 Result: DAMAGED \\
+ Miss_Distance: 1.25 m
+7.51700 WEAPON_HIT blue_m1 red_1 blue_m1_main_gun_1 Engagement: 2 \\
+ Damage_Factor: 1 Result: KILLED
+"""
+
+BEHAVIOR = """processor IR_DEMO_MEMBER_SM WSF_STATE_MACHINE
+   state ENGAGING
+      next_state ENGAGING
+      end_next_state
+   end_state
+end_processor
+advanced_behavior ir_demo_member_ENGAGING_3
+   execute
+      return Success();
+   end_execute
+end_advanced_behavior
+"""
+
+
+def _member_run(**expect) -> dict:
+    return {
+        "id": "demo",
+        "platforms": [{"name": "blue_m1", "role": "member", "instance": 0}],
+        "expect": expect,
+    }
+
+
+def test_input_errors_are_placed_and_belong_to_the_infrastructure() -> None:
+    from afsim_research_agent.ir.v2.afsim.evaluate import INFRASTRUCTURE, locate, parse_errors
+
+    (err,) = parse_errors(INPUT_ERROR)
+    assert err["kind"] == "duplicate_transition" and err["line"] == 3 and err["stage"] == "input"
+    manifest = {
+        "processors": {"IR_DEMO_MEMBER_SM": "member"},
+        "nodes": {
+            "ir_demo_member_ENGAGING_3": {
+                "role": "member",
+                "state": "ENGAGING",
+                "action": "engagement.fire",
+            }
+        },
+    }
+    pos = locate(err, "ir_demo_behavior.txt", BEHAVIOR, manifest)
+    assert pos == {"role": "member", "state": "ENGAGING"}
+    later = dict(err, line=9)
+    assert locate(later, "ir_demo_behavior.txt", BEHAVIOR, manifest)["action"] == "engagement.fire"
+    assert (
+        locate(dict(err, file="lab/model/x.txt"), "ir_demo_behavior.txt", BEHAVIOR, manifest) == {}
+    )
+    j = judge(_member_run(), INPUT_ERROR, None, where=lambda e: pos)
+    assert not j.passed and j.infrastructure
+    assert j.issues[0].code == "AFSIM_ERROR" and j.issues[0].source == INFRASTRUCTURE
+
+
+def test_events_count_shots_hits_and_kills() -> None:
+    from afsim_research_agent.ir.v2.afsim.evaluate import parse_events
+
+    events = parse_events(EVT)
+    assert [e["event"] for e in events] == [
+        "PLATFORM_ADDED",
+        "WEAPON_FIRED",
+        "WEAPON_HIT",
+        "WEAPON_HIT",
+    ]
+    assert events[2]["result"] == "DAMAGED" and events[3]["target"] == "red_1"
+    console = "IR_STATE|0|blue_m1|WAIT\nIR_ACT|1|blue_m1|engagement.fire\nSimulation complete\n"
+    ok = judge(
+        _member_run(events=[{"kind": "WEAPON_HIT", "by": "member", "target": "red_1", "min": 2}]),
+        console,
+        None,
+        events_text=EVT,
+    )
+    assert ok.passed, ok.render()
+    assert ok.engagements["blue_m1"] == {"fired": 1, "hits": 2, "kills": 1, "targets": {"red_1": 2}}
+    short = judge(
+        _member_run(events=[{"kind": "WEAPON_HIT", "target": "red_2", "note": "命中目标 2"}]),
+        console,
+        None,
+        events_text=EVT,
+    )
+    (issue,) = short.issues
+    assert (
+        issue.code == "EVENTS" and issue.data["count"] == 0 and issue.data["note"] == "命中目标 2"
+    )
+
+
+def test_inert_and_no_evidence_runs_and_switched_off_rules() -> None:
+    inert = judge(_member_run(), "IR_STATE|0|blue_m1|WAIT\nSimulation complete\n", None)
+    assert [i.code for i in inert.issues] == ["INERT"]
+    off = judge(
+        _member_run(rules={"inert_is_failure": False}),
+        "IR_STATE|0|blue_m1|WAIT\nSimulation complete\n",
+        None,
+    )
+    assert off.passed and off.caveats
+    blank = judge(_member_run(), "Simulation complete\n", None)
+    assert {i.code for i in blank.issues} == {"NO_EVIDENCE", "NO_STATE_OUTPUT"}
+    # the mission log's "complete" line counts when the console was cut short
+    done = judge(
+        _member_run(rules={"inert_is_failure": False}),
+        "IR_STATE|0|blue_m1|WAIT\n",
+        None,
+        log_text="2026-10-31 00:42:51 complete 220.001 0.066 0.078\n",
+    )
+    assert done.completed and done.passed

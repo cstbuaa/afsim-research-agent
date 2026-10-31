@@ -24,7 +24,6 @@ from typing import Any
 from afsim_research_agent.ir.v2.afsim import Binding, CompileError, Compiler, RunConfig
 from afsim_research_agent.ir.v2.afsim.evaluate import RunJudgement, run_package
 
-SAFE_ERRORS = (re.compile(r"Duplicate next_state (\w+) in state (\w+)"),)
 IR_ACT_MARKER = re.compile(r"IR_ACT\\\|\[\^\|\]\+\\\|(\w+)\\\|(.+)$")
 
 
@@ -101,68 +100,100 @@ def feedback(
     ]
     for res, run in zip(results or [], runs, strict=False):
         labels = {p.name: f"{p.role}_{p.instance}" for p in run.platforms}
-        notes = dict(run.expect.marker_notes)
+        others = sorted(
+            {t for e in res.engagements.values() for t in e.get("targets", {})} - set(labels)
+        )
+        targets = {t: f"目标 {i + 1}" for i, t in enumerate(others)}
 
         def anon(text: str, labels: dict[str, str] = labels) -> str:
             for name in sorted(labels, key=len, reverse=True):
                 text = re.sub(rf"\b{re.escape(name)}\b", labels[name], text)
             return text
 
-        if not res.completed or res.errors:
-            safe = []
-            for e in res.errors:
-                for rx in SAFE_ERRORS:
-                    m = rx.search(e)
-                    if m:
-                        safe.append(m.group(0))
-            lines.append(
-                "  AFSIM 没有完成仿真"
-                + (f"：{'; '.join(safe)}" if safe else "（输入错误，细节只在本地记录）")
-            )
         for name, seq in res.states.items():
             if name not in labels:
                 continue
             path = " -> ".join(f"{s}@{t:g}" for t, s in seq[:40])
             more = f" …（共 {len(seq)} 次进入）" if len(seq) > 40 else ""
             lines.append(f"  {labels[name]} 状态轨迹：{path}{more}")
-        for p in res.problems:
-            lines.append("  问题：" + _problem(p, anon, notes))
+        for name, e in res.engagements.items():
+            if name in labels and (e["fired"] or e["hits"]):
+                hit = "，".join(f"{targets.get(t, t)} {n} 次" for t, n in e["targets"].items())
+                lines.append(
+                    f"  {labels[name]} 交战：开火 {e['fired']} 次，命中 {e['hits']} 次"
+                    + (f"（{hit}）" if hit else "")
+                    + (f"，击毁 {e['kills']}" if e["kills"] else "")
+                )
+        issues = list(getattr(res, "issues", []) or [])
+        for issue in issues:
+            lines.append("  问题：" + _issue(issue, labels, targets, anon))
+        if not issues and (not res.completed or res.errors):
+            lines.append("  问题：AFSIM 没有完成仿真（细节只在本地记录）")
     return "\n".join(lines)
 
 
-def _problem(p: str, anon: Any, notes: dict[str, str]) -> str:
-    m = re.match(r"console has no line matching '(.*)'$", p)
-    if m:
-        pattern = m.group(1).replace("\\\\", "\\")
-        act = IR_ACT_MARKER.search(pattern)
-        if act:
-            action = act.group(2).replace("\\.", ".")
-            return f"{anon(act.group(1))} 从未开始动作 {action}"
-        if pattern in notes:
-            return f"运行检查未满足：{notes[pattern]}"
-        return "一项运行检查未满足（检查内容只在本地记录）"
-    m = re.match(r"(\S+): transitions kept firing from (\w+) within one update", p)
-    if m:
-        return (
-            f"{anon(m.group(1))} 在 {m.group(2)} 一次更新内连续转换超过 8 次被截断："
-            "进入后各转换条件立即成立，状态一路连跳（常见原因：条件读到上一轮留下的值，"
-            "如开火计数仍大于 0、毁伤时刻仍有效；应改为本轮新产生的变化或用树事件/计时）"
-        )
-    m = re.match(r"(\S+) wrote no IR_STATE lines", p)
-    if m:
-        return f"{anon(m.group(1))} 的状态机没有运行"
-    m = re.match(r"(\S+) visited (\[.*\]), expected (\[.*\])$", p)
-    if m:
-        return f"{anon(m.group(1))} 的状态序列是 {m.group(2)}，想定要求 {m.group(3)}"
-    if "differs from the handwritten version" in p:
-        return "状态序列与手写参考版本不同"
-    if "stayed" in p and "handwritten version" in p:
-        return anon(re.sub(r", the handwritten version .*$", "", p)) + "（与手写参考版本相差过大）"
-    m = re.match(r"requirement obligation (\w+): (.*)$", p, re.S)
-    if m:
-        return f"需求约束 {m.group(1)} 未满足：{anon(m.group(2))}"
-    if "handwritten reference console was not found" in p:
-        return "（本地参考记录缺失，不影响本稿）"
+def _issue(issue: Any, labels: dict[str, str], targets: dict[str, str], anon: Any) -> str:
+    """One finding in the words of the draft (see the module doc for what stays local)."""
+    d, who = issue.data, labels.get(issue.platform or "", issue.platform or "")
+    match issue.code:
+        case "AFSIM_ERROR":
+            if issue.source == "infrastructure":
+                return (
+                    "AFSIM 输入错误，出在绑定或编译器（不是战术稿的问题，已记在本地，"
+                    "不需要改战术稿）"
+                )
+            where = f"{d.get('role')} 状态 {d.get('state')}"
+            if d.get("action"):
+                where += f" 的动作 {d['action']}"
+            return f"AFSIM 运行中 {where} 处的脚本出错（检查给这个动作的参数和进入条件）"
+        case "NOT_COMPLETED":
+            return "AFSIM 没有完成仿真"
+        case "IR_LOOP":
+            return (
+                f"{who} 在 {d['state']} 一次更新内连续转换超过 8 次被截断：进入后各转换条件"
+                "立即成立，状态一路连跳（常见原因：条件读到上一轮留下的值，如开火计数仍大于 0、"
+                "毁伤时刻仍有效；应改为本轮新产生的变化或用树事件/计时）"
+            )
+        case "NO_STATE_OUTPUT":
+            return f"{who} 的状态机没有运行"
+        case "NO_EVIDENCE":
+            return "所有车辆的状态机都没有运行"
+        case "INERT":
+            return "仿真跑完了但什么都没发生：没有动作开始，也没有车辆离开初始状态"
+        case "SEQUENCE":
+            return f"{who} 的状态序列是 {d['got']}，想定要求 {d['expected']}"
+        case "MARKER":
+            act = IR_ACT_MARKER.search(str(d.get("pattern") or ""))
+            if act:
+                return (
+                    f"{anon(act.group(1))} 从未开始动作 {act.group(2).replace(chr(92) + '.', '.')}"
+                )
+            if d.get("note"):
+                return f"运行检查未满足：{d['note']}"
+            return "一项运行检查未满足（检查内容只在本地记录）"
+        case "EVENTS":
+            what = d.get("note") or (
+                {
+                    "WEAPON_FIRED": "开火",
+                    "WEAPON_HIT": "命中",
+                    "WEAPON_MISSED": "脱靶",
+                    "PLATFORM_BROKEN": "击毁",
+                }.get(d["kind"], d["kind"])
+                + (f"（{d['by']} 角色）" if d.get("by") else "")
+                + (f"（{targets.get(d['target'], '指定目标')}）" if d.get("target") else "")
+            )
+            return f"AFSIM 事件记录未满足：{what}——出现 {d['count']} 次，要求至少 {d['min']} 次"
+        case "REFERENCE_SEQUENCE":
+            return f"{who} 的状态序列 {d['got']} 与手写参考版本不同"
+        case "INTERVAL":
+            return (
+                f"{who} 在 {d['state']} 停留 {d['stay']:g} s（{d['entered']:g} s 进入），"
+                f"与手写参考版本相差超过 {d['limit']:g} s"
+            )
+        case "REFERENCE_MISSING":
+            return "（本地参考记录缺失，不影响本稿）"
+        case "OBLIGATION":
+            return f"需求约束 {d['id']} 未满足：{anon(str(d['detail']))}"
     return "一项运行检查未满足（细节只在本地记录）"
 
 

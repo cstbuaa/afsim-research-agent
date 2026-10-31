@@ -16,7 +16,11 @@ Conventions of the generated input (all names start with ``ir_`` / ``IR_``):
   the first execution of each action leaf in a state writes ``IR_ACT|<time>|<platform>|<action>``
   (requirement obligations are judged on these);
 - every run writes an event-pipe recording ``output/<run>.aer`` for replay in mystic
-  (``record = false`` in the run config turns it off);
+  (``record = false`` in the run config turns it off) and, unless the run configures its own,
+  an event log ``output/<run>.evt`` with the standard platform and weapon events the judge
+  counts (``record_events = false`` turns it off);
+- the manifest maps each generated behavior node to its role, state and action and each
+  state-machine processor to its role, so an AFSIM error can be placed in the model;
 - external events are auxiliary data ``ir_ev_<id>`` set by the run file and consumed by
   the transition that fires on them.
 """
@@ -56,6 +60,10 @@ COMPOSITE_TAGS = {
 
 class CompileError(ValueError):
     """The model cannot be expressed with this binding."""
+
+
+# standard event_output events the judge reads (shots, hits, kills)
+EVENT_OUTPUT = ("PLATFORM_ADDED", "PLATFORM_BROKEN", "WEAPON_FIRED", "WEAPON_HIT", "WEAPON_MISSED")
 
 
 def ident(text: str) -> str:
@@ -174,6 +182,8 @@ class Compiler:
         self.missing: set[str] = set()
         self.role_actions: dict[str, set[str]] = {}  # role → actions its trees run
         self.state_actions: dict[str, dict[str, set[str]]] = {}  # role → state → actions
+        self.nodes: dict[str, dict[str, str]] = {}  # behavior node → role, state (, action)
+        self.processors: dict[str, str] = {}  # state-machine processor → role
 
     # ------------------------------------------------------------------ package
     def package(self, runs: list[RunConfig], obligations: list[dict] | None = None) -> Package:
@@ -215,6 +225,8 @@ class Compiler:
             },
             "obligations": list(obligations or []),
             "role_actions": {r: sorted(a) for r, a in sorted(self.role_actions.items())},
+            "nodes": dict(sorted(self.nodes.items())),
+            "processors": dict(sorted(self.processors.items())),
             # role → external event → actions of the states the event leads to (and after)
             "event_actions": {
                 r: {e: sorted(a) for e, a in sorted(per.items())}
@@ -253,6 +265,7 @@ class Compiler:
     def _role(self, rid: str, role: dict[str, Any]) -> str:
         mission = role["mission"]
         proc = f"{self.platform_type(rid)}_SM"
+        self.processors[proc] = rid
         req = subst(self.b.instance.request, model=self.mid, role=ident(rid))
         owner = subst(self.b.instance.owner, model=self.mid, role=ident(rid))
         self.req, self.owner, self.rid = lit(req), lit(owner), rid
@@ -660,7 +673,9 @@ class Compiler:
     def _new_name(self, suffix: str = "") -> str:
         count = getattr(self, "_count", 0) + 1
         self._count = count
-        return f"{self.P}_{ident(self.rid)}_{ident(self.sname)}_{count}{suffix}"
+        name = f"{self.P}_{ident(self.rid)}_{ident(self.sname)}_{count}{suffix}"
+        self.nodes[name] = {"role": self.rid, "state": self.sname}
+        return name
 
     def _guard(self, n: dict[str, Any]) -> str:
         name = self._new_name("_timeout")
@@ -722,6 +737,7 @@ class Compiler:
             self.missing.add(f"action {action}")
             return []
         name = self._new_name()
+        self.nodes[name]["action"] = action
         params = n.get("params") or {}
         if n.get("operation") == "cancel":
             return [self._cancel_leaf(name, action, ab, pre)]
@@ -935,6 +951,14 @@ class Compiler:
         if run.record and "event_pipe" not in f"{run.preamble}\n{run.extra}":
             # recording for replay in mystic, next to the console and the event log
             lines += ["event_pipe", "   file output/$(CASE).aer", "end_event_pipe"]
+        if run.record_events and "event_output" not in f"{run.preamble}\n{run.extra}":
+            # AFSIM's standard event log: the judge counts shots, hits and kills from it
+            lines += [
+                "event_output",
+                "   file output/$(CASE).evt",
+                *[f"   enable {e}" for e in EVENT_OUTPUT],
+                "end_event_output",
+            ]
         lines += [
             f"random_seed {run.random_seed}",
             f"start_time {run.start_time}",
