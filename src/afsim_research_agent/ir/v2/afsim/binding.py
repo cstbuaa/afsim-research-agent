@@ -140,7 +140,7 @@ class Binding(_Strict):
 
     @classmethod
     def load(cls, path: Path) -> Binding:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        data = tomllib.loads(path.read_text(encoding="utf-8-sig"))
         binding = cls.model_validate(data)
         root = Path(binding.meta.model_root)
         for slice_id, rel in binding.blackboard.files.items():
@@ -231,7 +231,7 @@ class RunConfig(_Strict):
 
     @classmethod
     def load(cls, path: Path) -> RunConfig:
-        return cls.model_validate(tomllib.loads(path.read_text(encoding="utf-8")))
+        return cls.model_validate(tomllib.loads(path.read_text(encoding="utf-8-sig")))
 
 
 def as_dict(obj: BaseModel) -> dict[str, Any]:
