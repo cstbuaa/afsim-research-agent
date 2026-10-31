@@ -526,8 +526,10 @@ def _skipped(scenario: dict[str, Any], conditions: dict[str, str] | None = None)
                     f"诊断：{name} 在 {a['t']:g} s 进入 {a['to']} 后同一拍就因 {b['on']} 离开，"
                     f"即进入 {a['to']} 时 {b['on']} 已成立"
                     + (f"（conditions 块里 {b['on']} = {expr}）" if expr else "")
-                    + f"；{a['to']} 的树还没做完就离开了。改 conditions 块里这个条件，让它只在"
-                    f" {a['to']} 的工作完成后成立（或改用树的结果）"
+                    + f"；{a['to']} 的树还没做完就离开了。若要等 {a['to']} 的树做完：在 model 块的"
+                    f" events 中加一行 `{b['on']}_tree: {{source: tree, result: success}}`，把状态图中"
+                    f" {a['to']} 的这条转换改用它（mermaid 与 events 同一步 edit，再删掉 conditions 里"
+                    f"不再使用的 {b['on']}）；若这个字段确实表达到位，就改条件读本状态才会变化的字段"
                 )
     return out[:4]
 

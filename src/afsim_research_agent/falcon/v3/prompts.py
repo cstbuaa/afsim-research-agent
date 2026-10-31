@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-PROMPT_VERSION = "falcon-v3-2026.10.30"
+PROMPT_VERSION = "falcon-v3-2026.10.31"
 
 RULES = """你在为作战仿真编写战术行为模型。模型分七层，你只写上三层：任务状态机、状态树、子树；
 动作、黑板、仲裁、能力层由程序从能力集引用、推导和校验。你写的是"战术稿"：若干带标签的 Markdown 代码块。
@@ -137,6 +137,9 @@ scenarios:        # L3 二维仿真：平面坐标（米），x 向东、y 向�
     faults: [{at_s: 60, role: 角色, sensor_operational: false}]
     expect: [{id: 英文ID, role: 角色, state_sequence: [完整的状态访问序列，从初始状态到最后]} 或 {visits_in_order: [只检查这些状态按此顺序出现]} 或 {reaches: 状态, within_s: 60（从仿真开始计）} 或 {reaches: 状态, after_event: 事件, within_s: 10（从该事件起计）} 或 {never: 状态}]
 - 每个状态至少一条测试；每条转换至少被一条测试或想定覆盖；想定覆盖主流程和至少一个例外（如目标丢失、取消）。
+- 想定 events 只能写模型 events 里的外部事件；目标丢失、传感器故障、车辆不能动这类情况用 hostiles 的
+  remove_s 或 faults 制造（不是事件）。故障要在后面的流程（如结束时的关机）之前用第二条 faults 恢复，
+  除非这个想定就是要测故障下的收尾。
 - 路线的键用路线参数的 value。"""
 
 EXAMPLE = """示例（虚构能力集）：
