@@ -348,6 +348,8 @@ def _writes_text(contracts: Contracts, a: Any, common: set[str] | None = None) -
         for key, word in (("on_success", "成功时"), ("on_failure", "失败时")):
             if key in w:
                 extra.append(f"{word}={w[key]}")
+        if "only" in w:
+            extra.append(f"只会置为 {w['only']}")
         shown.append(path + (f"（{'，'.join(extra)}）" if extra else ""))
     return ("写 " + ", ".join(shown)) if shown else "不写黑板字段"
 

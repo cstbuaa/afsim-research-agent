@@ -524,7 +524,7 @@ class LabExporter:
                     if updated not in UPDATED:
                         self.report.warnings.append((where, f"未知的更新方式 {updated}（{name}）"))
                     w["updated"] = updated
-                for k in ("reset_on_start", "on_success", "on_failure"):
+                for k in ("reset_on_start", "on_success", "on_failure", "only"):
                     if k in (sem.get(name) or {}):
                         w[k] = sem[name][k]
                 writes.append(w)

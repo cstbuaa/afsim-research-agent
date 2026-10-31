@@ -507,6 +507,32 @@ class SheetCompiler:
                     for path in sorted(fields(cid)):
                         f = self.c.blackboard.get(path)
                         if (
+                            f is not None
+                            and f.written_by
+                            and f.updated not in STATIC_UPDATES
+                            and path not in gap_writes
+                            and (state, cid, path) not in reported
+                            and path in _wanted_true(exprs.get(cid))
+                            and set(f.written_by) & actions
+                            and not {
+                                a for a in set(f.written_by) & actions if not self._clears(a, path)
+                            }
+                        ):
+                            # the state's tree only ever clears the field the condition waits on
+                            setters = [a for a in f.written_by if not self._clears(a, path)]
+                            reported.add((state, cid, path))
+                            block, line = self.out.locate(where)
+                            self.fail(
+                                block,
+                                line,
+                                f"状态 {state} 的{label(cid)}等待 {path} 为真，但 {state} 的树里"
+                                f"写它的 {', '.join(sorted(set(f.written_by) & actions))} 只会把它"
+                                "置为 false；能把它置为真的是 "
+                                f"{', '.join(setters) or '（没有动作）'}。把这样的动作（或含它的子树）"
+                                "放进本状态的树，或改用本状态会变成真的字段",
+                            )
+                            continue
+                        if (
                             f is None
                             or not f.written_by
                             or f.updated in STATIC_UPDATES
@@ -527,6 +553,11 @@ class SheetCompiler:
                             "互补的转换（X 与 not X），立即按进入时的值转出；或用树事件表达"
                             '"本状态的树完成"（events 中声明 {source: tree, result: success}）',
                         )
+
+    def _clears(self, action: str, path: str) -> bool:
+        """The action's write of ``path`` can only make it false."""
+        a = self.c.actions.get(action)
+        return any(str(w.get("field")) == path and _clears_only(w) for w in (a.writes or ()) if a)
 
     def _instant_cycle_checks(self, spec: dict[str, Any]) -> None:
         """Transitions are checked again right after a state is entered, in the same
@@ -1262,6 +1293,27 @@ def _bb_reads(expr: Any) -> set[str]:
         for v in expr:
             out |= _bb_reads(v)
     return out
+
+
+def _wanted_true(expr: Any) -> set[str]:
+    """Fields an expression needs to be true: bare ``bb`` operands, also inside all / any
+    (not under ``not`` or a comparison)."""
+    if isinstance(expr, dict):
+        if set(expr) == {"bb"} and isinstance(expr["bb"], str):
+            return {expr["bb"]}
+        for key in ("all", "any"):
+            if isinstance(expr.get(key), list):
+                return {f for e in expr[key] for f in _wanted_true(e)}
+    return set()
+
+
+def _clears_only(write: dict[str, Any]) -> bool:
+    """A write that can only make a field false: ``only: false``, or every stated outcome
+    (on_success / on_failure) writes false."""
+    if "only" in write:
+        return write["only"] is False
+    stated = [write[k] for k in ("on_success", "on_failure") if k in write]
+    return bool(stated) and all(v is False for v in stated)
 
 
 def _condition_refs(expr: Any) -> list[str]:

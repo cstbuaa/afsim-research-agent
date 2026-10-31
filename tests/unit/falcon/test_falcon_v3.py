@@ -1046,3 +1046,19 @@ def test_never_entered_states_are_explained_with_the_scenario_stimuli() -> None:
     (hint,) = _never_entered(entry, spec)
     assert "TRACK -(target_lost)-> LOST" in hint and "faults：无" in hint
     assert "移除的敌方：无" in hint and "cancelled@50" in hint
+
+
+def test_a_state_waiting_for_true_needs_a_writer_that_can_set_it(set_root: Path) -> None:
+    contracts = _annotate(set_root)
+    sense = yaml.safe_load((set_root / "action_set/sense.yaml").read_text(encoding="utf-8"))
+    # the scan only ever clears the flag (as a track expiry does)
+    sense["actions"][0]["writes"] = [
+        {"field": "sense.target.valid", "updated": "while_running", "only": False}
+    ]
+    _w(set_root, "action_set/sense.yaml", sense)
+    contracts = Contracts.load(set_root)
+    msgs = [p.message for p in _compile(contracts).errors]
+    assert any("状态 MOVE" in m and "只会把它置为 false" in m for m in msgs), msgs
+    # waiting for false is fine
+    ok = SHEET.replace("target_seen = sense.target.valid", "target_seen = not sense.target.valid")
+    assert not any("只会把它置为" in p.message for p in _compile(contracts, ok).errors)
