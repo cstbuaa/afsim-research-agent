@@ -1079,9 +1079,9 @@ async def _afsim_rounds(
             for rid, role in ((check.model or {}).get("roles") or {}).items()
         }
         meanings = {
-            aid: str(a.result["failure"])
+            aid: {"failure": a.result.get("failure"), "codes": a.result.get("codes") or {}}
             for aid, a in drafter.c.actions.items()
-            if isinstance(a.result, dict) and a.result.get("failure")
+            if isinstance(a.result, dict) and (a.result.get("failure") or a.result.get("codes"))
         }
         text = "" if passed else feedback(results, runs, error, missions, meanings)
         local = error or "\n".join(r.render() for r in results or [])

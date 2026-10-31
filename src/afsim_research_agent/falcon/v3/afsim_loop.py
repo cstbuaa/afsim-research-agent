@@ -88,7 +88,9 @@ def feedback(
     runs: list[RunConfig],
     compile_error: str | None,
     missions: dict[str, Any] | None = None,  # role → mission (to name looping transitions)
-    failure_meanings: dict[str, str] | None = None,  # action id → contract's failure meaning
+    # action id → the contract's failure meaning: its text, or {"failure": text, "codes":
+    # {code: text}} when the capability set explains single failure codes
+    failure_meanings: dict[str, Any] | None = None,
 ) -> str:
     """What a failed AFSIM round tells the repair loop (sanitized, see the module doc)."""
     if compile_error is not None:
@@ -134,7 +136,7 @@ def feedback(
             for action, f in acts.items():
                 # a code the capability set states; anything else is a native string
                 code = f["code"] if f.get("known") else "代码只在本地记录"
-                meaning = (failure_meanings or {}).get(action)
+                meaning = _meaning((failure_meanings or {}).get(action), f)
                 lines.append(
                     f"  {labels[name]} 动作失败：{action}（{code}；{f['count']} 次，"
                     f"首次 {f['first_s']:g} s）"
@@ -156,6 +158,19 @@ def feedback(
         if not issues and (not res.completed or res.errors):
             lines.append("  问题：AFSIM 没有完成仿真（细节只在本地记录）")
     return "\n".join(lines)
+
+
+def _meaning(entry: Any, failure: dict[str, Any]) -> str:
+    """The capability set's words for one failure: the code's own meaning when the code is
+    one the contract states and explains, else the action's failure meaning."""
+    if isinstance(entry, str):
+        return entry
+    if not isinstance(entry, dict):
+        return ""
+    codes = entry.get("codes") or {}
+    if failure.get("known") and isinstance(codes, dict) and codes.get(failure.get("code")):
+        return str(codes[failure["code"]])
+    return str(entry.get("failure") or "")
 
 
 def _loop_path(chain: list[str], mission: Any) -> str:

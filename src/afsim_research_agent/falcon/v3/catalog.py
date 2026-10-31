@@ -323,6 +323,10 @@ def result_text(result: Any, persistent: Any = None) -> str:
         for key, word in (("running", "运行"), ("success", "成功"), ("failure", "失败")):
             if result.get(key):
                 parts.append(f"{word}={_short(result[key], 90)}")
+        codes = result.get("codes")
+        if isinstance(codes, dict):
+            # failure codes the capability set explains (a timing limit, a missing earlier step)
+            parts += [f"{code}={_short(text, 120)}" for code, text in codes.items()]
     text = "结果：" + "；".join(parts) if parts else ""
     if persistent is True and "不会自己成功" not in text:
         text += ("；" if text else "") + "一直运行，不会自己成功"

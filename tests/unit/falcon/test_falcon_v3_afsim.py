@@ -243,3 +243,8 @@ def test_action_failures_reach_the_feedback_with_stated_codes_only() -> None:
         [j], [_run()], None, failure_meanings={"engagement.fire_selected_weapon": "没有就绪武器"}
     )
     assert "首次 3 s）；能力集对失败的说明：没有就绪武器" in text
+    coded = {"failure": "开火失败", "codes": {"NO_READY_WEAPON": "武器装填中"}}
+    text = feedback(
+        [j], [_run()], None, failure_meanings={"engagement.fire_selected_weapon": coded}
+    )
+    assert "能力集对失败的说明：武器装填中" in text

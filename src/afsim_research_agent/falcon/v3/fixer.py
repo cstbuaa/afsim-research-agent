@@ -283,6 +283,10 @@ class SheetFixer:
                     "独占资源：" + (", ".join(sorted(a.exclusive)) or "无"),
                     "完成判据：" + json.dumps(a.success, ensure_ascii=False),
                     "失败码：" + ", ".join(a.failure_codes),
+                    *[
+                        f"  {code}：{text}"
+                        for code, text in ((a.result or {}).get("codes") or {}).items()
+                    ],
                     *([K.result_text(a.result, a.persistent)] if a.result else []),
                     *(["读 " + ", ".join(a.reads)] if a.reads else []),
                     *([K._writes_text(c, a)] if a.writes is not None else []),
