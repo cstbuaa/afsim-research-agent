@@ -245,21 +245,18 @@ class SensorSwitch(ActionModel):
 
 class UpdateTracks(ActionModel):
     """Refresh the local track picture. Tracks persist after the last detection until
-    they are older than ``track_timeout_s`` (option, default 2.5 s), as track lists do."""
+    they are older than ``track_timeout_s`` (option, default 2.5 s), as track lists do.
+    As on the platform, the step succeeds without a working sensor: it then gets no new
+    detections and the tracks it holds age out, so a selected target is lost a few
+    seconds after the sensor fails (the target step reports that, not this one)."""
 
     def update(self, ctx: ActionContext) -> Status:
         sensor = _sensor(ctx)
         timeout = float(ctx.options.get("track_timeout_s", 2.5))
         memory = ctx.shared.setdefault("track_memory", {})
-        if sensor is None or not sensor.operational:
-            # no new detections: the tracks already held still age out (before, the last
-            # picture stayed in place and a selected target was never lost)
-            ctx.shared["tracks"] = {
-                tid: t for tid, (t, seen) in memory.items() if ctx.now - seen <= timeout
-            }
-            return FAILURE, "TRACK_SOURCE_UNAVAILABLE"
-        for t in ctx.world.visible(ctx.vehicle):
-            memory[t["id"]] = (t, ctx.now)
+        if sensor is not None and sensor.operational:
+            for t in ctx.world.visible(ctx.vehicle):
+                memory[t["id"]] = (t, ctx.now)
         tracks = {tid: t for tid, (t, seen) in memory.items() if ctx.now - seen <= timeout}
         ctx.shared["tracks"] = tracks
         ctx.shared["snapshot_time"] = ctx.now

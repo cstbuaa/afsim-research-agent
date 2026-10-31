@@ -87,7 +87,8 @@ class Expectation(_Strict):
     state_sequence: list[str] | None = None  # visited states, consecutive duplicates removed
     final_state: str | None = None
     reaches: str | None = None
-    within_s: float | None = None
+    within_s: float | None = None  # counted from the start, or from after_event
+    after_event: str | None = None  # the scenario event the limit counts from
     never: str | None = None
 
 
@@ -337,11 +338,30 @@ def _check(e: Expectation, result: SimResult) -> Check:
     if e.final_state is not None and visited[-1] != e.final_state:
         problems.append(f"ended in {visited[-1]}, expected {e.final_state}")
     if e.reaches is not None:
-        times = [t for t, s in seq if s == e.reaches]
+        start, since = 0.0, ""
+        if e.after_event is not None:
+            raised = [
+                t
+                for t, ev in result.events
+                if ev == e.after_event or event_id(ev) == event_id(e.after_event)
+            ]
+            if not raised:
+                problems.append(f"after_event {e.after_event} is not raised in this scenario")
+            start, since = (raised[0] if raised else 0.0), f" after {e.after_event}"
+        times = [t for t, s in seq if s == e.reaches and t >= start]
         if not times:
-            problems.append(f"never reached {e.reaches}")
-        elif e.within_s is not None and times[0] > e.within_s:
-            problems.append(f"reached {e.reaches} at {times[0]:g}s, limit {e.within_s:g}s")
+            problems.append(f"never reached {e.reaches}{since}")
+        elif e.within_s is not None and times[0] - start > e.within_s:
+            if e.after_event is None:
+                problems.append(
+                    f"reached {e.reaches} at {times[0]:g}s, limit {e.within_s:g}s "
+                    "(within_s counts from the start of the scenario; to count from an "
+                    "event write after_event: <event id>)"
+                )
+            else:
+                problems.append(
+                    f"reached {e.reaches} {times[0] - start:g}s{since}, limit {e.within_s:g}s"
+                )
     if e.never is not None and e.never in visited:
         problems.append(f"entered {e.never}")
     return Check(e.id, not problems, "; ".join(problems) or "met")

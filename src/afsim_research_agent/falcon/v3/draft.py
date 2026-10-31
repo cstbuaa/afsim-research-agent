@@ -964,7 +964,7 @@ async def _draft(
     budget = request.fix_steps
     fixes: list[Any] = []
     if not control.l1_ok and budget:
-        fixes.append(await fix_sheet(drafter, run, max(1, budget // 2)))
+        fixes.append(await fix_sheet(drafter, run, max(1, budget // 2), l1_only=True))
         budget -= fixes[-1].steps
         control = drafter.check()
     check = await drafter.verification_stage(control) if control.l1_ok else control

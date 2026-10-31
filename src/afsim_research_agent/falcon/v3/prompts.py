@@ -135,7 +135,7 @@ scenarios:        # L3 二维仿真：平面坐标（米），x 向东、y 向�
     hostiles: [{id: h1, position_m: [x, y], velocity_mps: [vx, vy], appear_s: 0, remove_s: null}]
     events: [{at_s: 150, event: 事件ID}]
     faults: [{at_s: 60, role: 角色, sensor_operational: false}]
-    expect: [{id: 英文ID, role: 角色, state_sequence: [状态, …]} 或 {reaches: 状态, within_s: 60} 或 {never: 状态}]
+    expect: [{id: 英文ID, role: 角色, state_sequence: [状态, …]} 或 {reaches: 状态, within_s: 60（从仿真开始计）} 或 {reaches: 状态, after_event: 事件, within_s: 10（从该事件起计）} 或 {never: 状态}]
 - 每个状态至少一条测试；每条转换至少被一条测试或想定覆盖；想定覆盖主流程和至少一个例外（如目标丢失、取消）。
 - 路线的键用路线参数的 value。"""
 

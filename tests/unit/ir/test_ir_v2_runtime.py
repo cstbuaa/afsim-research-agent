@@ -782,6 +782,24 @@ def test_a_failed_sensor_loses_the_selected_target() -> None:
     car.sensor.operational = False
     for _ in range(5):
         world.step(1.0)
-        UpdateTracks().update(ctx())
+        # as on the platform the refresh succeeds (no new detections), so the target step
+        # after it in a sequence runs and reports the loss
+        assert UpdateTracks().update(ctx())[0] == "success"
     status, code = MaintainSelected().update(ctx())
     assert (status, code) == ("failure", "TARGET_LOST") and bb["sim.selected.valid"] is False
+
+
+def test_reaches_within_counts_from_an_event(contracts: Contracts) -> None:
+    spec = _spec()
+    sc = spec["scenarios"][0]
+    sc["events"] = [{"at_s": 100, "event": "go"}]
+    sc["expect"] = [
+        {"id": "from_start", "role": "car", "reaches": "DRIVE", "within_s": 10},
+        {"id": "from_go", "role": "car", "reaches": "DRIVE", "after_event": "go", "within_s": 10},
+        {"id": "no_event", "role": "car", "reaches": "DRIVE", "after_event": "stop"},
+    ]
+    result = simulate(normalize(spec, contracts).model, contracts, sc)
+    checks = {c.id: c for c in result.checks}
+    assert not checks["from_start"].passed and "after_event" in checks["from_start"].detail
+    assert checks["from_go"].passed, checks["from_go"].detail
+    assert not checks["no_event"].passed and "not raised" in checks["no_event"].detail

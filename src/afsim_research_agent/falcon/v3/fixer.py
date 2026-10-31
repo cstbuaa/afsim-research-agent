@@ -142,8 +142,10 @@ RULES = """你在修正一份战术稿（v3）。每一步调用一个工具，�
 class SheetFixer:
     """The tools of the loop over a :class:`~afsim_research_agent.falcon.v3.draft.Drafter`."""
 
-    def __init__(self, drafter: Any) -> None:
+    def __init__(self, drafter: Any, l1_only: bool = False) -> None:
         self.d = drafter
+        # before the verification stage there are no tests to pass: L1 is the goal
+        self.l1_only = l1_only
         self.original = {b.key: b.text for b in drafter.blocks}
         self.counts0 = _counts(drafter.blocks)
         self.edits: list[EditRecord] = []
@@ -163,6 +165,8 @@ class SheetFixer:
 
     @property
     def solved(self) -> bool:
+        if self.l1_only:
+            return bool(self.last.l1_ok)
         return self.last.verified
 
     def _recheck(self) -> Any:
@@ -194,9 +198,11 @@ class SheetFixer:
                     lines += ["    " + x for x in _skipped(s)]
             for key, line in self.d._stuck(check)[:4]:
                 lines.append(f"提示（{key}）：{line[2:]}")
-            if not check.l2 and not check.l3:
+            if not check.l2 and not check.l3 and not self.l1_only:
                 lines.append("还没有可运行的测试或想定（verification 块）")
-        if self.solved:
+        if self.solved and self.l1_only:
+            lines.append("L1 已通过，可以 finish；测试和想定由之后的验证阶段编写。")
+        elif self.solved:
             lines.append("全部检查通过，可以 finish。")
         return "\n".join(lines)
 
@@ -579,9 +585,12 @@ def _prompt(fixer: SheetFixer, records: list[dict[str, Any]], remaining: int) ->
     return "\n\n".join(str(p) for p in parts if p)
 
 
-async def fix_sheet(drafter: Any, run: ModelRunner, max_steps: int = 20) -> FixOutcome:
-    """Run the loop on the drafter's sheet; the drafter keeps the best version."""
-    fixer = SheetFixer(drafter)
+async def fix_sheet(
+    drafter: Any, run: ModelRunner, max_steps: int = 20, l1_only: bool = False
+) -> FixOutcome:
+    """Run the loop on the drafter's sheet; the drafter keeps the best version. With
+    ``l1_only`` (before the verification stage) the loop ends once L1 passes."""
+    fixer = SheetFixer(drafter, l1_only=l1_only)
     outcome = FixOutcome(False, 0, score_start=fixer.score(fixer.last))
     records: list[dict[str, Any]] = []
     for step in range(1, max_steps + 1):
