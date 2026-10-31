@@ -362,7 +362,11 @@ def _check(e: Expectation, result: SimResult) -> Check:
                 if ev == e.after_event or event_id(ev) == event_id(e.after_event)
             ]
             if not raised:
-                problems.append(f"after_event {e.after_event} is not raised in this scenario")
+                names = sorted({ev for _, ev in result.events})
+                problems.append(
+                    f"after_event {e.after_event} is not raised in this scenario (after_event "
+                    f"names an event of the scenario's events list: {names or 'none'})"
+                )
             start, since = (raised[0] if raised else 0.0), f" after {e.after_event}"
         times = [t for t, s in seq if s == e.reaches and t >= start]
         if not times:
