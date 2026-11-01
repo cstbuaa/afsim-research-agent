@@ -320,6 +320,100 @@ async def falcon_draft(
     )
 
 
+def _afsim_from_env():
+    """AFSIM in the drafting loop when the local settings name a binding and run configs
+    (FALCON_AFSIM_BINDING, FALCON_AFSIM_RUNS separated by ';', AFSIM_MISSION). The paths
+    stay on the server side and never appear in a tool result."""
+    import os
+
+    from afsim_research_agent.falcon.v3.afsim_loop import AfsimConfig
+
+    binding = os.environ.get("FALCON_AFSIM_BINDING")
+    runs = [r for r in (os.environ.get("FALCON_AFSIM_RUNS") or "").split(";") if r.strip()]
+    if not binding or not runs:
+        return None
+    return AfsimConfig(
+        binding=Path(binding),
+        runs=[Path(r.strip()) for r in runs],
+        mission=os.environ.get("AFSIM_MISSION") or "mission",
+    )
+
+
+@guarded("falcon_draft3")
+async def falcon_draft3(
+    ws: Workspace,
+    tactics_dir: str,
+    model_id: str,
+    *,
+    role_map: dict[str, str] | None = None,
+    requirement: str = "",
+    candidates: int = 3,
+    afsim: bool = False,
+    model=None,
+) -> StageResult:
+    """Crow → Falcon v3: write a v3 request naming the user's tactic selection next to the
+    Crow run, then draft (tactic sheet v3 → IR 2.0; AFSIM in the loop when configured)."""
+    from afsim_research_agent.falcon.v3.crow_bridge import make_request
+    from afsim_research_agent.falcon.v3.draft import run_draft3
+
+    tactics = ws.existing(tactics_dir, kind="Crow 战术目录")
+    if not (tactics / "tactic_selection.yaml").is_file():
+        return StageResult(
+            "falcon_draft3", "blocked", "战术目录中没有 tactic_selection.yaml：先 select_tactic"
+        )
+    base = tactics.parent if tactics.name == "tactics" else tactics
+    ws.new_dir(ws.show(base / "models" / model_id))  # refuse before calling the model
+    req_path = base / f"falcon3_{model_id}.yaml"
+    if req_path.exists():
+        req_path = base / f"falcon3_{model_id}_{datetime.now():%H%M%S}.yaml"
+    req_path = ws.writable_file(ws.show(req_path))
+    doc = make_request(
+        tactics,
+        model_id,
+        requirement=requirement,
+        role_map=role_map or {},
+        candidates=candidates,
+        base=req_path.parent,
+    )
+    req_path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), "utf-8")
+    cfg = _afsim_from_env() if afsim else None
+    problems = []
+    if afsim and cfg is None:
+        problems.append("未配置 AFSIM（FALCON_AFSIM_BINDING / FALCON_AFSIM_RUNS），只做二维检查")
+    result = await run_draft3(
+        req_path, model or _default_model(), out_dir=base / "models", afsim=cfg
+    )
+    pkg = result.package_dir
+    check = result.check
+    problems += [p.render() for p in (check.problems or [])][:8]
+    problems += [f"{s['id']} 未通过" for s in (check.l3 or []) if not s.get("passed")][:4]
+    return StageResult(
+        "falcon_draft3",
+        "ok" if result.status == "draft_valid" else "failed",
+        f"状态 {result.status}；L1 {'通过' if check.l1_ok else '未通过'}；"
+        f"L2 {sum(t['passed'] for t in check.l2)}/{len(check.l2)}；"
+        f"L3 {sum(s['passed'] for s in check.l3)}/{len(check.l3)}"
+        + ("；AFSIM 已在循环中运行" if cfg else ""),
+        artifacts={"package": ws.show(pkg), "request": ws.show(req_path)}
+        | _files(
+            ws,
+            pkg,
+            [
+                "tactic_sheet.md",
+                "falcon_review.md",
+                "behavior_spec.yaml",
+                "selected_tactics.yaml",
+                "afsim_rounds.md",
+            ],
+        ),
+        problems=problems,
+        next_steps=["读 falcon_review.md，把结果和未通过项告诉用户"]
+        if result.status != "draft_valid"
+        else ["把模型包和审阅结果告诉用户"],
+        data={"generation_model": getattr(model, "name", None) or generation_model_name()},
+    )
+
+
 @guarded("falcon_check")
 def falcon_check(ws: Workspace, package: str, *, with_l3: bool = False) -> StageResult:
     """Run L1/L2/probes/properties (+ L3) on a package without changing it."""

@@ -76,6 +76,18 @@ def _parser() -> argparse.ArgumentParser:
         "--afsim-rounds", type=int, default=3, help="AFSIM 失败后修复循环内最多复验几次"
     )
     draft3.add_argument("--afsim-steps", type=int, default=15, help="每次复验对应的修复步数")
+    crow = sub.add_parser(
+        "crow-request",
+        help="Crow → v3：由 Crow 战术目录（含 tactic_selection.yaml）写出 draft3 请求文件",
+    )
+    crow.add_argument("tactics_dir", type=Path, help="Crow 战术目录（含 tactic_selection.yaml）")
+    crow.add_argument("--model-id", required=True)
+    crow.add_argument("--out", type=Path, help="请求文件路径（默认 <运行目录>/falcon3_<id>.yaml）")
+    crow.add_argument(
+        "--role", action="append", default=[], help="Crow 角色=角色 ID，如 排长车=leader（可多个）"
+    )
+    crow.add_argument("--requirement", default="", help="补充的需求原文（默认用 Crow 的需求）")
+    crow.add_argument("--candidates", type=int, default=3)
     comp3 = sub.add_parser(
         "compile3", help="v3：战术稿 → IR 2.0 并做 L1–L3（不调用模型，结果写到新目录）"
     )
@@ -190,6 +202,43 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             _print_v3(result3)
             return result3.exit_code
+        if args.command == "crow-request":
+            import yaml
+
+            from afsim_research_agent.falcon.v3.crow_bridge import make_request
+
+            role_map = {}
+            for item in args.role:
+                crow_role, sep, rid = item.partition("=")
+                if not sep or not rid.strip():
+                    print(f"--role 写成 Crow角色=角色ID：{item}", file=sys.stderr)
+                    return EXIT_INPUT
+                role_map[crow_role.strip()] = rid.strip()
+            tactics = args.tactics_dir
+            if not (tactics / "tactic_selection.yaml").is_file():
+                print(
+                    f"{tactics} 中没有 tactic_selection.yaml：先在 Crow 中选择战术", file=sys.stderr
+                )
+                return EXIT_INPUT
+            run_dir = tactics.parent if tactics.name == "tactics" else tactics
+            out = args.out or run_dir / f"falcon3_{args.model_id}.yaml"
+            if out.exists():
+                print(f"{out} 已存在，不覆盖", file=sys.stderr)
+                return EXIT_INPUT
+            doc = make_request(
+                tactics,
+                args.model_id,
+                requirement=args.requirement,
+                role_map=role_map,
+                candidates=args.candidates,
+                base=out.parent,
+            )
+            out.write_text(
+                yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+            )
+            print(f"请求文件：{out}")
+            print(f"下一步：python -m afsim_research_agent.falcon draft3 {out}")
+            return 0
         if args.command == "compile3":
             from afsim_research_agent.falcon.v3.draft import compile_package
 

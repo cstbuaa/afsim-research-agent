@@ -56,6 +56,20 @@ class SelectTacticArgs(BaseModel):
     by: str = Field(description="做出选择的人")
 
 
+class FalconDraft3Args(BaseModel):
+    tactics_dir: str = Field(description="Crow 战术目录（含用户确认的 tactic_selection.yaml）")
+    model_id: str = Field(
+        pattern=r"^[a-z][a-z0-9_]{0,63}$", description="模型包名，小写字母数字下划线"
+    )
+    role_map: dict[str, str] = Field(
+        default_factory=dict,
+        description="Crow 角色 → 角色 ID，如 {排长车: leader, 僚车: member}；不给时按关键词推断",
+    )
+    requirement: str = Field("", description="补充的需求原文（默认用 Crow 的需求）")
+    candidates: int = Field(3, ge=1, le=5, description="独立起草份数，取检查最好的一份")
+    afsim: bool = Field(False, description="本地已配置 AFSIM 时，是否在起草循环中运行 AFSIM")
+
+
 class FalconDraftArgs(BaseModel):
     run_dir: str = Field(description="Crow 运行目录（含 research_result.json）")
     model_id: str = Field(
@@ -194,10 +208,19 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         needs_approval=True,
     ),
     ToolSpec(
+        "falcon_draft3",
+        st.falcon_draft3,
+        FalconDraft3Args,
+        "Falcon v3：把用户选定的 Crow 战术生成战术稿 v3 与 IR 2.0 模型包，并做 L1–L3 检查"
+        "（可选在循环中运行 AFSIM）。优先使用这个工具。",
+        "falcon",
+        uses_model=True,
+    ),
+    ToolSpec(
         "falcon_draft",
         st.falcon_draft,
         FalconDraftArgs,
-        "按需求和选定战术生成战术稿与模型包（tactic_sheet.md → behavior_spec.yaml）。",
+        "旧版（v2）：按需求和选定战术生成战术稿与模型包；新流程用 falcon_draft3。",
         "falcon",
         uses_model=True,
     ),

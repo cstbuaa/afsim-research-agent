@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from afsim_research_agent.falcon.llm import FalconModel, ModelRunner
 from afsim_research_agent.falcon.models import FalconRequest, PlatformHint, TextAnswer
@@ -85,7 +85,7 @@ class ScenarioParameter(BaseModel):
 
 class V3Request(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    requirement: str
+    requirement: str = ""  # may be empty when tactic_selection names the input
     model_id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
     display_name: str | None = None
     roles: dict[str, RoleHint] = Field(default_factory=dict)
@@ -107,6 +107,16 @@ class V3Request(BaseModel):
     extract_obligations: bool = True
     # drafts made independently; the one that passes most checks is kept
     candidates: int = Field(default=1, ge=1, le=5)
+    # Crow's tactic_selection.yaml (or the tactics directory holding it), relative to the
+    # request file: the selected tactic becomes the input (falcon.v3.crow_bridge)
+    tactic_selection: Path | None = None
+    role_map: dict[str, str] = Field(default_factory=dict)  # Crow role text -> role id
+
+    @model_validator(mode="after")
+    def _input(self) -> V3Request:
+        if not self.requirement.strip() and self.tactic_selection is None:
+            raise ValueError("requirement is required (or give tactic_selection)")
+        return self
 
     @classmethod
     def load(cls, path: Path) -> V3Request:
@@ -182,6 +192,7 @@ class Drafter:
         self.afsim_probe: Any = None
         self.afsim_budget = 0  # AFSIM runs the repair loop may still start
         self.afsim_verdicts: dict[str, AfsimNote] = {}  # sheet hash -> AFSIM verdict
+        self.tactic: Any = None  # the Crow selection (falcon.tactic.SelectedTactic)
 
     # ------------------------------------------------------------------ helpers
     @property
@@ -422,6 +433,11 @@ class Drafter:
         clauses, _values, notes = await decompose(request, self.run)
         self.clauses = [{"id": c.id, "text": c.text, "kind": c.kind} for c in clauses]
         self.notes += notes
+        if self.tactic is not None:
+            from afsim_research_agent.falcon.v3.crow_bridge import tactic_clauses
+
+            # the selected tactic's steps, formations and exceptions must be implemented
+            self.clauses += tactic_clauses(self.tactic)
 
     async def obligations_stage(self) -> None:
         """Requirement obligations: given by the request, or written by the model from the
@@ -814,6 +830,10 @@ def write_package(
 ) -> None:
     spec = check.compiled.spec or {}
     (staging / SHEET_FILE).write_text(drafter.sheet, encoding="utf-8")
+    if drafter.tactic is not None:
+        from afsim_research_agent.falcon.v3.crow_bridge import write_crow_files
+
+        write_crow_files(staging, drafter.tactic)
     if spec:
         (staging / "behavior_spec.yaml").write_text(
             yaml.safe_dump(spec, allow_unicode=True, sort_keys=False), encoding="utf-8"
@@ -858,6 +878,10 @@ def write_package(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     review = _review(request, drafter, check, status)
+    if drafter.tactic is not None:
+        from afsim_research_agent.falcon.v3.crow_bridge import review_section
+
+        review += "\n" + "\n".join(review_section(drafter.tactic)) + "\n"
     for outcome in fixes or []:
         review += "\n" + "\n".join(render_fix(outcome)) + "\n"
     (staging / "falcon_review.md").write_text(review, encoding="utf-8")
@@ -1010,6 +1034,11 @@ async def run_draft3(
     if candidates is not None:
         request = request.model_copy(update={"candidates": candidates})
     contracts = Contracts.load(request.capability_set)
+    tactic, bridge_notes = None, []
+    if request.tactic_selection is not None:
+        from afsim_research_agent.falcon.v3.crow_bridge import apply_selection
+
+        request, tactic, bridge_notes = apply_selection(request, request_path, contracts)
     target = _target(request, request_path, out_dir)
     staging = target.with_name(target.name + ".partial")
     if staging.exists():
@@ -1017,6 +1046,7 @@ async def run_draft3(
     staging.mkdir(parents=True)
     run = ModelRunner(model)
     lead = Drafter(request, contracts, run)
+    lead.tactic, lead.notes = tactic, list(bridge_notes)
     drafters = [lead]
     try:
         # shared by every candidate: the clauses and the obligations the drafts are judged on
@@ -1027,6 +1057,7 @@ async def run_draft3(
         for _ in range(request.candidates - 1):
             d = Drafter(request, contracts, run)
             d.clauses, d.obligations, d.notes = list(lead.clauses), list(lead.obligations), []
+            d.tactic = tactic
             drafters.append(d)
         outcomes = await asyncio.gather(
             _draft(lead, run, structure), *(_draft(d, run) for d in drafters[1:])
@@ -1034,6 +1065,8 @@ async def run_draft3(
         ranked = sorted(range(len(drafters)), key=lambda i: _score(outcomes[i][0]))
         best = ranked[0]
         drafter, (check, fixes) = drafters[best], outcomes[best]
+        if drafter is not lead:
+            drafter.notes[:0] = bridge_notes
         if len(drafters) > 1:
             drafter.notes.append(
                 f"候选 {len(drafters)} 份，选第 {best + 1} 份；得分（L1 未过、L1 问题数、"
