@@ -70,6 +70,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     draft3.add_argument("--afsim-run", type=Path, action="append", help="AFSIM 运行配置（可多个）")
     draft3.add_argument(
+        "--afsim-kit",
+        type=Path,
+        help="平台工程的想定套件：按模型的角色和切片自动生成一次最小 AFSIM 运行",
+    )
+    draft3.add_argument(
         "--afsim-mission", help="mission 可执行文件（默认 AFSIM_MISSION 或 mission）"
     )
     draft3.add_argument(
@@ -185,12 +190,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.afsim_binding is not None:
                 from afsim_research_agent.falcon.v3.afsim_loop import AfsimConfig
 
-                if not args.afsim_run:
-                    print("--afsim-binding 需要至少一个 --afsim-run", file=sys.stderr)
+                if not args.afsim_run and args.afsim_kit is None:
+                    print("--afsim-binding 需要 --afsim-run 或 --afsim-kit", file=sys.stderr)
                     return EXIT_INPUT
                 afsim = AfsimConfig(
                     binding=args.afsim_binding,
-                    runs=list(args.afsim_run),
+                    runs=list(args.afsim_run or []),
+                    kit=args.afsim_kit,
                     mission=args.afsim_mission or os.environ.get("AFSIM_MISSION") or "mission",
                     rounds=args.afsim_rounds,
                     steps=args.afsim_steps,

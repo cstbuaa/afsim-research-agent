@@ -330,12 +330,14 @@ def _afsim_from_env():
 
     binding = os.environ.get("FALCON_AFSIM_BINDING")
     runs = [r for r in (os.environ.get("FALCON_AFSIM_RUNS") or "").split(";") if r.strip()]
-    if not binding or not runs:
+    kit = os.environ.get("FALCON_AFSIM_KIT")
+    if not binding or not (runs or kit):
         return None
     return AfsimConfig(
         binding=Path(binding),
         runs=[Path(r.strip()) for r in runs],
         mission=os.environ.get("AFSIM_MISSION") or "mission",
+        kit=Path(kit) if kit else None,
     )
 
 

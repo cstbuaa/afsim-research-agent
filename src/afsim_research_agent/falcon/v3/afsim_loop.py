@@ -37,6 +37,9 @@ class AfsimConfig:
     rounds: int = 3  # AFSIM re-runs inside the repair loop after a failed run
     steps: int = 15  # repair loop steps per AFSIM re-run
     timeout_s: float = 300.0
+    # the platform project's scenario kit: a run laid out from the model itself is added
+    # (ir.v2.afsim.scenario) — for tactics without a handwritten run, e.g. from Crow
+    kit: Path | None = None
 
 
 @dataclass
@@ -77,6 +80,10 @@ def run_once(
 ) -> tuple[list[RunJudgement] | None, list[RunConfig], str | None]:
     """Compile and run; (judgements, runs, compile error)."""
     runs = [RunConfig.load(r) for r in cfg.runs]
+    if cfg.kit is not None:
+        from afsim_research_agent.ir.v2.afsim.scenario import generate, load_kit
+
+        runs.append(generate(model, load_kit(cfg.kit), contracts))
     try:
         compiler = Compiler(model, contracts, Binding.load(cfg.binding))
         package = compiler.package(runs, obligations=obligations)
