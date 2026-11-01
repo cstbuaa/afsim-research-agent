@@ -33,6 +33,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from afsim_research_agent.falcon.v3.draft import RoleHint, V3Request
 
 # Crow role text → role id when the request gives no role_map (first match wins)
@@ -65,21 +67,31 @@ TACTIC_RULES = (
     "- 每个阶段、队形和例外都要落到具体的状态、转换、条件或子树上，并在 implements 中写出对应的"
     "条款编号（tc_xx_sN / tc_xx_gN / tc_xx_xN）；\n"
     "- 资料没有给出的数值照常定义为参数（basis 写 unknown），由人工复核；\n"
-    "- 能力集表达不了的要素写进 gaps 并说明，不要挂在无关的元素上；\n"
     "- 组合了多个候选时，按列出的顺序衔接各阶段；只选了部分阶段的候选，只实现列出的阶段。"
 )
 
+# Crow need statuses (CapabilityNeed.status) the capability set cannot provide yet; the
+# others (ready, composable, simplified, partial, confirm) are built from what Crow mapped
+MISSING_STATUSES = frozenset({"ir_extension", "develop"})
 
-# Crow need statuses (CapabilityNeed.status) for which a gap is the honest answer
-GAP_STATUSES = frozenset({"partial", "confirm", "ir_extension", "develop"})
-
-CAPABILITY_RULES = (
-    "能力映射（Crow 已逐项核对能力集；草稿必须按此实现）：\n"
-    "- 标为可直接实现 / 可组合实现 / 简化处理的要素，用列出的动作或子树实现（简化处理按说明的简化"
-    "方式落地，例如广播模式改为写共享目标或分配结果、超时自选目标用回退动作），**不要写 gaps**；\n"
-    "- 只有标为需确认 / 需扩展 / 需开发 / 部分可实现的要素才可以写 gaps；\n"
-    "- 带 gaps 占位的模型不会进入 AFSIM 运行。"
-)
+_RULES = {
+    "skip": (
+        "能力映射（Crow 已逐项核对能力目录；先按目录匹配实现）：\n"
+        "- 列出了动作或子树的要素（可直接实现、可组合实现、简化处理、需确认、部分可实现），用列出的"
+        "动作或子树实现；简化处理按说明的简化方式落地（例如广播模式改为写共享目标或分配结果、超时"
+        "自选目标用回退动作）；\n"
+        "- 标为**暂缺能力**的要素本次忽略：不实现、不写 gaps、不写进 implements，模型不为它设"
+        "状态或转换；它们已记入能力开发队列，待能力开发后再补；\n"
+        "- 本次模型不得有 gaps。"
+    ),
+    "wait": (
+        "能力映射（Crow 已逐项核对能力目录；先按目录匹配实现）：\n"
+        "- 列出了动作或子树的要素，用列出的动作或子树实现，**不要写 gaps**；简化处理按说明的简化"
+        "方式落地；\n"
+        "- 标为**暂缺能力**的要素写成 gaps（说明需要的能力），留给能力开发；带 gaps 的模型在能力"
+        "开发完成前不会进入 AFSIM 运行。"
+    ),
+}
 
 
 def _tokens(ref: Any) -> str:
@@ -94,43 +106,72 @@ def _selected_steps(part: Any) -> set[int] | None:
     return None if part.whole else {i for i, _ in part.steps()}
 
 
+_ELEMENT = {"steps": "s", "geometry": "g", "exceptions": "x"}
+
+
+def element_ids(card_id: str, source: str) -> list[str]:
+    """Clause ids of the card elements a need came from (``steps[0].do, steps[2].until``
+    → tc_01_s1, tc_01_s3)."""
+    out: list[str] = []
+    for kind, index in re.findall(r"(steps|geometry|exceptions)\[(\d+)\]", source):
+        cid = f"{card_id}_{_ELEMENT[kind]}{int(index) + 1}"
+        if cid not in out:
+            out.append(cid)
+    return out
+
+
 def capability_map(tactic: Any, contracts: Any) -> list[dict[str, Any]]:
     """Crow's capability needs of the selected cards (phases taken only), with the
-    references that exist in this capability set."""
+    references that exist in this capability set; ``missing``: nothing in the set provides
+    it yet."""
     out: list[dict[str, Any]] = []
     for part in tactic.parts:
         card = part.card
         keep = _selected_steps(part)
         for need in card.capability_needs or []:
             source = str(getattr(need, "source", "") or "")
-            m = re.match(r"steps\[(\d+)\]", source)
-            if keep is not None and (m is None or int(m.group(1)) not in keep):
+            steps = {int(i) for i in re.findall(r"steps\[(\d+)\]", source)}
+            if keep is not None and not steps & keep:
                 continue
             refs = [t for t in (_tokens(r) for r in need.maps_to) if _known(t, contracts)]
             status = str(getattr(need, "status", "") or "")
             out.append(
                 {
                     "card": card.id,
+                    "elements": element_ids(card.id, source),
                     "need": str(getattr(need, "need", "") or ""),
                     "source": source,
                     "status": status,
                     "label": str(getattr(need, "label", "") or status),
                     "refs": refs,
                     "why": str(getattr(need, "why", "") or ""),
+                    "missing_text": str(getattr(need, "missing", "") or ""),
                     "notes": [str(n) for n in (getattr(need, "notes", None) or [])],
-                    "gap_ok": status in GAP_STATUSES or not refs,
+                    "missing": status in MISSING_STATUSES or not refs,
                 }
             )
     return out
 
 
-def capability_text(entries: list[dict[str, Any]]) -> str:
+def deferred_elements(entries: list[dict[str, Any]]) -> set[str]:
+    """Card elements (clause ids) every capability need of which is missing."""
+    by: dict[str, list[bool]] = {}
+    for e in entries:
+        for element in e["elements"]:
+            by.setdefault(element, []).append(e["missing"])
+    return {el for el, flags in by.items() if all(flags)}
+
+
+def capability_text(entries: list[dict[str, Any]], mode: str = "skip") -> str:
     if not entries:
         return ""
-    lines = [CAPABILITY_RULES]
+    lines = [_RULES[mode]]
     for e in entries:
-        refs = "、".join(e["refs"]) or "（能力集中没有对应项）"
-        how = f"；简化：{'；'.join(e['notes'])}" if e["notes"] and not e["gap_ok"] else ""
+        if e["missing"]:
+            lines.append(f"- {e['card']} {e['need']}（{e['source']}）：暂缺能力")
+            continue
+        how = f"；简化：{'；'.join(e['notes'])}" if e["notes"] else ""
+        refs = "、".join(e["refs"])
         lines.append(f"- {e['card']} {e['need']}（{e['source']}）：{e['label']} → {refs}{how}")
     return "\n".join(lines)
 
@@ -154,29 +195,42 @@ def _closest(text: str, entries: list[dict[str, Any]]) -> tuple[dict[str, Any] |
 
 
 def gap_problems(
-    gaps: dict[str, Any], entries: list[dict[str, Any]], *, threshold: float = 0.2
+    gaps: dict[str, Any],
+    entries: list[dict[str, Any]],
+    *,
+    mode: str = "skip",
+    threshold: float = 0.2,
 ) -> list[tuple[str, str]]:
-    """(gap id, message) for gaps the selected tactic does not need: the closest Crow need
-    was mapped onto the capability set."""
+    """(gap id, message) for the gaps the selected tactic should not have: with ``skip``
+    every gap (the closest Crow need names the actions to use, or the element is left
+    out); with ``wait`` the gaps whose closest need Crow mapped onto the capability set."""
     if not entries:
         return []
     out: list[tuple[str, str]] = []
     for gid, spec in (gaps or {}).items():
         spec = spec if isinstance(spec, dict) else {}
-        text = f"{gid} {spec.get('description') or ''}"
-        need, score = _closest(text, entries)
-        if need is None or need["gap_ok"] or score < threshold:
-            continue
-        how = f"（简化：{'；'.join(need['notes'])}）" if need["notes"] else ""
-        out.append(
-            (
-                gid,
-                f"CROW_GAP 缺口 {gid} 对应 Crow 已核对的要素「{need['need']}」"
-                f"（{need['source']}，{need['label']}），能力集可以实现：用 "
-                f"{'、'.join(need['refs'])} 实现{how}；删除 gaps.{gid}，并把树中 gap.{gid} "
-                "的用法换成这些动作或子树。",
+        need, score = _closest(f"{gid} {spec.get('description') or ''}", entries)
+        mapped = need is not None and not need["missing"] and score >= threshold
+        if mapped:
+            how = f"（简化：{'；'.join(need['notes'])}）" if need["notes"] else ""
+            out.append(
+                (
+                    gid,
+                    f"CROW_GAP 缺口 {gid} 对应 Crow 已在能力目录中匹配的要素「{need['need']}」"
+                    f"（{need['source']}，{need['label']}）：用 {'、'.join(need['refs'])} 实现"
+                    f"{how}；删除 gaps.{gid}，并把树中 gap.{gid} 的用法换成这些动作或子树。",
+                )
             )
-        )
+        elif mode == "skip":
+            what = f"「{need['need']}」" if need is not None and score >= threshold else ""
+            out.append(
+                (
+                    gid,
+                    f"CROW_GAP 缺口 {gid}：能力目录暂缺的要素{what}本次忽略（已记入能力开发"
+                    f"队列）。删除 gaps.{gid}，删掉只为它设的状态、转换和树节点，implements "
+                    "中也不要再写它；其余行为照常实现。",
+                )
+            )
     return out
 
 
@@ -185,8 +239,14 @@ def resolve_selection(request: V3Request, request_path: Path) -> Path:
     return path if path.is_absolute() else (request_path.parent / path)
 
 
-def tactic_text(tactic: Any) -> str:
-    """The selected tactic in words, appended to the requirement every stage sees."""
+def tactic_text(tactic: Any, deferred: set[str] | None = None) -> str:
+    """The selected tactic in words, appended to the requirement every stage sees;
+    ``deferred`` elements (no capability yet) are marked as left out."""
+    deferred = deferred or set()
+
+    def mark(cid: str) -> str:
+        return "（暂缺能力，本次忽略）" if cid in deferred else ""
+
     lines = [TACTIC_RULES]
     for part in tactic.parts:
         card = part.card
@@ -202,15 +262,18 @@ def tactic_text(tactic: Any) -> str:
             )
         for index, step in part.steps():
             until = f"，直到{step.until}" if step.until else ""
-            lines.append(f"- {card.id}_s{index + 1} 【{step.phase}】{step.do}{until}")
+            cid = f"{card.id}_s{index + 1}"
+            lines.append(f"- {cid} 【{step.phase}】{step.do}{until}{mark(cid)}")
         if part.whole:
             for index, g in enumerate(card.geometry):
                 extra = (f"（{g.when}）" if g.when else "") + (
                     f"，间距{g.spacing}" if g.spacing else ""
                 )
-                lines.append(f"- {card.id}_g{index + 1} 队形：{g.formation}{extra}")
+                cid = f"{card.id}_g{index + 1}"
+                lines.append(f"- {cid} 队形：{g.formation}{extra}{mark(cid)}")
             for index, x in enumerate(card.exceptions):
-                lines.append(f"- {card.id}_x{index + 1} 例外：若{x.situation}，{x.then}")
+                cid = f"{card.id}_x{index + 1}"
+                lines.append(f"- {cid} 例外：若{x.situation}，{x.then}{mark(cid)}")
         if card.assumptions:
             lines.append("假设：" + "；".join(card.assumptions))
     if tactic.user_notes:
@@ -218,10 +281,13 @@ def tactic_text(tactic: Any) -> str:
     return "\n".join(lines)
 
 
-def tactic_clauses(tactic: Any) -> list[dict[str, Any]]:
-    """The tactic's steps, formations and exceptions as v3 clauses (``origin: tactic``)."""
+def tactic_clauses(tactic: Any, skip: set[str] | None = None) -> list[dict[str, Any]]:
+    """The tactic's steps, formations and exceptions as v3 clauses (``origin: tactic``);
+    ``skip``: elements left out of this model (no capability yet)."""
     out = []
     for c in tactic.clauses():
+        if skip and c.id in skip:
+            continue
         out.append(
             {
                 "id": c.id,
@@ -320,11 +386,14 @@ def apply_selection(
 
     tactic = load_selection(resolve_selection(request, request_path))
     notes = [f"输入来自 Crow 选定战术 {tactic.source_label}"]
-    caps = capability_text(capability_map(tactic, contracts))
+    entries = capability_map(tactic, contracts)
+    mode = request.missing_capabilities
+    caps = capability_text(entries, mode)
+    deferred = deferred_elements(entries) if mode == "skip" else set()
     update: dict[str, Any] = {
         "requirement": tactic.requirement(request.requirement)
         + "\n\n"
-        + tactic_text(tactic)
+        + tactic_text(tactic, deferred=deferred)
         + (f"\n\n{caps}" if caps else "")
     }
     if not request.roles:
@@ -339,22 +408,75 @@ def apply_selection(
             notes.append("切片取自 Crow 的能力标注：" + "、".join(slices))
     if not request.display_name:
         update["display_name"] = "+".join(p.card.name for p in tactic.parts)[:60]
+    missing = [e for e in entries if e["missing"]]
+    if missing:
+        how = "本次忽略，待能力开发" if mode == "skip" else "写成缺口，等待能力开发"
+        notes.append(
+            f"能力目录暂缺 {len(missing)} 项（{how}）：" + "；".join(e["need"] for e in missing)
+        )
     for card_id, text in tactic.reference_assumptions():
         notes.append(f"{card_id} 的参考值假设需人工复核：{text}")
     return request.model_copy(update=update), tactic, notes
 
 
-def write_crow_files(staging: Path, tactic: Any) -> None:
+DEFERRED_FILE = "deferred_capabilities.yaml"
+
+
+def write_crow_files(
+    staging: Path,
+    tactic: Any,
+    entries: list[dict[str, Any]] | None = None,
+    mode: str = "skip",
+) -> None:
     (staging / "selected_tactics.yaml").write_text(tactic.selected_document(), encoding="utf-8")
+    missing = [e for e in entries or [] if e["missing"]]
+    if missing:
+        doc = {
+            "mode": mode,
+            "meaning": (
+                "能力目录暂缺；本模型忽略这些要素，能力开发后重新起草"
+                if mode == "skip"
+                else "能力目录暂缺；本模型以 gaps 占位，等待能力开发"
+            ),
+            "left_out": sorted(deferred_elements(entries or [])) if mode == "skip" else [],
+            "needs": [
+                {
+                    k: e[k]
+                    for k in ("card", "elements", "need", "source", "status", "missing_text")
+                    if e.get(k)
+                }
+                for e in missing
+            ],
+        }
+        (staging / DEFERRED_FILE).write_text(
+            yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
     gaps = tactic.crow_gaps_document()
     if gaps:
         (staging / "crow_capability_gaps.yaml").write_text(gaps, encoding="utf-8")
 
 
-def review_section(tactic: Any) -> list[str]:
+def review_section(
+    tactic: Any, entries: list[dict[str, Any]] | None = None, mode: str = "skip"
+) -> list[str]:
     from afsim_research_agent.falcon.tactic import render_section
 
-    return render_section(tactic, number="Crow")
+    lines = list(render_section(tactic, number="Crow"))
+    entries = entries or []
+    if entries:
+        mapped = [e for e in entries if not e["missing"]]
+        missing = [e for e in entries if e["missing"]]
+        lines += ["", "### 能力目录匹配", ""]
+        lines += [f"- {e['need']}（{e['label']}）→ {'、'.join(e['refs'])}" for e in mapped]
+        if missing:
+            how = (
+                "本次忽略，见 deferred_capabilities.yaml，能力开发后重新起草"
+                if mode == "skip"
+                else "以 gaps 占位，等待能力开发"
+            )
+            lines += ["", f"暂缺能力（{how}）："]
+            lines += [f"- {e['need']}（{e['source']}）" for e in missing]
+    return lines
 
 
 def make_request(
@@ -366,6 +488,7 @@ def make_request(
     scenario_events: dict[str, str] | None = None,
     candidates: int = 3,
     base: Path | None = None,
+    missing_capabilities: str = "skip",
 ) -> dict[str, Any]:
     """A v3 request (as a dict to write next to the Crow run) that names the selection."""
     target = tactics_dir if base is None else Path(_relative(tactics_dir, base))
@@ -375,6 +498,7 @@ def make_request(
         "candidates": candidates,
         "fix_steps": 40,
         "scenario_events": scenario_events or {"cancelled": "外部结束请求"},
+        "missing_capabilities": missing_capabilities,
     }
     if requirement:
         out["requirement"] = requirement

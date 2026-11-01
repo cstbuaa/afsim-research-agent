@@ -88,6 +88,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     crow.add_argument("--requirement", default="", help="补充的需求原文（默认用 Crow 的需求）")
     crow.add_argument("--candidates", type=int, default=3)
+    crow.add_argument(
+        "--missing",
+        choices=("skip", "wait"),
+        default="skip",
+        help="能力目录暂缺的战术要素：skip 本次忽略（默认），wait 写成缺口等待能力开发",
+    )
     comp3 = sub.add_parser(
         "compile3", help="v3：战术稿 → IR 2.0 并做 L1–L3（不调用模型，结果写到新目录）"
     )
@@ -231,6 +237,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 requirement=args.requirement,
                 role_map=role_map,
                 candidates=args.candidates,
+                missing_capabilities=args.missing,
                 base=out.parent,
             )
             out.write_text(

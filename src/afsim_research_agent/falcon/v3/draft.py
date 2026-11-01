@@ -111,6 +111,10 @@ class V3Request(BaseModel):
     # request file: the selected tactic becomes the input (falcon.v3.crow_bridge)
     tactic_selection: Path | None = None
     role_map: dict[str, str] = Field(default_factory=dict)  # Crow role text -> role id
+    # tactic elements whose capability the set lacks (Crow's annotation): "skip" leaves them
+    # out of this model (deferred to capability development); "wait" keeps them as gaps,
+    # and the model waits for the capability-development agent (no AFSIM run until then)
+    missing_capabilities: Literal["skip", "wait"] = "skip"
 
     @model_validator(mode="after")
     def _input(self) -> V3Request:
@@ -226,7 +230,10 @@ class Drafter:
         if self.crow_caps and compiled.spec is not None:
             from afsim_research_agent.falcon.v3.crow_bridge import gap_problems
 
-            for gid, message in gap_problems(compiled.spec.get("gaps") or {}, self.crow_caps):
+            gaps = compiled.spec.get("gaps") or {}
+            for gid, message in gap_problems(
+                gaps, self.crow_caps, mode=self.r.missing_capabilities
+            ):
                 block, line = compiled.locate(f"gaps.{gid}")
                 problems.append(SheetProblem(block, line, message, code="CROW_GAP"))
         out = Check(compiled, model, diags, problems)
@@ -441,10 +448,18 @@ class Drafter:
         self.clauses = [{"id": c.id, "text": c.text, "kind": c.kind} for c in clauses]
         self.notes += notes
         if self.tactic is not None:
-            from afsim_research_agent.falcon.v3.crow_bridge import tactic_clauses
+            from afsim_research_agent.falcon.v3.crow_bridge import (
+                deferred_elements,
+                tactic_clauses,
+            )
 
             # the selected tactic's steps, formations and exceptions must be implemented
-            self.clauses += tactic_clauses(self.tactic)
+            skip = (
+                deferred_elements(self.crow_caps)
+                if self.r.missing_capabilities == "skip"
+                else set()
+            )
+            self.clauses += tactic_clauses(self.tactic, skip=skip)
 
     async def obligations_stage(self) -> None:
         """Requirement obligations: given by the request, or written by the model from the
@@ -840,7 +855,7 @@ def write_package(
     if drafter.tactic is not None:
         from afsim_research_agent.falcon.v3.crow_bridge import write_crow_files
 
-        write_crow_files(staging, drafter.tactic)
+        write_crow_files(staging, drafter.tactic, drafter.crow_caps, request.missing_capabilities)
     if spec:
         (staging / "behavior_spec.yaml").write_text(
             yaml.safe_dump(spec, allow_unicode=True, sort_keys=False), encoding="utf-8"
@@ -888,7 +903,8 @@ def write_package(
     if drafter.tactic is not None:
         from afsim_research_agent.falcon.v3.crow_bridge import review_section
 
-        review += "\n" + "\n".join(review_section(drafter.tactic)) + "\n"
+        section = review_section(drafter.tactic, drafter.crow_caps, request.missing_capabilities)
+        review += "\n" + "\n".join(section) + "\n"
     for outcome in fixes or []:
         review += "\n" + "\n".join(render_fix(outcome)) + "\n"
     (staging / "falcon_review.md").write_text(review, encoding="utf-8")

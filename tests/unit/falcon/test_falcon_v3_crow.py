@@ -132,7 +132,7 @@ def _need(need, source, status, maps_to, why="", notes=None):
     )
 
 
-def test_crow_capability_map_turns_needless_gaps_into_problems() -> None:
+def _mapped_tactic():
     tactic = _fake_tactic()
     tactic.parts[0].card.capability_needs = [
         _need(
@@ -144,21 +144,61 @@ def test_crow_capability_map_turns_needless_gaps_into_problems() -> None:
         ),
         _need("无人机前出侦察", "steps[1].do", "develop", ["uav.launch"]),
     ]
-    entries = B.capability_map(tactic, _contracts())
-    assert [e["gap_ok"] for e in entries] == [False, True]
-    text = B.capability_text(entries)
-    assert "不要写 gaps" in text and "threat_allocation.broadcast_assignments" in text
-    gaps = {
-        "broadcast_free_fire_mode": {"description": "排长车向成员车广播自由交战模式指令"},
-        "uav_scout": {"description": "无人机前出侦察并回传目标"},
-    }
-    problems = B.gap_problems(gaps, entries)
-    assert [gid for gid, _ in problems] == ["broadcast_free_fire_mode"]
-    assert "threat_allocation.broadcast_assignments" in problems[0][1]
+    return tactic
+
+
+GAPS = {
+    "broadcast_free_fire_mode": {"description": "排长车向成员车广播自由交战模式指令"},
+    "uav_scout": {"description": "无人机前出侦察并回传目标"},
+}
+
+
+def test_capability_map_matches_the_catalog_first() -> None:
+    entries = B.capability_map(_mapped_tactic(), _contracts())
+    assert [e["missing"] for e in entries] == [False, True]
+    assert [e["elements"] for e in entries] == [["tc_01_s1"], ["tc_01_s2"]]
+    assert B.element_ids("tc_02", "steps[0].do, steps[2].until") == ["tc_02_s1", "tc_02_s3"]
+    assert B.deferred_elements(entries) == {"tc_01_s2"}
+    text = B.capability_text(entries, "skip")
+    assert "threat_allocation.broadcast_assignments" in text and "无人机前出侦察" in text
+    assert "本次忽略" in text and "不得有 gaps" in text
+    assert "写成 gaps" in B.capability_text(entries, "wait")
     # only the phases taken count
+    tactic = _mapped_tactic()
     tactic.parts[0].whole, tactic.parts[0].phases = False, ["交战"]
     tactic.parts[0].steps = lambda: [(1, _step("交战", "瞄准开火", "目标被摧毁"))]
     assert [e["need"] for e in B.capability_map(tactic, _contracts())] == ["无人机前出侦察"]
+
+
+def test_missing_capabilities_skip_or_wait() -> None:
+    entries = B.capability_map(_mapped_tactic(), _contracts())
+    # skip: no gaps at all; the mapped one names the actions, the missing one is left out
+    skip = dict(B.gap_problems(GAPS, entries, mode="skip"))
+    assert set(skip) == {"broadcast_free_fire_mode", "uav_scout"}
+    assert "threat_allocation.broadcast_assignments" in skip["broadcast_free_fire_mode"]
+    assert "本次忽略" in skip["uav_scout"]
+    # wait: the missing one stays as a gap for capability development
+    wait = dict(B.gap_problems(GAPS, entries, mode="wait"))
+    assert set(wait) == {"broadcast_free_fire_mode"}
+
+
+def test_skipped_elements_leave_the_clauses_and_are_recorded(tmp_path: Path) -> None:
+    tactic = _mapped_tactic()
+    clause = lambda cid: SimpleNamespace(id=cid, text=cid, kind="behavior", evidence=[])  # noqa: E731
+    tactic.clauses = lambda: [clause("tc_01_s1"), clause("tc_01_s2"), clause("tc_01_x1")]
+    ids = [c["id"] for c in B.tactic_clauses(tactic, skip={"tc_01_s2"})]
+    assert ids == ["tc_01_s1", "tc_01_x1"]
+    assert "暂缺能力，本次忽略" in B.tactic_text(tactic, deferred={"tc_01_s2"})
+    entries = B.capability_map(tactic, _contracts())
+    tactic.selected_document = lambda: "selected: []\n"
+    tactic.crow_gaps_document = lambda: ""
+    B.write_crow_files(tmp_path, tactic, entries, "skip")
+    doc = yaml.safe_load((tmp_path / B.DEFERRED_FILE).read_text(encoding="utf-8"))
+    assert doc["mode"] == "skip" and doc["left_out"] == ["tc_01_s2"]
+    assert doc["needs"][0]["need"] == "无人机前出侦察"
+    assert (
+        B.make_request(tmp_path, "x", missing_capabilities="wait")["missing_capabilities"] == "wait"
+    )
 
 
 def test_a_real_crow_selection_loads(tmp_path: Path) -> None:

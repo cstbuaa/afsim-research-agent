@@ -349,6 +349,7 @@ async def falcon_draft3(
     requirement: str = "",
     candidates: int = 3,
     afsim: bool = False,
+    missing_capabilities: str = "skip",
     model=None,
 ) -> StageResult:
     """Crow → Falcon v3: write a v3 request naming the user's tactic selection next to the
@@ -374,6 +375,7 @@ async def falcon_draft3(
         role_map=role_map or {},
         candidates=candidates,
         base=req_path.parent,
+        missing_capabilities=missing_capabilities,
     )
     req_path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), "utf-8")
     cfg = _afsim_from_env() if afsim else None
