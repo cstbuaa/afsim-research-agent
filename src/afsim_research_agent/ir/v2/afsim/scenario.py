@@ -41,6 +41,7 @@ types, auxiliary-data keys and observer files); this module only fills it in::
     fire_actions = ["<action id>"]   # actions that fire a weapon
     [slices.<slice id>]              # added when the model uses the slice
     includes = ["<file>"]
+    preamble = "<raw input before the platforms>"   # e.g. a processor type the bodies add
     aux = "<aux fields for every platform>"
     leader_aux = "<aux fields>"
     member_aux = "<aux fields>"
@@ -225,10 +226,13 @@ def generate(
             events.append({"at_s": end_s + t if t < 0 else t, "event": ev})
 
     includes = list(meta.get("includes") or [])
+    preamble = [meta.get("preamble", "")]
     extra = [*enemies, *(p for p in per_platform if p.strip())]
     for sid in sorted(used):
         sk = slices_kit.get(sid) or {}
         includes += [i for i in sk.get("includes") or [] if i not in includes]
+        if (sk.get("preamble") or "").strip():
+            preamble.append(_fill(sk["preamble"], {"leader": leader}))
         if (sk.get("extra") or "").strip():
             extra.append(_fill(sk["extra"], {"leader": leader}))
 
@@ -252,7 +256,7 @@ def generate(
             "end_time_s": end_s,
             "random_seed": int(meta.get("random_seed", 1)),
             "includes": includes,
-            "preamble": meta.get("preamble", ""),
+            "preamble": "\n".join(x for x in preamble if x.strip()),
             "extra": "\n".join(extra),
             "platforms": platforms,
             "events": events,

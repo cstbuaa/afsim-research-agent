@@ -31,6 +31,7 @@ KIT = {
         },
         "org": {
             "aux": "int org_index = {index}",
+            "preamble": "processor ORG_LOADER WSF_SCRIPT_PROCESSOR end_processor",
             "extra": 'execute at_time 0 sec absolute load_org("{leader}"); end_execute',
             "per_platform": "# {name} is {role}",
         },
@@ -93,6 +94,7 @@ def test_generated_run_lays_out_roles_slices_events_and_checks() -> None:
     assert "red_1" in run.extra and "red_2" in run.extra
     assert 'load_org("blue_platoon_leader_1")' in run.extra
     assert "# blue_member_2 is member" in run.extra
+    assert "ORG_LOADER" in run.preamble
     assert [(e.at_s, e.event) for e in run.events] == [(60.0, "cancelled")]
     assert [(x.kind, x.by) for x in run.expect.events] == [("WEAPON_FIRED", "member")]
     assert run.end_time_s == 80 and run.start_time == "18:00:00"
