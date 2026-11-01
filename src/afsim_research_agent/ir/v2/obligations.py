@@ -213,6 +213,25 @@ def check(
                     )
                 )
                 continue
+            if (
+                ob.kind == "precedes"
+                and ob.first not in own
+                and any(
+                    ob.first in other for name, other in by_platform.items() if name != platform
+                )
+            ):
+                # the prerequisite ran on another vehicle only (its capable set includes the
+                # action through a subtree, e.g. a shutdown that also stops broadcasting):
+                # ordering across vehicles is not judged
+                verdicts.append(
+                    Verdict(
+                        ob.id,
+                        True,
+                        f"{platform}: {ob.first} 只在其他车辆上执行，跨车先后不按开始时刻判定",
+                        judged=False,
+                    )
+                )
+                continue
             verdicts.append(_one(ob, platform, own, events, step_s, end_s))
         judged = [v for v in verdicts if v.judged]
         if not judged:

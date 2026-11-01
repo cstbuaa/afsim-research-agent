@@ -69,9 +69,19 @@ def test_roles_judge_only_their_own_actions() -> None:
     late = [(2, "lead", "lead.send"), (21, "m1", "mem.adopt")]
     (_, v2) = check([adopt, stop], late, [(20.0, "end")], end_s=40, capable=capable)
     assert not v2.passed  # the member never stopped
-    # without the role map every platform is judged on its own starts
+    # without the role map: the response is judged on every platform; the ordering is not
+    # judged on a platform where only another vehicle ran the prerequisite
     (v1, v2) = check([adopt, stop], acts, [(20.0, "end")], end_s=40)
-    assert not v1.passed and not v2.passed
+    assert v1.passed and not v1.judged and not v2.passed
+    # a member whose model can also run the prerequisite (a shutdown subtree that stops the
+    # broadcast) but never ran it: still not judged across vehicles
+    wide = {"lead": {"lead.send"}, "m1": {"lead.send", "mem.adopt", "mem.stop"}}
+    (v1, _) = check([adopt, stop], acts, [(20.0, "end")], end_s=40, capable=wide)
+    assert v1.passed and not v1.judged
+    # the member ran it itself, but after adopting: judged and failed
+    own = [*acts, (5, "m1", "lead.send")]
+    (v1, _) = check([adopt, stop], own, [(20.0, "end")], end_s=40, capable=wide)
+    assert not v1.passed
 
 
 def test_role_actions_follow_subtrees_and_tactics() -> None:
