@@ -8,9 +8,11 @@ names, positions, native script or auxiliary-data names, file paths or raw AFSIM
 the local run. A run expectation (marker) is described by its ``marker_notes`` entry in the
 run configuration, or only counted when it has none.
 
-One round: compile → run → if a run fails, the repair loop gets the feedback as a failed
-check named ``afsim``; the check stays failed until the sheet changes, then the repair
-loop may finish once its 2D checks pass, and the next round runs AFSIM again.
+A failed run gives the repair loop a failed check named ``afsim`` with the feedback. The
+check stays failed until AFSIM itself passes on the current sheet: changing the sheet does
+not clear it. Inside the repair loop the model re-runs AFSIM (``run_afsim``; it also runs by
+itself once every 2D check passes), at most ``rounds`` times, and may only finish on a pass
+(the forge / skill pattern: every fix is verified by the real checker before it counts).
 """
 
 from __future__ import annotations
@@ -32,8 +34,8 @@ class AfsimConfig:
     binding: Path
     runs: list[Path]
     mission: str
-    rounds: int = 2  # repair rounds after a failed run
-    steps: int = 15  # repair loop steps per round
+    rounds: int = 3  # AFSIM re-runs inside the repair loop after a failed run
+    steps: int = 15  # repair loop steps per AFSIM re-run
     timeout_s: float = 300.0
 
 
@@ -48,8 +50,9 @@ class AfsimRound:
 
 @dataclass
 class AfsimNote:
-    sheet_hash: str
+    sheet_hash: str  # the sheet the last AFSIM run judged
     feedback: str
+    passed: bool = False
 
 
 @dataclass
@@ -252,13 +255,26 @@ def _issue(issue: Any, labels: dict[str, str], targets: dict[str, str], anon: An
     return "一项运行检查未满足（细节只在本地记录）"
 
 
-def note_entry(note: AfsimNote) -> dict[str, Any]:
-    """The failed check the repair loop sees while the sheet is unchanged."""
+def note_entry(note: AfsimNote, current: bool = True) -> dict[str, Any]:
+    """The failed ``afsim`` check: the last run's feedback, or (``current`` False) a note that
+    the sheet changed since that run and AFSIM has to judge it again."""
+    if current:
+        render = note.feedback
+    elif note.passed:
+        render = (
+            "afsim: FAIL\n  稿件在上次 AFSIM 通过之后又改动了：用 run_afsim 复验，通过后才能 finish"
+        )
+    else:
+        body = "\n".join(note.feedback.splitlines()[1:])
+        render = (
+            "afsim: FAIL\n  （以下是改动前那一稿的 AFSIM 反馈。稿件已改动，但只有 AFSIM 复验通过"
+            "才算修好：用 run_afsim 复验；二维检查全部通过时会自动复验）\n" + body
+        )
     return {
         "id": "afsim",
         "passed": False,
         "afsim": True,
-        "render": note.feedback,
+        "render": render,
         "obligations": [],
         "idealized": [],
         "placeholders": [],

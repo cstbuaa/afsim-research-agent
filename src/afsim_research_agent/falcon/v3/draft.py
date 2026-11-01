@@ -177,7 +177,11 @@ class Drafter:
         self.slices: list[str] = []
         self.notes: list[str] = []
         self.obligations: list[Obligation] = []
-        self.afsim_note: AfsimNote | None = None  # feedback of a failed AFSIM run
+        self.afsim_note: AfsimNote | None = None  # the last AFSIM run's verdict and feedback
+        # set while AFSIM is in the loop: run AFSIM on a model -> (passed, feedback, stop)
+        self.afsim_probe: Any = None
+        self.afsim_budget = 0  # AFSIM runs the repair loop may still start
+        self.afsim_verdicts: dict[str, AfsimNote] = {}  # sheet hash -> AFSIM verdict
 
     # ------------------------------------------------------------------ helpers
     @property
@@ -304,11 +308,13 @@ class Drafter:
                         "duration_s": 0.0,
                     }
                 )
-        note = self.afsim_note
-        if verify and out.l1_ok and note is not None and sheet_hash(self.sheet) == note.sheet_hash:
-            # the last AFSIM run of this very sheet failed; once the sheet changes, the next
-            # AFSIM round judges it again
-            out.l3.insert(0, note_entry(note))  # shown first to the repair loop
+        here = self.afsim_verdicts.get(sheet_hash(self.sheet))
+        note = here or self.afsim_note
+        if verify and out.l1_ok and note is not None:
+            current = here is not None
+            if not (note.passed and current):
+                # failed until AFSIM passes on this very sheet: a change alone does not count
+                out.l3.insert(0, note_entry(note, current))  # shown first to the repair loop
         return out
 
     async def ask(
@@ -867,6 +873,8 @@ def write_package(
                         "question": o.question,
                         "summary": o.summary,
                         "log": o.log,
+                        "diagnoses": o.diagnoses,
+                        "afsim_runs": o.afsim_runs,
                         "edits": [e.__dict__ for e in o.edits],
                     }
                     for o in fixes
@@ -1062,50 +1070,69 @@ async def _afsim_rounds(
     cfg: AfsimConfig,
     staging: Path,
 ) -> tuple[Check, AfsimHistory]:
-    """Run the chosen draft in AFSIM; on failure, hand the (sanitized) evidence to the repair
-    loop and run again, at most ``cfg.rounds`` times."""
+    """Run the chosen draft in AFSIM. On failure the repair loop gets the (sanitized)
+    evidence and re-runs AFSIM itself (``run_afsim``) after its edits, at most ``cfg.rounds``
+    times; the draft counts as repaired only when AFSIM passes on the final sheet."""
     import asyncio
 
     history = AfsimHistory()
-    for index in range(cfg.rounds + 1):
+    meanings = {
+        aid: {"failure": a.result.get("failure"), "codes": a.result.get("codes") or {}}
+        for aid, a in drafter.c.actions.items()
+        if isinstance(a.result, dict) and (a.result.get("failure") or a.result.get("codes"))
+    }
+
+    async def probe(model: dict[str, Any]) -> tuple[bool, str, bool]:
+        """One AFSIM run of the current sheet: (passed, feedback, infrastructure failure)."""
+        index = len(history.rounds)
         out = staging / "afsim" / f"round_{index}"
         obligations = [o.model_dump(exclude_none=True) for o in drafter.obligations]
         results, runs, error = await asyncio.to_thread(
-            run_once, check.model or {}, drafter.c, obligations, cfg, out
+            run_once, model, drafter.c, obligations, cfg, out
         )
         passed = error is None and bool(results) and all(r.passed for r in results or [])
-        missions = {
-            rid: role.get("mission")
-            for rid, role in ((check.model or {}).get("roles") or {}).items()
-        }
-        meanings = {
-            aid: {"failure": a.result.get("failure"), "codes": a.result.get("codes") or {}}
-            for aid, a in drafter.c.actions.items()
-            if isinstance(a.result, dict) and (a.result.get("failure") or a.result.get("codes"))
-        }
+        missions = {rid: role.get("mission") for rid, role in (model.get("roles") or {}).items()}
         text = "" if passed else feedback(results, runs, error, missions, meanings)
         local = error or "\n".join(r.render() for r in results or [])
         history.rounds.append(AfsimRound(index, passed, text, local, out))
         drafter.notes.append(f"AFSIM 第 {index + 1} 次运行：{'通过' if passed else '未通过'}")
-        if passed or index == cfg.rounds:
-            break
-        if any(getattr(r, "infrastructure", False) for r in results or []):
-            # the binding, the compiler or the lab files failed: editing the sheet cannot
-            # repair it, so no repair round is spent on it
-            drafter.notes.append(
-                "AFSIM 运行失败出在绑定、编译器或实验室文件（基础设施），不交给战术稿修复；"
-                "见 afsim_rounds.md"
-            )
-            break
-        before = sheet_hash(drafter.sheet)
-        drafter.afsim_note = AfsimNote(before, text)
-        fixes.append(await fix_sheet(drafter, run, cfg.steps))
+        drafter.afsim_note = AfsimNote(sheet_hash(drafter.sheet), text, passed)
+        drafter.afsim_verdicts[drafter.afsim_note.sheet_hash] = drafter.afsim_note
+        infra = any(getattr(r, "infrastructure", False) for r in results or [])
+        return passed, text, infra
+
+    passed, _text, infra = await probe(check.model or {})
+    if passed or cfg.rounds <= 0:
+        if passed:
+            drafter.afsim_note = None
+            drafter.afsim_verdicts.clear()
+        return drafter.check(verify=True), history
+    if infra:
+        # the binding, the compiler or the lab files failed: editing the sheet cannot
+        # repair it, so no repair round is spent on it
+        drafter.notes.append(
+            "AFSIM 运行失败出在绑定、编译器或实验室文件（基础设施），不交给战术稿修复；"
+            "见 afsim_rounds.md"
+        )
+        return drafter.check(verify=True), history
+    drafter.afsim_probe = probe
+    drafter.afsim_budget = cfg.rounds
+    fixes.append(await fix_sheet(drafter, run, cfg.steps * cfg.rounds))
+    check = drafter.check(verify=True)
+    judged = sheet_hash(drafter.sheet) in drafter.afsim_verdicts
+    if not judged and drafter.afsim_budget > 0 and check.l1_ok and check.model is not None:
+        # the loop ended on a sheet AFSIM has not judged (e.g. the best version was
+        # restored): one last run decides
+        await probe(check.model)
+        drafter.afsim_budget -= 1
         check = drafter.check(verify=True)
-        if sheet_hash(drafter.sheet) == before or not check.l1_ok or check.model is None:
-            drafter.notes.append("AFSIM 反馈后的修复没有得到可运行的新稿，停止")
-            break
-    drafter.afsim_note = None
-    return drafter.check(verify=True), history
+    note = drafter.afsim_verdicts.get(sheet_hash(drafter.sheet))
+    if note is None or not note.passed:
+        drafter.notes.append(
+            f"AFSIM 纠错未修好：循环内复验 {len(history.rounds) - 1} 次，最终稿未通过 AFSIM"
+        )
+    drafter.afsim_probe = None
+    return check, history
 
 
 def _afsim_report(history: AfsimHistory) -> str:

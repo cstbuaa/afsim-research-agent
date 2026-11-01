@@ -705,6 +705,13 @@ def test_fix_loop_refuses_an_edit_that_breaks_l1_and_explains_conflicts(
 
     fixer = SheetFixer(_fix_drafter(contracts, SHEET))
     assert fixer.last.l1_ok
+    # once L1 passes an edit needs a diagnosis naming the block
+    edit = [{"block": "pytree:scout", "old": "nav.stop()", "new": "nav.nope()"}]
+    assert "先用 diagnose" in fixer.edit(edit, "试错")
+    plan = {"issue": "x", "where": ["mermaid:scout"], "cause": "y", "plan": "z"}
+    assert "诊断已记录" in fixer.diagnose(plan)
+    assert "不在诊断的 where 中" in fixer.edit(edit, "试错")
+    assert "诊断已记录" in fixer.diagnose(plan | {"where": ["pytree:scout"]})
     result = fixer.edit(
         [{"block": "pytree:scout", "old": "nav.stop()", "new": "nav.nope()"}], "试错"
     )
@@ -754,6 +761,8 @@ def test_fix_loop_stops_reading_and_cannot_write_the_verification_block(
 
     no_verification = SHEET.split("```yaml verification")[0]
     fixer = SheetFixer(_fix_drafter(contracts, no_verification))
+    fixer.diagnose({"issue": "x", "where": ["model"], "cause": "y", "plan": "z"})
+    fixer.diagnosis["where"].append("verification")  # the block does not exist yet
     assert "验证阶段" in fixer.edit([{"block": "verification", "text": "tests: []"}], "x")
     # a model that only reads: show is refused after a few reads, the loop stops on stall
     reads = [

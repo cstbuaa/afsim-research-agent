@@ -83,7 +83,7 @@ def test_compile_error_is_not_echoed() -> None:
     assert "secret_leaf" not in text and "AFSIM 编译失败" in text
 
 
-def test_a_failed_run_stays_failed_until_the_sheet_changes(contracts) -> None:  # noqa: ANN001, F811
+def test_a_failed_run_stays_failed_until_afsim_passes(contracts) -> None:  # noqa: ANN001, F811
     from afsim_research_agent.falcon.llm import ModelRunner, ScriptedModel
     from afsim_research_agent.falcon.sheet.blocks import split_sheet
     from afsim_research_agent.falcon.v3.draft import Drafter, V3Request
@@ -98,7 +98,68 @@ def test_a_failed_run_stays_failed_until_the_sheet_changes(contracts) -> None:  
     held = drafter.check(verify=True)
     assert not held.verified and held.l3[0]["id"] == "afsim"
     drafter.blocks = split_sheet(SLOWER)[0]
+    # a change alone does not clear it: the next AFSIM run has to pass this sheet
+    stale = drafter.check(verify=True)
+    assert not stale.verified and "run_afsim" in stale.l3[0]["render"]
+    note = AfsimNote(sheet_hash(drafter.sheet), "", passed=True)
+    drafter.afsim_verdicts[note.sheet_hash] = note
     assert drafter.check(verify=True).verified
+
+
+def test_repair_loop_reruns_afsim_and_needs_a_diagnosis(contracts) -> None:  # noqa: ANN001, F811
+    import asyncio
+
+    from afsim_research_agent.falcon.llm import ModelRunner, ScriptedModel
+    from afsim_research_agent.falcon.sheet.blocks import split_sheet
+    from afsim_research_agent.falcon.v3.draft import Drafter, V3Request
+    from afsim_research_agent.falcon.v3.fixer import fix_sheet
+
+    drafter = Drafter(
+        V3Request(requirement="r", model_id="scout_demo"), contracts, ModelRunner(ScriptedModel({}))
+    )
+    drafter.blocks = split_sheet(SHEET)[0]
+    first = AfsimNote(sheet_hash(drafter.sheet), "afsim: FAIL\n  问题：OBSERVE 停留太短")
+    drafter.afsim_note = first
+    drafter.afsim_verdicts[first.sheet_hash] = first
+    runs: list[str] = []
+
+    async def probe(model):  # noqa: ANN001, ANN202
+        runs.append(sheet_hash(drafter.sheet))
+        note = AfsimNote(sheet_hash(drafter.sheet), "", passed=True)
+        drafter.afsim_note = note
+        drafter.afsim_verdicts[note.sheet_hash] = note
+        return True, "", False
+
+    drafter.afsim_probe = probe
+    drafter.afsim_budget = 2
+    slower = split_sheet(SLOWER)[0]
+    old = next(b.text for b in drafter.blocks if b.key == "model")
+    new = next(b.text for b in slower if b.key == "model")
+    edit = {"action": "edit", "args": {"changes": [{"block": "model", "text": new}]}}
+    steps = [
+        {"action": "finish", "args": {}},  # refused: AFSIM has not passed
+        edit,  # refused: no diagnosis yet
+        {
+            "action": "diagnose",
+            "args": {
+                "issue": "OBSERVE 停留太短",
+                "where": ["model"],
+                "cause": "观察时长参数太小",
+                "plan": "加大参数",
+            },
+        },
+        edit,  # applied; every 2D check passes, so AFSIM re-runs by itself and passes
+    ]
+    assert old != new
+    outcome = asyncio.run(
+        fix_sheet(drafter, ModelRunner(ScriptedModel({"fix:v3:step": steps})), max_steps=6)
+    )
+    results = [r["result"] for r in outcome.log]
+    assert "不接受 finish" in results[0] or "AFSIM 复验" in results[0], results[0]
+    assert "先用 diagnose" in results[1]
+    assert "自动用 AFSIM 复验" in results[3] and "AFSIM 复验通过" in results[3]
+    assert outcome.solved and outcome.afsim_runs == 1 and len(runs) == 1
+    assert outcome.diagnoses and outcome.diagnoses[0]["where"] == ["model"]
 
 
 def test_rounds_repair_and_rerun(contracts, tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001, F811

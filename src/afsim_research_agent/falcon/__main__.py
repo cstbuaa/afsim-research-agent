@@ -72,8 +72,10 @@ def _parser() -> argparse.ArgumentParser:
     draft3.add_argument(
         "--afsim-mission", help="mission 可执行文件（默认 AFSIM_MISSION 或 mission）"
     )
-    draft3.add_argument("--afsim-rounds", type=int, default=2, help="AFSIM 失败后的修复轮数")
-    draft3.add_argument("--afsim-steps", type=int, default=15, help="每轮修复的步数上限")
+    draft3.add_argument(
+        "--afsim-rounds", type=int, default=3, help="AFSIM 失败后修复循环内最多复验几次"
+    )
+    draft3.add_argument("--afsim-steps", type=int, default=15, help="每次复验对应的修复步数")
     comp3 = sub.add_parser(
         "compile3", help="v3：战术稿 → IR 2.0 并做 L1–L3（不调用模型，结果写到新目录）"
     )
