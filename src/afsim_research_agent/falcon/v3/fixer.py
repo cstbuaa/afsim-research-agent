@@ -470,6 +470,13 @@ class SheetFixer:
         unknown = [w for w in where if self._block(w) is None]
         if unknown:
             return f"where 中的块 {unknown} 不存在；现有：{', '.join(b.key for b in self.d.blocks)}"
+        if self.diagnosis is not None and self.diagnosis.get("issue") == issue[:400]:
+            # the same issue diagnosed again (a model that keeps planning instead of editing)
+            self.diagnosis.update(where=where, cause=cause[:400], plan=plan[:600])
+            return (
+                f"这个问题已经诊断过（第 {self.diagnosis['step']} 步），已按新写法更新。不要再重复"
+                f"诊断：下一步直接 edit {', '.join(where)}（old 抄原文片段，new 写改后的文本）。"
+            )
         self.diagnosis = {
             "step": self.step,
             "issue": issue[:400],
@@ -915,6 +922,13 @@ async def fix_sheet(
         if (
             fixer.score(fixer.last) <= fixer.best[0]
             and fixer.score(fixer.last) < outcome.score_start
+        ):
+            fixer.best_step = step
+            best_step = step
+        # progress also counts an applied edit or an AFSIM re-run (an edit that leaves the
+        # 2D score unchanged may still fix what AFSIM showed)
+        if action.action in ("edit", "revert", "run_afsim") and not str(result).startswith(
+            "修改被拒绝"
         ):
             fixer.best_step = step
             best_step = step

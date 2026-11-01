@@ -711,7 +711,7 @@ def test_fix_loop_refuses_an_edit_that_breaks_l1_and_explains_conflicts(
     plan = {"issue": "x", "where": ["mermaid:scout"], "cause": "y", "plan": "z"}
     assert "诊断已记录" in fixer.diagnose(plan)
     assert "不在诊断的 where 中" in fixer.edit(edit, "试错")
-    assert "诊断已记录" in fixer.diagnose(plan | {"where": ["pytree:scout"]})
+    assert "已经诊断过" in fixer.diagnose(plan | {"where": ["pytree:scout"]})
     result = fixer.edit(
         [{"block": "pytree:scout", "old": "nav.stop()", "new": "nav.nope()"}], "试错"
     )
