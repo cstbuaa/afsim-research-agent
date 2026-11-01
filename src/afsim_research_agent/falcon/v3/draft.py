@@ -193,6 +193,7 @@ class Drafter:
         self.afsim_budget = 0  # AFSIM runs the repair loop may still start
         self.afsim_verdicts: dict[str, AfsimNote] = {}  # sheet hash -> AFSIM verdict
         self.tactic: Any = None  # the Crow selection (falcon.tactic.SelectedTactic)
+        self.crow_caps: list[dict[str, Any]] = []  # Crow's capability map of that selection
 
     # ------------------------------------------------------------------ helpers
     @property
@@ -222,6 +223,12 @@ class Drafter:
             diags = result.diagnostics
             model = result.model if result.ok else None
             problems += [compiled.problem(d) for d in diags if d.severity.value == "error"]
+        if self.crow_caps and compiled.spec is not None:
+            from afsim_research_agent.falcon.v3.crow_bridge import gap_problems
+
+            for gid, message in gap_problems(compiled.spec.get("gaps") or {}, self.crow_caps):
+                block, line = compiled.locate(f"gaps.{gid}")
+                problems.append(SheetProblem(block, line, message, code="CROW_GAP"))
         out = Check(compiled, model, diags, problems)
         if verify and out.l1_ok and model is not None:
             spec = compiled.spec or {}
@@ -1047,6 +1054,12 @@ async def run_draft3(
     run = ModelRunner(model)
     lead = Drafter(request, contracts, run)
     lead.tactic, lead.notes = tactic, list(bridge_notes)
+    caps: list[dict[str, Any]] = []
+    if tactic is not None:
+        from afsim_research_agent.falcon.v3.crow_bridge import capability_map
+
+        caps = capability_map(tactic, contracts)
+    lead.crow_caps = caps
     drafters = [lead]
     try:
         # shared by every candidate: the clauses and the obligations the drafts are judged on
@@ -1057,7 +1070,7 @@ async def run_draft3(
         for _ in range(request.candidates - 1):
             d = Drafter(request, contracts, run)
             d.clauses, d.obligations, d.notes = list(lead.clauses), list(lead.obligations), []
-            d.tactic = tactic
+            d.tactic, d.crow_caps = tactic, caps
             drafters.append(d)
         outcomes = await asyncio.gather(
             _draft(lead, run, structure), *(_draft(d, run) for d in drafters[1:])

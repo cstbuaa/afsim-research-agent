@@ -16,6 +16,11 @@ ends with a selected tactic; Falcon v3 starts from a request. This module joins 
 * roles come from the mission profile's own forces (or the cards' roles), named by
   ``role_map`` (Crow's role text → role id, e.g. ``排长车: leader``) or by a small
   keyword table; the slices come from the capability needs Crow annotated (C4b);
+* Crow's capability annotation (C4b) goes along: for every need of the selected cards,
+  the capability-set actions / subtrees Crow mapped it to and how (ready, composable,
+  simplified …). Needs Crow found expressible must be built from those, not declared as
+  gaps — a gap blocks the AFSIM run; a gap whose closest need Crow mapped is an error
+  (``CROW_GAP``) the repair loop sees, with the mapping to use instead;
 * the package keeps the selection (``selected_tactics.yaml``), Crow's estimated
   capability gaps (``crow_capability_gaps.yaml``) and a review section.
 
@@ -53,6 +58,116 @@ TACTIC_RULES = (
     "- 能力集表达不了的要素写进 gaps 并说明，不要挂在无关的元素上；\n"
     "- 组合了多个候选时，按列出的顺序衔接各阶段；只选了部分阶段的候选，只实现列出的阶段。"
 )
+
+
+# Crow need statuses (CapabilityNeed.status) for which a gap is the honest answer
+GAP_STATUSES = frozenset({"partial", "confirm", "ir_extension", "develop"})
+
+CAPABILITY_RULES = (
+    "能力映射（Crow 已逐项核对能力集；草稿必须按此实现）：\n"
+    "- 标为可直接实现 / 可组合实现 / 简化处理的要素，用列出的动作或子树实现（简化处理按说明的简化"
+    "方式落地，例如广播模式改为写共享目标或分配结果、超时自选目标用回退动作），**不要写 gaps**；\n"
+    "- 只有标为需确认 / 需扩展 / 需开发 / 部分可实现的要素才可以写 gaps；\n"
+    "- 带 gaps 占位的模型不会进入 AFSIM 运行。"
+)
+
+
+def _tokens(ref: Any) -> str:
+    return str(ref).split(":")[-1].strip()
+
+
+def _known(token: str, contracts: Any) -> bool:
+    return token in contracts.actions or token in contracts.tactics
+
+
+def _selected_steps(part: Any) -> set[int] | None:
+    return None if part.whole else {i for i, _ in part.steps()}
+
+
+def capability_map(tactic: Any, contracts: Any) -> list[dict[str, Any]]:
+    """Crow's capability needs of the selected cards (phases taken only), with the
+    references that exist in this capability set."""
+    out: list[dict[str, Any]] = []
+    for part in tactic.parts:
+        card = part.card
+        keep = _selected_steps(part)
+        for need in card.capability_needs or []:
+            source = str(getattr(need, "source", "") or "")
+            m = re.match(r"steps\[(\d+)\]", source)
+            if keep is not None and (m is None or int(m.group(1)) not in keep):
+                continue
+            refs = [t for t in (_tokens(r) for r in need.maps_to) if _known(t, contracts)]
+            status = str(getattr(need, "status", "") or "")
+            out.append(
+                {
+                    "card": card.id,
+                    "need": str(getattr(need, "need", "") or ""),
+                    "source": source,
+                    "status": status,
+                    "label": str(getattr(need, "label", "") or status),
+                    "refs": refs,
+                    "why": str(getattr(need, "why", "") or ""),
+                    "notes": [str(n) for n in (getattr(need, "notes", None) or [])],
+                    "gap_ok": status in GAP_STATUSES or not refs,
+                }
+            )
+    return out
+
+
+def capability_text(entries: list[dict[str, Any]]) -> str:
+    if not entries:
+        return ""
+    lines = [CAPABILITY_RULES]
+    for e in entries:
+        refs = "、".join(e["refs"]) or "（能力集中没有对应项）"
+        how = f"；简化：{'；'.join(e['notes'])}" if e["notes"] and not e["gap_ok"] else ""
+        lines.append(f"- {e['card']} {e['need']}（{e['source']}）：{e['label']} → {refs}{how}")
+    return "\n".join(lines)
+
+
+def _bigrams(text: str) -> set[str]:
+    text = re.sub(r"[\s，。、；：（）()\[\]_.:-]+", "", text.lower())
+    return {text[i : i + 2] for i in range(len(text) - 1)}
+
+
+def _closest(text: str, entries: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, float]:
+    mine = _bigrams(text)
+    best, score = None, 0.0
+    for e in entries:
+        theirs = _bigrams(e["need"] + e["why"])
+        if not mine or not theirs:
+            continue
+        s = len(mine & theirs) / len(mine)
+        if s > score:
+            best, score = e, s
+    return best, score
+
+
+def gap_problems(
+    gaps: dict[str, Any], entries: list[dict[str, Any]], *, threshold: float = 0.2
+) -> list[tuple[str, str]]:
+    """(gap id, message) for gaps the selected tactic does not need: the closest Crow need
+    was mapped onto the capability set."""
+    if not entries:
+        return []
+    out: list[tuple[str, str]] = []
+    for gid, spec in (gaps or {}).items():
+        spec = spec if isinstance(spec, dict) else {}
+        text = f"{gid} {spec.get('description') or ''}"
+        need, score = _closest(text, entries)
+        if need is None or need["gap_ok"] or score < threshold:
+            continue
+        how = f"（简化：{'；'.join(need['notes'])}）" if need["notes"] else ""
+        out.append(
+            (
+                gid,
+                f"CROW_GAP 缺口 {gid} 对应 Crow 已核对的要素「{need['need']}」"
+                f"（{need['source']}，{need['label']}），能力集可以实现：用 "
+                f"{'、'.join(need['refs'])} 实现{how}；删除 gaps.{gid}，并把树中 gap.{gid} "
+                "的用法换成这些动作或子树。",
+            )
+        )
+    return out
 
 
 def resolve_selection(request: V3Request, request_path: Path) -> Path:
@@ -194,8 +309,12 @@ def apply_selection(
 
     tactic = load_selection(resolve_selection(request, request_path))
     notes = [f"输入来自 Crow 选定战术 {tactic.source_label}"]
+    caps = capability_text(capability_map(tactic, contracts))
     update: dict[str, Any] = {
-        "requirement": tactic.requirement(request.requirement) + "\n\n" + tactic_text(tactic)
+        "requirement": tactic.requirement(request.requirement)
+        + "\n\n"
+        + tactic_text(tactic)
+        + (f"\n\n{caps}" if caps else "")
     }
     if not request.roles:
         roles, role_notes = derive_roles(tactic, request.role_map)

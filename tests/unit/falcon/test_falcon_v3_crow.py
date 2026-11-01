@@ -113,6 +113,47 @@ def test_apply_selection_folds_the_tactic_into_the_request(tmp_path, monkeypatch
     assert any("参考值" in n for n in notes) and any("Crow" in n for n in notes)
 
 
+def _need(need, source, status, maps_to, why="", notes=None):
+    return SimpleNamespace(
+        need=need,
+        source=source,
+        status=status,
+        label=status,
+        maps_to=maps_to,
+        why=why,
+        notes=notes or [],
+    )
+
+
+def test_crow_capability_map_turns_needless_gaps_into_problems() -> None:
+    tactic = _fake_tactic()
+    tactic.parts[0].card.capability_needs = [
+        _need(
+            "向成员车广播射击指令或自由交战模式",
+            "steps[0].until",
+            "simplified",
+            ["threat_allocation.broadcast_assignments"],
+            notes=["理想通信"],
+        ),
+        _need("无人机前出侦察", "steps[1].do", "develop", ["uav.launch"]),
+    ]
+    entries = B.capability_map(tactic, _contracts())
+    assert [e["gap_ok"] for e in entries] == [False, True]
+    text = B.capability_text(entries)
+    assert "不要写 gaps" in text and "threat_allocation.broadcast_assignments" in text
+    gaps = {
+        "broadcast_free_fire_mode": {"description": "排长车向成员车广播自由交战模式指令"},
+        "uav_scout": {"description": "无人机前出侦察并回传目标"},
+    }
+    problems = B.gap_problems(gaps, entries)
+    assert [gid for gid, _ in problems] == ["broadcast_free_fire_mode"]
+    assert "threat_allocation.broadcast_assignments" in problems[0][1]
+    # only the phases taken count
+    tactic.parts[0].whole, tactic.parts[0].phases = False, ["交战"]
+    tactic.parts[0].steps = lambda: [(1, _step("交战", "瞄准开火", "目标被摧毁"))]
+    assert [e["need"] for e in B.capability_map(tactic, _contracts())] == ["无人机前出侦察"]
+
+
 def test_a_real_crow_selection_loads(tmp_path: Path) -> None:
     """With the Crow package importable (the project environment): a tactics directory as
     crow.propose / crow.select write it becomes the v3 input."""
