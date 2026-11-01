@@ -115,8 +115,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"⚠ {w}")
     print(f"已选择：{', '.join(s['candidate'] for s in doc['selected'])} → {path}")
     print(
-        f"下一步（Falcon）：在 falcon_request.yaml 中写 tactic_selection: {args.tactics_dir}，"
-        "再运行 python -m afsim_research_agent.falcon draft falcon_request.yaml"
+        "下一步（Falcon v3）：python -m afsim_research_agent.falcon crow-request "
+        f"{args.tactics_dir} --model-id <模型名> [--role 排长车=leader]，"
+        "再按提示运行 falcon draft3"
     )
 
     gaps_file = args.tactics_dir / "capability_gaps.yaml"
