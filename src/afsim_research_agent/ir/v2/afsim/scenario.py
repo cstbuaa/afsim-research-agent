@@ -29,6 +29,9 @@ types, auxiliary-data keys and observer files); this module only fills it in::
     includes = ["<observer>", ...]
     preamble = "<raw input>"
     body = "<lines every own platform gets>"     # {name} {role} {leader} {index}
+    ahead_m = 400.0                  # a point this far ahead: {ahead_lat} {ahead_lon} (DMS),
+                                     # {ahead_lat_deg} {ahead_lon_deg}; the origin is
+                                     # {origin_lat} {origin_lon} (every template)
     [enemy]
     count = 2
     range_m = 650.0
@@ -44,11 +47,12 @@ types, auxiliary-data keys and observer files); this module only fills it in::
     preamble = "<raw input before the platforms>"   # e.g. a processor type the bodies add
     aux = "<aux fields for every platform>"
     leader_aux = "<aux fields>"
-    member_aux = "<aux fields>"
+    member_aux = "<aux fields>"      # or a list: member n takes item (n - 1) mod length
     leader_body = "<lines>"
     member_body = "<lines>"
     per_platform = "<raw input per own platform, after the platforms>"
     extra = "<raw input after the platforms>"
+    parameters = {<model parameter> = "<value>"}    # supplied by the run
 """
 
 from __future__ import annotations
@@ -158,6 +162,26 @@ def generate(
     lat0, lon0 = (float(x) for x in meta.get("origin", [45.0, -121.0]))
     heading = float(meta.get("heading_deg", 90.0))
     spacing = float(meta.get("spacing_m", 100.0))
+    ahead = math.radians(heading)
+    across = math.radians(heading + 90.0)
+    enemy = kit.get("enemy") or {}
+    rng = float(enemy.get("range_m", 650.0))
+    ahead_m = float(meta.get("ahead_m", rng / 2))
+    a_lat, a_lon = _offset(lat0, lon0, ahead_m * math.cos(ahead), ahead_m * math.sin(ahead))
+    common = {
+        "origin_lat": _pos(lat0, lon0)[0],
+        "origin_lon": _pos(lat0, lon0)[1],
+        "ahead_lat": _pos(a_lat, a_lon)[0],
+        "ahead_lon": _pos(a_lat, a_lon)[1],
+        "ahead_lat_deg": f"{a_lat:.7f}",
+        "ahead_lon_deg": f"{a_lon:.7f}",
+    }
+
+    def pick(value: Any, index: int) -> str:
+        if isinstance(value, list):
+            return str(value[(index - 1) % len(value)]) if value else ""
+        return str(value or "")
+
     # instances in order: leaders first, then members, role by role
     order = sorted(model.get("roles") or {}, key=lambda r: (kinds[r] != "leader", r))
     instances: list[tuple[str, str, int]] = []  # (name, role, instance)
@@ -168,7 +192,6 @@ def generate(
     leader = next((n for n, r, _ in instances if kinds[r] == "leader"), instances[0][0])
 
     # abreast across the heading, centred on the origin
-    across = math.radians(heading + 90.0)
     platforms, per_platform = [], []
     member_index = 0
     for k, (name, rid, inst) in enumerate(instances):
@@ -178,6 +201,7 @@ def generate(
         if kind == "member":
             member_index += 1
         values = {
+            **common,
             "name": name,
             "role": rid,
             "leader": leader,
@@ -189,8 +213,12 @@ def generate(
         body: list[str] = [_fill(meta.get("body", ""), values)]
         for sid in sorted(used):
             sk = slices_kit.get(sid) or {}
-            aux += [_fill(sk.get("aux", ""), values), _fill(sk.get(f"{kind}_aux", ""), values)]
-            body.append(_fill(sk.get(f"{kind}_body", ""), values))
+            n = values["index"]
+            aux += [
+                _fill(sk.get("aux", ""), values),
+                _fill(pick(sk.get(f"{kind}_aux"), n), values),
+            ]
+            body.append(_fill(pick(sk.get(f"{kind}_body"), n), values))
             per_platform.append(_fill(sk.get("per_platform", ""), values))
         aux = [a for a in aux if a.strip()]
         lines = [
@@ -202,9 +230,6 @@ def generate(
         ]
         platforms.append({"name": name, "role": rid, "instance": inst, "body": "\n".join(lines)})
 
-    enemy = kit.get("enemy") or {}
-    ahead = math.radians(heading)
-    rng = float(enemy.get("range_m", 650.0))
     gap = float(enemy.get("spacing_m", 200.0))
     n_enemy = int(enemy.get("count", 2))
     enemies, enemy_names = [], []
@@ -226,15 +251,21 @@ def generate(
             events.append({"at_s": end_s + t if t < 0 else t, "event": ev})
 
     includes = list(meta.get("includes") or [])
-    preamble = [meta.get("preamble", "")]
+    preamble = [_fill(meta.get("preamble", ""), common)]
+    parameters: dict[str, Any] = {}
+    shared = {**common, "leader": leader}
     extra = [*enemies, *(p for p in per_platform if p.strip())]
     for sid in sorted(used):
         sk = slices_kit.get(sid) or {}
         includes += [i for i in sk.get("includes") or [] if i not in includes]
         if (sk.get("preamble") or "").strip():
-            preamble.append(_fill(sk["preamble"], {"leader": leader}))
+            preamble.append(_fill(sk["preamble"], shared))
         if (sk.get("extra") or "").strip():
-            extra.append(_fill(sk["extra"], {"leader": leader}))
+            extra.append(_fill(sk["extra"], shared))
+        for key, value in (sk.get("parameters") or {}).items():
+            # only parameters the model declares (a run may not add new ones)
+            if key in (model.get("parameters") or {}):
+                parameters[key] = _fill(value, shared) if isinstance(value, str) else value
 
     expect: dict[str, Any] = {"events": []}
     exp = kit.get("expect") or {}
@@ -260,6 +291,7 @@ def generate(
             "extra": "\n".join(extra),
             "platforms": platforms,
             "events": events,
+            "parameters": parameters,
             "expect": expect,
         }
     )

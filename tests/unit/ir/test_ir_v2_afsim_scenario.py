@@ -36,6 +36,12 @@ KIT = {
             "per_platform": "# {name} is {role}",
         },
         "unused": {"includes": ["obs/unused.txt"], "aux": "string never = 1"},
+        "route": {
+            "leader_aux": "double end_lat = {ahead_lat_deg}",
+            "member_aux": ['string wing = "LEFT"', 'string wing = "RIGHT"'],
+            "preamble": "route r1 position {origin_lat} {origin_lon} position {ahead_lat} {ahead_lon} end_route",
+            "parameters": {"search_route": "r1", "not_in_model": "x"},
+        },
     },
 }
 
@@ -44,6 +50,7 @@ def _contracts():
     actions = {
         "tasking.send": SimpleNamespace(slice="tasking"),
         "fires.shoot": SimpleNamespace(slice="fires"),
+        "route.follow": SimpleNamespace(slice="route"),
         "org.load": SimpleNamespace(slice="org"),
     }
     return SimpleNamespace(actions=actions, tactics={})
@@ -56,12 +63,13 @@ def _model():
     }
     return {
         "model": {"id": "crow_x"},
+        "parameters": {"search_route": {"value": "placeholder"}},
         "events": {"cancelled": {}},
         "subtrees": {"common": tree("org.load")},
         "roles": {
             "platoon_leader": {
                 "role": {"count": 1},
-                "states": {"ASSIGN": {"tree": tree("tasking.send")}},
+                "states": {"ASSIGN": {"tree": tree("tasking.send", "route.follow")}},
             },
             "member": {
                 "role": {"count": 2},
@@ -98,3 +106,12 @@ def test_generated_run_lays_out_roles_slices_events_and_checks() -> None:
     assert [(e.at_s, e.event) for e in run.events] == [(60.0, "cancelled")]
     assert [(x.kind, x.by) for x in run.expect.events] == [("WEAPON_FIRED", "member")]
     assert run.end_time_s == 80 and run.start_time == "18:00:00"
+
+
+def test_route_points_wings_and_parameters() -> None:
+    run = generate(_model(), KIT, _contracts())
+    leader, m1, m2 = run.platforms
+    assert "double end_lat = 45.00" in leader.body
+    assert 'wing = "LEFT"' in m1.body and 'wing = "RIGHT"' in m2.body
+    assert "route r1 position 45:00:00.00n 121:00:00.00w position 45:00:00.00n" in run.preamble
+    assert run.parameters == {"search_route": "r1"}
