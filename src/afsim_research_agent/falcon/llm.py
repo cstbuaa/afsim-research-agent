@@ -320,13 +320,30 @@ class ModelRunner:
             )
         )
 
+    async def _generate(self, stage: str, prompt: str, schema: type[T], started: float) -> Any:
+        """One model call; a timeout or dropped connection is retried twice (with a pause)
+        before it fails the stage: one slow answer should not end a whole draft."""
+        import asyncio
+
+        for attempt in range(3):
+            try:
+                return await self.model.generate(stage, prompt, schema)
+            except Exception as exc:  # noqa: BLE001 - only transport errors are retried
+                name = type(exc).__name__
+                transient = any(k in name for k in ("Timeout", "APIConnection", "RateLimit"))
+                if not transient or attempt == 2:
+                    raise
+                self._record(stage, prompt, started, False, error=f"{name} (retried)")
+                await asyncio.sleep(5 * (attempt + 1))
+        raise AssertionError("unreachable")
+
     async def __call__(self, stage: str, prompt: str, schema: type[T]) -> T:
         last: Exception | None = None
         last_data: Any = None
         for attempt in range(self.retries + 1):
             started = time.perf_counter()
             try:
-                raw = await self.model.generate(stage, prompt, schema)
+                raw = await self._generate(stage, prompt, schema, started)
                 if isinstance(raw, str) and schema is TextAnswer:
                     raw = {"text": raw}
                 answer, fixes = coerce(schema, raw)

@@ -309,3 +309,40 @@ def test_action_failures_reach_the_feedback_with_stated_codes_only() -> None:
         [j], [_run()], None, failure_meanings={"engagement.fire_selected_weapon": coded}
     )
     assert "能力集对失败的说明：武器装填中" in text
+
+
+def test_a_model_timeout_is_retried() -> None:
+    import asyncio
+
+    from afsim_research_agent.falcon.llm import ModelRunner
+    from afsim_research_agent.falcon.models import TextAnswer
+
+    class APITimeoutError(Exception):
+        pass
+
+    class Flaky:
+        name = "flaky"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def generate(self, stage, prompt, schema):  # noqa: ANN001, ANN202
+            self.calls += 1
+            if self.calls == 1:
+                raise APITimeoutError("Request timed out.")
+            return "ok"
+
+    model = Flaky()
+    runner = ModelRunner(model)
+    import afsim_research_agent.falcon.llm as llm
+
+    async def no_sleep(_s):  # noqa: ANN001, ANN202
+        return None
+
+    orig = asyncio.sleep
+    asyncio.sleep = no_sleep  # type: ignore[assignment]
+    try:
+        answer = asyncio.run(runner("s", "p", TextAnswer))
+    finally:
+        asyncio.sleep = orig  # type: ignore[assignment]
+    assert answer.text == "ok" and model.calls == 2 and llm  # noqa: B015
