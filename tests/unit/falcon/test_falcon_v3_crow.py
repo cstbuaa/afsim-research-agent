@@ -70,6 +70,13 @@ def test_roles_follow_the_profile_and_the_role_map() -> None:
     assert set(roles) == {"leader", "member", "role_3"} and roles["member"].count == 2
     roles, _ = B.derive_roles(tactic, {"排长车": "lead", "成员": "wing"})
     assert {"lead", "wing"} <= set(roles)
+    # the profile's English role hints
+    english = [
+        SimpleNamespace(role_hint="platoon_leader_vehicle", count=1, platform_class=None),
+        SimpleNamespace(role_hint="member_vehicles", count=3, platform_class=None),
+    ]
+    roles, _ = B.derive_roles(_fake_tactic(SimpleNamespace(own_forces=english)), {})
+    assert set(roles) == {"leader", "member"} and roles["member"].count == 3
     # no profile: the cards' roles (members counted)
     roles, _ = B.derive_roles(_fake_tactic(), {})
     assert roles["member"].count == 2 and roles["leader"].count == 1

@@ -48,6 +48,16 @@ ROLE_WORDS: tuple[tuple[str, str], ...] = (
     ("跟随", "member"),
     ("侦察", "scout"),
     ("掩护", "cover"),
+    # the mission profile writes role hints in English
+    ("company", "company_leader"),
+    ("leader", "leader"),
+    ("command", "leader"),
+    ("member", "member"),
+    ("wing", "member"),
+    ("follower", "member"),
+    ("scout", "scout"),
+    ("recon", "scout"),
+    ("cover", "cover"),
 )
 
 TACTIC_RULES = (
@@ -232,7 +242,8 @@ def role_id(text: str, role_map: dict[str, str]) -> str | None:
     for word, rid in role_map.items():
         if word and word in text:
             return rid
-    return next((rid for word, rid in ROLE_WORDS if word in text), None)
+    low = text.lower()
+    return next((rid for word, rid in ROLE_WORDS if word in low), None)
 
 
 def derive_roles(tactic: Any, role_map: dict[str, str]) -> tuple[dict[str, RoleHint], list[str]]:
