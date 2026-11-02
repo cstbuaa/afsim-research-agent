@@ -55,6 +55,18 @@ def test_parse_and_effect_obligations() -> None:
     # one vehicle moving twice in a row is not bounding overwatch
     two = Obligation(id="t2", kind="moves_in_turn", min_bounds=2, roles=["bounding"])
     assert not E.judge([two], tracks, OWN, acts, [], 40)[0].passed
+    # two vehicles moving at the same time are not moving in turns
+    rows = [
+        (t, p, "blue", n, 8.0 * t, 8.0)
+        for t in range(0, 10)
+        for p, n in (("o1", 100), ("o2", -100))
+    ]
+    rows += [
+        (t, "b1", "blue", 0, 80 + 8.0 * (t - 10), 8.0 if t < 20 else 0.0) for t in range(10, 21)
+    ]
+    together = E.parse(_console(rows))
+    v = E.judge([Obligation(id="t", kind="moves_in_turn")], together, OWN, [], [], 20)[0]
+    assert not v.passed and "同时机动" in v.detail
     # without positions an effect obligation is not judged (the 2D simulation)
     assert not E.judge(obs[:1], E.Tracks(), OWN, acts, [], 40)[0].judged
 

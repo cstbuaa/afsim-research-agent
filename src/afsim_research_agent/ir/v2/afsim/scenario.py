@@ -13,6 +13,9 @@ wrong roles and data. This module lays out a run from the model itself:
   ``{leader}``, ``{index}``, ``{role}`` are filled in);
 * stationary enemies at the kit's range; the model's external events at fixed times
   (``cancelled`` near the end);
+* every route the model names (a ``route_name`` given to an action) and the kit does not
+  define is laid out from the origin to the point ``ahead_m`` towards the enemy, at
+  ``route_speed_mps`` (default 8): a route the run does not define moves nothing;
 * checks: the run's generic rules and the model's own obligations (judged by the run
   anyway); when a role's trees fire a weapon, at least one shot by that role.
 
@@ -94,6 +97,21 @@ def model_refs(model: dict[str, Any]) -> dict[str, set[str]]:
         refs: set[str] = set()
         _refs(role, refs)
         out[rid] = refs | shared
+    return out
+
+
+def route_names(node: Any, out: set[str] | None = None) -> set[str]:
+    """Route names the model gives its actions (``route_name`` parameters)."""
+    out = set() if out is None else out
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == "route_name" and isinstance(value, str):
+                out.add(value)
+            else:
+                route_names(value, out)
+    elif isinstance(node, list):
+        for value in node:
+            route_names(value, out)
     return out
 
 
@@ -254,6 +272,20 @@ def generate(
     preamble = [_fill(meta.get("preamble", ""), common)]
     parameters: dict[str, Any] = {}
     shared = {**common, "leader": leader}
+    speed = float(meta.get("route_speed_mps", 8.0))
+    for name in sorted(route_names(model)):
+        kit_text = "\n".join(
+            [meta.get("preamble", "")]
+            + [str((slices_kit.get(sid) or {}).get("preamble", "")) for sid in used]
+        )
+        if re.search(rf"\broute\s+{re.escape(name)}\b", kit_text):
+            continue
+        preamble.append(
+            f"route {name}\n"
+            f" position {common['origin_lat']} {common['origin_lon']} speed {speed:g} m/s\n"
+            f" position {common['ahead_lat']} {common['ahead_lon']} speed {speed:g} m/s\n"
+            " stop\nend_route"
+        )
     extra = [*enemies, *(p for p in per_platform if p.strip())]
     for sid in sorted(used):
         sk = slices_kit.get(sid) or {}

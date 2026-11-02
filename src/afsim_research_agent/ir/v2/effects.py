@@ -151,7 +151,7 @@ def _keeps_distance(ob, tracks, vehicles, own, acts, events, end_s) -> Verdict:
     return Verdict(
         ob.id,
         ok,
-        f"与敌最近距离 {d:.0f} m（{p} 与 {f}，{t:g} s）"
+        f"与敌最近距离 {d:.0f} m（{p} 与 {f}，{t:.1f} s）"
         + ("" if ok else f"，要求不小于 {need:g} m"),
     )
 
@@ -214,7 +214,7 @@ def _not_all_moving(ob, tracks, vehicles, own, acts, events, end_s) -> Verdict:
         ob.id,
         ok,
         f"{len(vehicles)} 辆车"
-        + ("从未同时机动" if ok else f"在 {together[0]:g}–{together[-1]:g} s 间同时机动"),
+        + ("从未同时机动" if ok else f"在 {together[0]:.1f}–{together[-1]:.1f} s 间同时机动"),
     )
 
 
@@ -223,14 +223,14 @@ def bounds(tracks: Tracks, p: str, limit: float, min_m: float) -> list[tuple[flo
     than ``limit`` that covered at least ``min_m``."""
     out = []
     track = tracks.by_platform.get(p) or []
-    start = None
+    start = None  # (first moving sample's time, the sample before it: where it set off)
     for prev, s in zip(track, track[1:], strict=False):
         if s.speed > limit and start is None:
-            start = prev
+            start = (s.t, prev)
         if start is not None and (s.speed <= limit or s is track[-1]):
-            d = dist(start, s)
+            d = dist(start[1], s)
             if d >= min_m:
-                out.append((start.t, s.t, d))
+                out.append((start[0], s.t, d))
             start = None
     return out
 
@@ -245,10 +245,19 @@ def _moves_in_turn(ob, tracks, vehicles, own, acts, events, end_s) -> Verdict:
         return Verdict(ob.id, False, f"没有车辆机动超过 {min_m:g} m")
     order = [p for *_x, p in episodes]
     repeats = [i for i in range(1, len(order)) if order[i] == order[i - 1]]
+    # bounds that overlap in time are vehicles moving together, not in turns
+    overlaps = [
+        (episodes[i - 1][3], episodes[i][3], episodes[i][0])
+        for i in range(1, len(episodes))
+        if episodes[i][0] < episodes[i - 1][1] - 1e-6 and episodes[i][3] != episodes[i - 1][3]
+    ]
     movers = sorted(set(order))
-    ok = len(episodes) >= need and len(movers) >= 2 and not repeats
-    seq = " → ".join(f"{p}@{t0:g}s({d:.0f}m)" for t0, _t1, d, p in episodes[:12])
+    ok = len(episodes) >= need and len(movers) >= 2 and not repeats and not overlaps
+    seq = " → ".join(f"{p}@{t0:.1f}s({d:.0f}m)" for t0, _t1, d, p in episodes[:12])
     why = []
+    if overlaps:
+        a, b, t = overlaps[0]
+        why.append(f"{a} 与 {b} 在 {t:.1f} s 同时机动")
     if len(episodes) < need:
         why.append(f"只有 {len(episodes)} 次机动，要求至少 {need} 次")
     if len(movers) < 2:

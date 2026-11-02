@@ -115,3 +115,13 @@ def test_route_points_wings_and_parameters() -> None:
     assert 'wing = "LEFT"' in m1.body and 'wing = "RIGHT"' in m2.body
     assert "route r1 position 45:00:00.00n 121:00:00.00w position 45:00:00.00n" in run.preamble
     assert run.parameters == {"search_route": "r1"}
+
+
+def test_routes_the_model_names_are_laid_out() -> None:
+    model = _model()
+    model["roles"]["member"]["states"]["GO"] = {
+        "tree": {"type": "action", "action": "route.follow", "params": {"route_name": "east"}}
+    }
+    run = generate(model, KIT, _contracts())
+    assert "route east\n position 45:00:00.00n 121:00:00.00w speed 8 m/s" in run.preamble
+    assert run.preamble.count("route r1") == 1  # the kit's own route is not laid out again
