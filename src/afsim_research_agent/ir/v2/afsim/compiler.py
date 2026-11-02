@@ -14,8 +14,15 @@ Conventions of the generated input (all names start with ``ir_`` / ``IR_``):
   run the initial state's ``on_entry``);
 - every ``on_entry`` writes ``IR_STATE|<time>|<platform>|<state>`` for the evaluator, and
   the first execution of each action leaf in a state writes ``IR_ACT|<time>|<platform>|<action>``
-  (requirement obligations are judged on these) and its first failure
-  ``IR_FAIL|<time>|<platform>|<action>|FAILURE:<code>``;
+  (requirement obligations are judged on these), its first failure
+  ``IR_FAIL|<time>|<platform>|<action>|FAILURE:<code>`` and, for script actions, its first
+  success ``IR_DONE|<time>|<platform>|<action>`` (orderings across vehicles are judged on
+  completions: a member may poll for its task before the leader sent it);
+- every run samples every platform's position and speed each ``sample_s`` (default 1 s):
+  ``IR_POS|<time>|<platform>|<side>|<north m>|<east m / cos(lat0)>|<speed m/s>|<heading>``
+  relative to the first platform's start (``IR_POS_ORIGIN|<lat0>|<lon0>``), so the judge can
+  check what the vehicles did (stopped, kept distance, moved in turn), not only what they
+  called;
 - every run writes an event-pipe recording ``output/<run>.aer`` for replay in mystic
   (``record = false`` in the run config turns it off) and, unless the run configures its own,
   an event log ``output/<run>.evt`` with the standard platform and weapon events the judge
@@ -344,9 +351,10 @@ class Compiler:
         # the evaluator's action starts (IR_ACT) are reported once per state entry
         entry += [f'PLATFORM.SetAuxData("{leaf.name}_act", false);' for leaf in st.leaves]
         entry += [
-            f'PLATFORM.SetAuxData("{leaf.name}_fail", false);'
+            f'PLATFORM.SetAuxData("{leaf.name}_{flag}", false);'
             for leaf in st.leaves
             if leaf.kind == "script"
+            for flag in ("fail", "done")
         ]
         seen: list[str] = []
         for leaf in st.leaves:
@@ -777,6 +785,10 @@ class Compiler:
                 f'!PLATFORM.AuxDataBool("{name}_fail"))',
                 f'      {{ PLATFORM.SetAuxData("{name}_fail", true); '
                 f'writeln("IR_FAIL|", TIME_NOW, "|", PLATFORM.Name(), "|{action}|", st); }}',
+                # the first success after the state was entered (IR_DONE)
+                f'      if (st == "SUCCESS" && !PLATFORM.AuxDataBool("{name}_done"))',
+                f'      {{ PLATFORM.SetAuxData("{name}_done", true); '
+                f'writeln("IR_DONE|", TIME_NOW, "|", PLATFORM.Name(), "|{action}"); }}',
                 '      if (st == "SUCCESS") { return Success(); }',
                 f'      if (st == "RUNNING") {{ return Running("{action}"); }}',
                 "      return Failure(st);",
@@ -968,6 +980,8 @@ class Compiler:
                 for t in targets
             ]
             lines += ["end_execute"]
+        if run.sample_s > 0:
+            lines += _sampler(run.sample_s)
         if run.record and "event_pipe" not in f"{run.preamble}\n{run.extra}":
             # recording for replay in mystic, next to the console and the event log
             lines += ["event_pipe", "   file output/$(CASE).aer", "end_event_pipe"]
@@ -990,6 +1004,32 @@ class Compiler:
     def _event_name(self, name: str) -> str:
         """A run names an event by id or by its tactic-set text."""
         return name if name in self.m.get("events", {}) else event_id(name)
+
+
+def _sampler(every_s: float) -> list[str]:
+    """Position and speed of every platform each ``every_s`` (IR_POS, see the module doc).
+    North and east offsets are differences of degrees times 111320 m, the east one not yet
+    scaled by cos(lat0): the judge does that (no trigonometry in the script)."""
+    return [
+        f"execute at_interval_of {num(every_s)} sec",
+        "   WsfPlatform r = WsfSimulation.PlatformEntry(0);",
+        '   if (!r.AuxDataExists("ir_pos_lat0"))',
+        "   {",
+        '      r.SetAuxData("ir_pos_lat0", r.Latitude());',
+        '      r.SetAuxData("ir_pos_lon0", r.Longitude());',
+        '      writeln("IR_POS_ORIGIN|", r.Latitude(), "|", r.Longitude());',
+        "   }",
+        '   double lat0 = r.AuxDataDouble("ir_pos_lat0");',
+        '   double lon0 = r.AuxDataDouble("ir_pos_lon0");',
+        "   for (int i = 0; i < WsfSimulation.PlatformCount(); i = i + 1)",
+        "   {",
+        "      WsfPlatform p = WsfSimulation.PlatformEntry(i);",
+        '      writeln("IR_POS|", TIME_NOW, "|", p.Name(), "|", p.Side(), "|", '
+        '(p.Latitude() - lat0) * 111320.0, "|", (p.Longitude() - lon0) * 111320.0, "|", '
+        'p.Speed(), "|", p.Heading());',
+        "   }",
+        "end_execute",
+    ]
 
 
 def _activation(name: str, action: str) -> list[str]:

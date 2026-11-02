@@ -114,7 +114,9 @@ class V3Request(BaseModel):
     # tactic elements whose capability the set lacks (Crow's annotation): "skip" leaves them
     # out of this model (deferred to capability development); "wait" keeps them as gaps,
     # and the model waits for the capability-development agent (no AFSIM run until then)
-    missing_capabilities: Literal["skip", "wait"] = "skip"
+    # (default "block"): a core element (step, formation) the capability set cannot carry
+    # stops the draft (status needs_capability) instead of being imitated
+    missing_capabilities: Literal["block", "skip", "wait"] = "block"
 
     @model_validator(mode="after")
     def _input(self) -> V3Request:
@@ -139,6 +141,23 @@ class ObligationItem(BaseModel):
     then: str | None = None
     on_event: str | None = None
     within_s: float | None = None
+    roles: list[str] | None = None
+    min_m: float | None = None
+    tol_m: float | None = None
+    duration_s: float | None = None
+    speed_mps: float | None = None
+    min_bounds: int | None = None
+
+
+class ClauseMapItem(BaseModel):
+    clause: str
+    actions: list[str] = Field(default_factory=list)
+    how: str = ""
+    missing: str = ""
+
+
+class MapAnswer(BaseModel):
+    items: list[ClauseMapItem] = Field(default_factory=list)
 
 
 class ObligationAnswer(BaseModel):
@@ -168,6 +187,37 @@ class Check:
         )
 
 
+UNVERIFIED = "draft_unverified"
+
+
+def coverage(drafter: Drafter, check: Check, history: Any = None) -> dict[str, dict[str, Any]]:
+    """For each tactic clause (from the Crow selection): the obligations that check it and
+    which of them a run judged (the 2D scenarios, the last AFSIM run). A clause no run
+    judged is not verified, however the checks went: they only show that the model ran."""
+    judged: dict[str, bool] = {}
+    for s in check.l3:
+        for v in s.get("obligations") or []:
+            if v.get("judged", True):
+                judged[str(v["id"])] = judged.get(str(v["id"]), True) and bool(v["passed"])
+    if history is not None and history.rounds:
+        for oid, ok in history.rounds[-1].judged.items():
+            judged[oid] = judged.get(oid, True) and ok
+    out: dict[str, dict[str, Any]] = {}
+    for c in drafter.clauses:
+        if c.get("origin") != "tactic":
+            continue
+        obs = [o for o in drafter.obligations if c["id"] in o.clauses()]
+        hit = [o for o in obs if o.id in judged]
+        out[c["id"]] = {
+            "text": c.get("text", ""),
+            "obligations": [o.id for o in obs],
+            "judged": [o.id for o in hit],
+            "effect": [o.id for o in hit if o.spatial],
+            "verified": bool(hit) and all(judged[o.id] for o in hit),
+        }
+    return out
+
+
 @dataclass
 class V3Result:
     package_dir: Path
@@ -177,7 +227,7 @@ class V3Result:
 
     @property
     def exit_code(self) -> int:
-        return 0 if self.status == "draft_valid" else 3
+        return {"draft_valid": 0, UNVERIFIED: 4, "needs_capability": 5}.get(self.status, 3)
 
 
 class Drafter:
@@ -197,6 +247,11 @@ class Drafter:
         self.afsim_budget = 0  # AFSIM runs the repair loop may still start
         self.afsim_verdicts: dict[str, AfsimNote] = {}  # sheet hash -> AFSIM verdict
         self.tactic: Any = None  # the Crow selection (falcon.tactic.SelectedTactic)
+        self.afsim_history: Any = None  # AfsimHistory of the chosen draft (coverage)
+        # tactic clause → {"actions", "how", "missing"} (map_stage) and the clauses the
+        # capability set cannot carry (clause → missing capability)
+        self.clause_map: dict[str, dict[str, Any]] = {}
+        self.blocked: dict[str, str] = {}
         self.crow_caps: list[dict[str, Any]] = []  # Crow's capability map of that selection
 
     # ------------------------------------------------------------------ helpers
@@ -236,6 +291,22 @@ class Drafter:
             ):
                 block, line = compiled.locate(f"gaps.{gid}")
                 problems.append(SheetProblem(block, line, message, code="CROW_GAP"))
+        if compiled.spec is not None and not pending and not compiled.errors:
+            from afsim_research_agent.falcon.v3 import semantics
+
+            tactic = [c for c in self.clauses if c.get("origin") == "tactic"]
+            for path, message, code in semantics.problems(
+                compiled.spec,
+                compiled.implements,
+                tactic,
+                self.clause_map,
+                self.c.tactics,
+                set(self.r.scenario_parameters),
+            ):
+                if code == "UNUSED_PARAM" and not tactic:
+                    continue  # checked for drafts of a selected tactic (Crow) only
+                block, line = compiled.locate(path)
+                problems.append(SheetProblem(block, line, message, code=code))
         out = Check(compiled, model, diags, problems)
         if verify and out.l1_ok and model is not None:
             spec = compiled.spec or {}
@@ -456,10 +527,44 @@ class Drafter:
             # the selected tactic's steps, formations and exceptions must be implemented
             skip = (
                 deferred_elements(self.crow_caps)
-                if self.r.missing_capabilities == "skip"
+                if self.r.missing_capabilities != "wait"
                 else set()
             )
             self.clauses += tactic_clauses(self.tactic, skip=skip)
+
+    async def map_stage(self) -> dict[str, str]:
+        """Map each tactic clause onto the capability set before drafting (Falcon's own
+        check, next to Crow's annotation). Returns the blocked clauses: id → missing."""
+        from afsim_research_agent.falcon.v3.crow_bridge import blocked_elements
+
+        tactic = [c for c in self.clauses if c.get("origin") == "tactic"]
+        if not tactic:
+            return {}
+        classes = {v.capability_class for v in self.r.roles.values()} or None
+        prompt = P.capability_map_prompt(
+            tactic,
+            K.action_list(self.c, classes, None),
+            {k: v.description or k for k, v in self.r.roles.items()},
+        )
+        answer = await self.run("v3:capability_map", prompt, MapAnswer)
+        known = set(self.c.actions) | set(self.c.tactics)
+        for item in answer.items:
+            if item.clause not in {c["id"] for c in tactic}:
+                continue
+            acts = [a for a in item.actions if a in known]
+            dropped = [a for a in item.actions if a not in known]
+            self.clause_map[item.clause] = {
+                "actions": acts,
+                "how": item.how,
+                "missing": item.missing.strip(),
+                "unknown": dropped,
+            }
+        for c in tactic:
+            m = self.clause_map.setdefault(c["id"], {"actions": [], "how": "", "missing": ""})
+            if not m["actions"] and not m["missing"]:
+                m["missing"] = "没有能实现它的动作"
+        self.blocked = blocked_elements(tactic, self.crow_caps, self.clause_map)
+        return self.blocked
 
     async def obligations_stage(self) -> None:
         """Requirement obligations: given by the request, or written by the model from the
@@ -482,6 +587,7 @@ class Drafter:
                 self.clauses,
                 K.action_list(self.c, classes, slices),
                 self.r.scenario_events,
+                {k: v.description or k for k, v in self.r.roles.items()},
             )
             answer = await self.run("v3:obligations", prompt, ObligationAnswer)
             raw = [dict(o) for o in answer.obligations]
@@ -493,6 +599,9 @@ class Drafter:
                 self.notes.append(f"需求约束 {item.get('id')} 格式不对，已忽略：{str(exc)[:120]}")
                 continue
             problems = ob.problems(known, events)
+            unknown = [r for r in ob.roles if self.r.roles and r not in self.r.roles]
+            if unknown:
+                problems.append(f"{ob.id}: 角色 {'、'.join(unknown)} 不存在")
             if problems or ob.id in seen:
                 self.notes.append(f"需求约束 {ob.id} 已忽略：{'；'.join(problems) or '重复'}")
                 continue
@@ -745,6 +854,22 @@ def _review(request: V3Request, drafter: Drafter, check: Check, status: str) -> 
         else ("允许整体引用战术集任务" if request.allow_mission_ref else "不允许整体引用战术集任务")
     )
     lines.append(f"- 引用方式：{policy}")
+    cover = coverage(drafter, check, drafter.afsim_history)
+    if cover:
+        lines += ["", "## 战术条款的验证", ""]
+        lines.append(
+            "每个条款要有运行判定过的需求约束才算验证；只证明动作被调用、状态被进入的不算。"
+        )
+        for cid, c in cover.items():
+            if c["verified"]:
+                mark = "已验证" + ("（含效果约束）" if c["effect"] else "（只有时序约束）")
+            elif c["judged"]:
+                mark = "未通过"
+            elif c["obligations"]:
+                mark = "未验证：约束 " + "、".join(c["obligations"]) + " 没有被任何运行判定"
+            else:
+                mark = "未验证：没有约束检查这个条款"
+            lines.append(f"- {cid} {c['text'][:60]}：{mark}")
     lines.append("")
     lines.append("## 引用、新建与缺口")
     missions = {r: m for r, m in (spec.get("missions") or {}).items()}
@@ -855,7 +980,13 @@ def write_package(
     if drafter.tactic is not None:
         from afsim_research_agent.falcon.v3.crow_bridge import write_crow_files
 
-        write_crow_files(staging, drafter.tactic, drafter.crow_caps, request.missing_capabilities)
+        write_crow_files(
+            staging,
+            drafter.tactic,
+            drafter.crow_caps,
+            request.missing_capabilities,
+            drafter.blocked,
+        )
     if spec:
         (staging / "behavior_spec.yaml").write_text(
             yaml.safe_dump(spec, allow_unicode=True, sort_keys=False), encoding="utf-8"
@@ -894,6 +1025,8 @@ def write_package(
             for s in check.l3
         ],
         "gaps": sorted(gaps),
+        # tactic clauses and the obligations a run judged for them (see coverage)
+        "clause_coverage": coverage(drafter, check, getattr(drafter, "afsim_history", None)),
         "tactic_comparison": compare_tactics(check.model, drafter.c) if check.model else [],
     }
     (staging / "validation_report.json").write_text(
@@ -903,7 +1036,9 @@ def write_package(
     if drafter.tactic is not None:
         from afsim_research_agent.falcon.v3.crow_bridge import review_section
 
-        section = review_section(drafter.tactic, drafter.crow_caps, request.missing_capabilities)
+        section = review_section(
+            drafter.tactic, drafter.crow_caps, request.missing_capabilities, drafter.blocked
+        )
         review += "\n" + "\n".join(section) + "\n"
     for outcome in fixes or []:
         review += "\n" + "\n".join(render_fix(outcome)) + "\n"
@@ -986,6 +1121,8 @@ def compile_package(sheet_path: Path, request_path: Path, out: Path) -> V3Result
     drafter.slices = drafter._slices(drafter.compile(pending=True))
     check = drafter.check(verify=True)
     status = "draft_valid" if check.verified else "draft_invalid"
+    if check.verified and any(not c["verified"] for c in coverage(drafter, check).values()):
+        status = UNVERIFIED
     staging = out.with_name(out.name + ".partial")
     if staging.exists():
         shutil.rmtree(staging)
@@ -1037,6 +1174,52 @@ async def _draft(
     return check, fixes
 
 
+NEEDS_CAPABILITY = "needs_capability"
+
+
+def _blocked_package(staging: Path, target: Path, request: V3Request, lead: Drafter) -> V3Result:
+    """The selected tactic needs capabilities the set does not have: no draft, a package
+    that says which (and the selection, for the capability-development queue)."""
+    from afsim_research_agent.falcon.v3.crow_bridge import review_section, write_crow_files
+
+    write_crow_files(
+        staging, lead.tactic, lead.crow_caps, request.missing_capabilities, lead.blocked
+    )
+    report = {
+        "stage": "falcon_draft3",
+        "status": NEEDS_CAPABILITY,
+        "blocked_clauses": lead.blocked,
+        "clause_map": lead.clause_map,
+        "notes": lead.notes,
+    }
+    (staging / "validation_report.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    lines = [
+        f"# Falcon v3：{request.display_name or request.model_id}",
+        "",
+        f"- 状态：{NEEDS_CAPABILITY}（选定战术的核心要素能力集实现不了，没有起草）",
+        "- 处理：能力开发后重新起草；或在请求中设 missing_capabilities: skip（不实现这些要素，"
+        "并在模型包中声明）；或另选战术。",
+        "",
+        "## 各条款的能力核对",
+        "",
+    ]
+    for cid, m in lead.clause_map.items():
+        mark = f"暂缺：{lead.blocked[cid]}" if cid in lead.blocked else "可实现"
+        acts = "、".join(m.get("actions") or []) or "—"
+        lines.append(f"- {cid}：{mark}（{acts}）")
+    lines += [
+        "",
+        *review_section(lead.tactic, lead.crow_caps, request.missing_capabilities, lead.blocked),
+    ]
+    (staging / "falcon_review.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if target.exists():
+        shutil.rmtree(target)
+    staging.rename(target)
+    return V3Result(target, NEEDS_CAPABILITY, lead.check(pending=True), [])
+
+
 async def run_draft3(
     request_path: Path,
     model: FalconModel,
@@ -1080,6 +1263,27 @@ async def run_draft3(
     try:
         # shared by every candidate: the clauses and the obligations the drafts are judged on
         await lead.clauses_stage()
+        if tactic is not None:
+            from afsim_research_agent.falcon.v3.crow_bridge import is_core, map_text
+
+            blocked = await lead.map_stage()
+            mode = request.missing_capabilities
+            core = {cid: why for cid, why in blocked.items() if is_core(cid)}
+            if core and mode == "block":
+                lead.notes.append(
+                    "能力集实现不了选定战术的核心要素，未起草："
+                    + "；".join(f"{cid} {why}" for cid, why in core.items())
+                )
+                return _blocked_package(staging, target, request, lead)
+            if mode != "wait":
+                # left out, declared (deferred_capabilities.yaml, review), never imitated
+                lead.clauses = [c for c in lead.clauses if c["id"] not in blocked]
+            text = map_text(lead.clause_map, blocked if mode != "wait" else {})
+            if text:
+                request = request.model_copy(
+                    update={"requirement": request.requirement + "\n\n" + text}
+                )
+                lead.r = request
         # the obligations are written once the structure has chosen the slices
         structure = await lead.structure_stage()
         await lead.obligations_stage()
@@ -1087,6 +1291,7 @@ async def run_draft3(
             d = Drafter(request, contracts, run)
             d.clauses, d.obligations, d.notes = list(lead.clauses), list(lead.obligations), []
             d.tactic, d.crow_caps = tactic, caps
+            d.clause_map, d.blocked = lead.clause_map, lead.blocked
             drafters.append(d)
         outcomes = await asyncio.gather(
             _draft(lead, run, structure), *(_draft(d, run) for d in drafters[1:])
@@ -1108,8 +1313,13 @@ async def run_draft3(
         history = None
         if afsim is not None and check.l1_ok and check.model is not None:
             check, history = await _afsim_rounds(drafter, run, check, fixes, afsim, staging)
+            drafter.afsim_history = history
         ok = check.verified and (history is None or history.passed)
         status = "draft_valid" if ok else "draft_invalid"
+        cover = coverage(drafter, check, history)
+        if ok and any(not c["verified"] for c in cover.values()):
+            # every check passed, but some tactic clause was never judged by any run
+            status = UNVERIFIED
         write_package(staging, request, drafter, check, status, fixes)
         if history is not None:
             (staging / "afsim_rounds.md").write_text(_afsim_report(history), encoding="utf-8")
@@ -1156,7 +1366,13 @@ async def _afsim_rounds(
         missions = {rid: role.get("mission") for rid, role in (model.get("roles") or {}).items()}
         text = "" if passed else feedback(results, runs, error, missions, meanings)
         local = error or "\n".join(r.render() for r in results or [])
-        history.rounds.append(AfsimRound(index, passed, text, local, out))
+        judged = {
+            str(v["id"]): bool(v["passed"])
+            for r in results or []
+            for v in r.obligations
+            if v.get("judged", True)
+        }
+        history.rounds.append(AfsimRound(index, passed, text, local, out, judged))
         drafter.notes.append(f"AFSIM 第 {index + 1} 次运行：{'通过' if passed else '未通过'}")
         drafter.afsim_note = AfsimNote(sheet_hash(drafter.sheet), text, passed)
         drafter.afsim_verdicts[drafter.afsim_note.sheet_hash] = drafter.afsim_note

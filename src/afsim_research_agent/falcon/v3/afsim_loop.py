@@ -49,6 +49,8 @@ class AfsimRound:
     feedback: str  # sanitized, what the repair loop sees
     local: str  # full judgement, kept in the package only
     package: Path | None = None
+    # obligation id → passed, for the obligations this run judged (coverage of the clauses)
+    judged: dict[str, bool] = field(default_factory=dict)
 
 
 @dataclass
@@ -139,6 +141,13 @@ def feedback(
                     f"  {labels[name]} 交战：开火 {e['fired']} 次，命中 {e['hits']} 次"
                     + (f"（{hit}）" if hit else "")
                     + (f"，击毁 {e['kills']}" if e["kills"] else "")
+                )
+        for name, m in (getattr(res, "motion", {}) or {}).items():
+            if name in labels:
+                lines.append(
+                    f"  {labels[name]} 机动：累计 {m['path_m']:.0f} m，由 ({m['start'][0]:.0f}, "
+                    f"{m['start'][1]:.0f}) 到 ({m['end'][0]:.0f}, {m['end'][1]:.0f})（米，东/北），"
+                    f"最高 {m['max_speed']:.1f} m/s"
                 )
         for name, acts in (getattr(res, "failures", {}) or {}).items():
             if name not in labels:
@@ -259,6 +268,13 @@ def _issue(issue: Any, labels: dict[str, str], targets: dict[str, str], anon: An
             return "（本地参考记录缺失，不影响本稿）"
         case "OBLIGATION":
             return f"需求约束 {d['id']} 未满足：{anon(str(d['detail']))}"
+        case "STOP_DRIFT":
+            return (
+                f"{who} 在 {d['t']:g} s 执行停车后又移动了 {d['drift_m']} m：停车没有撤销其他"
+                "运动控制（编队槽位、路线等仍在驱动车辆）"
+            )
+        case "NO_MOTION":
+            return f"{who} 在 {d['t']:g} s 开始 {d['action']}，但 15 s 内车辆几乎没有移动（动作没有生效）"
     return "一项运行检查未满足（细节只在本地记录）"
 
 

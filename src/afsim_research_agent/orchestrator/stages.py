@@ -351,7 +351,7 @@ async def falcon_draft3(
     requirement: str = "",
     candidates: int = 3,
     afsim: bool = False,
-    missing_capabilities: str = "skip",
+    missing_capabilities: str = "block",
     model=None,
 ) -> StageResult:
     """Crow → Falcon v3: write a v3 request naming the user's tactic selection next to the

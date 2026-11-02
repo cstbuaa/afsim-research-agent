@@ -21,6 +21,7 @@ from typing import Any
 
 IR_STATE = re.compile(r"^IR_STATE\|([^|]+)\|([^|]+)\|([^|\r\n]+)", re.M)
 IR_ACT = re.compile(r"^IR_ACT\|([^|]+)\|([^|]+)\|([^|\r\n]+)", re.M)
+IR_DONE = re.compile(r"^IR_DONE\|([^|]+)\|([^|]+)\|([^|\r\n]+)", re.M)
 ERRORS = re.compile(r"\*\*\*\*\* (ERROR|FATAL)[^\r\n]*")
 
 
@@ -99,6 +100,13 @@ class Issue:
                 return "the handwritten reference console was not found"
             case "OBLIGATION":
                 return f"requirement obligation {d['id']}: {d['detail']}"
+            case "STOP_DRIFT":
+                return (
+                    f"{p} kept moving after movement.stop at {d['t']:g}s: {d['drift_m']} m "
+                    "(another controller still drives the vehicle)"
+                )
+            case "NO_MOTION":
+                return f"{p} started {d['action']} at {d['t']:g}s but did not move within 15 s"
         return f"{self.code}: {d}"
 
 
@@ -120,6 +128,9 @@ class RunJudgement:
     # platform → action → {"code": code, "known": stated in the capability set, "count": n,
     # "first_s": t}: actions that failed (IR_FAIL, first failure per state entry)
     failures: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    # platform → {"start": [x, y], "end": [x, y], "path_m": m, "max_speed": m/s} from the
+    # sampled positions (IR_POS; metres east / north of the first platform's start)
+    motion: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def add(self, issue: Issue, rules: dict[str, bool] | None = None, rule: str = "") -> None:
         if rule and not {**RULES, **(rules or {})}.get(rule, True):
@@ -157,6 +168,12 @@ class RunJudgement:
                 lines.append(f"  [{mark}] 需求约束 {v['id']}：{v['detail']}")
         for name, e in self.engagements.items():
             lines.append(f"  {name}: fired {e['fired']}, hits {e['hits']}, kills {e['kills']}")
+        for name, m in self.motion.items():
+            lines.append(
+                f"  {name}: moved {m['path_m']:.0f} m from ({m['start'][0]:.0f}, "
+                f"{m['start'][1]:.0f}) to ({m['end'][0]:.0f}, {m['end'][1]:.0f}), "
+                f"max {m['max_speed']:.1f} m/s"
+            )
         lines += [f"  problem: {p}" for p in self.problems]
         lines += [f"  caveat: {c}" for c in self.caveats]
         return "\n".join(lines)
@@ -405,12 +422,30 @@ def judge(
                         )
     elif ref:
         j.add(Issue("REFERENCE_MISSING", INFRASTRUCTURE))
+    from afsim_research_agent.ir.v2 import effects
+
+    acts = [(float(t), p, a.strip()) for t, p, a in IR_ACT.findall(console)]
+    done = [(float(t), p, a.strip()) for t, p, a in IR_DONE.findall(console)]
+    events = [(float(e["at_s"]), str(e["event"])) for e in run.get("events") or []]
+    own = {p["name"]: p["role"] for p in run.get("platforms") or [] if "role" in p}
+    tracks = effects.parse(console)
+    for name in sorted(own):
+        track = tracks.by_platform.get(name) or []
+        if track:
+            path = sum(effects.dist(a, b) for a, b in zip(track, track[1:], strict=False))
+            j.motion[name] = {
+                "start": [track[0].x, track[0].y],
+                "end": [track[-1].x, track[-1].y],
+                "path_m": path,
+                "max_speed": max(s.speed for s in track),
+            }
+    if j.completed and not j.errors:
+        for m in effects.motion_issues(tracks, own, acts):
+            j.add(Issue(m["kind"], MODEL, m["platform"], m))
     if obligations:
         from afsim_research_agent.ir.v2.obligations import Obligation, check
 
         obs = [Obligation.model_validate(o) for o in obligations]
-        acts = [(float(t), p, a.strip()) for t, p, a in IR_ACT.findall(console)]
-        events = [(float(e["at_s"]), str(e["event"])) for e in run.get("events") or []]
         capable = None
         if role_actions:
             capable = {
@@ -432,6 +467,11 @@ def judge(
             end_s=float(run.get("end_time_s") or 0) or None,
             capable=capable,
             after_event=after,
+            # orderings across vehicles are judged on completions when the run reports them
+            completions=done if ("IR_DONE|" in console or "IR_POS|" in console) else None,
+        )
+        verdicts += effects.judge(
+            obs, tracks, own, acts, events, float(run.get("end_time_s") or 0) or None
         )
         j.obligations = [asdict(v) for v in verdicts]
         for v in verdicts:

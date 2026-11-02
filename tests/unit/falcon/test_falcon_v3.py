@@ -1073,3 +1073,24 @@ def test_a_state_waiting_for_true_needs_a_writer_that_can_set_it(set_root: Path)
     # waiting for false is fine
     ok = SHEET.replace("target_seen = sense.target.valid", "target_seen = not sense.target.valid")
     assert not any("只会把它置为" in p.message for p in _compile(contracts, ok).errors)
+
+
+def test_with_until_pass_waits_for_the_condition(contracts: Contracts) -> None:
+    """``with until(c): pass`` waits for c (it used to compile to a selector whose true
+    fallback succeeded at once, so the wait was skipped)."""
+    text = SHEET.replace(
+        """def OBSERVE():
+    with parallel("one"):
+        nav.hold()
+        guard()""",
+        """def OBSERVE():
+    with sequence():
+        nav.hold()
+        with until(sense.target.valid):
+            pass""",
+    )
+    out = _compile(contracts, text)
+    assert not out.errors, [p.render() for p in out.errors]
+    root = next(s["root"] for s in out.spec["subtrees"] if s["id"] == "scout_observe")
+    assert "selector" not in json.dumps(root)
+    assert root["children"][1]["type"] == "failure_as_running"

@@ -348,6 +348,10 @@ class _Translator:
         if cond is None:
             return None
         if name == "until":
+            if all(isinstance(x, ast.Pass) for x in stmt.body):
+                # ``with until(c): pass`` waits for c (a selector with an empty body would
+                # succeed at once and skip the wait)
+                return self.node({"type": "failure_as_running", "children": [cond]}, stmt)
             return self.node({"type": "selector", "children": [cond, body]}, stmt)
         wait = self.node({"type": "failure_as_running", "children": [cond]}, stmt)
         return self.node({"type": "sequence", "children": [wait, body]}, stmt)

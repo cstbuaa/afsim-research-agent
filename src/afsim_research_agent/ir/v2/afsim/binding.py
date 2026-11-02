@@ -227,6 +227,8 @@ class RunConfig(_Strict):
     record: bool = True
     # write AFSIM's standard event log output/<run>.evt (unless the run configures its own)
     record_events: bool = True
+    # sample every platform's position and speed this often (IR_POS lines; 0 turns it off)
+    sample_s: float = Field(default=1.0, ge=0)
     reference: Reference | None = None
 
     @classmethod

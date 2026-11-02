@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-PROMPT_VERSION = "falcon-v3-2026.10.31"
+PROMPT_VERSION = "falcon-v3-2026.11.02"
 
 RULES = """你在为作战仿真编写战术行为模型。模型分七层，你只写上三层：任务状态机、状态树、子树；
 动作、黑板、仲裁、能力层由程序从能力集引用、推导和校验。你写的是"战术稿"：若干带标签的 Markdown 代码块。
@@ -359,7 +359,20 @@ OBLIGATIONS_GUIDE = """把需求条款中关于"什么时候做"的要求写成�
 - response：外部事件 on_event 发生后 within_s 秒内动作 action 开始。
   例："收到结束请求后关闭传感器" → {kind: response, on_event: <事件>, action: <关传感器的动作>, within_s: 10}
 
+效果约束检查车辆**实际做到了什么**（按 AFSIM 仿真中每秒采样的位置和速度判定，不看调用了哪个动作）；
+roles 写角色 ID 列表（省略表示全部己方车辆）：
+- keeps_distance：这些车辆与任一敌方车辆的距离始终不小于 min_m 米。
+  例："与敌保持安全距离" → {kind: keeps_distance, min_m: <距离>}
+- stays_still：动作 action 开始后（或外部事件 on_event 后），车辆在 duration_s 秒内（省略则到运行结束）
+  位移不超过 tol_m 米（默认 10）。例："收到结束命令后停车" → {kind: stays_still, on_event: <事件>}
+- not_all_moving：任何时刻这些车辆不同时处于机动状态。例："不得使全排同时暴露/同时机动"
+- moves_in_turn：这些车辆分次机动，至少 min_bounds 次（默认 2）、每次至少 min_m 米（默认 20），
+  相邻两次由不同车辆完成。例："交替跃进""一部掩护一部前进，再交换"
+- advances：这些车辆合计向敌方接近至少 min_m 米。例："前出""向东推进"
+
 规则：
+- **每个战术条款（tc_ 开头）至少写一条约束**；涉及位置、距离、机动、停车、轮换的条款优先用效果约束：
+  只检查"调用了动作"的约束不能证明战术被实现；没有约束的条款，模型即使运行通过也只算"未验证"；
 - 只写需求明确提出的时间或先后要求；动作本身就有的顺序（同一个子树内部）不写；
 - precedes 和 not_before 按两个动作各自**第一次**开始的时刻判定：只用于整个任务中第一次出现就体现条款
   的动作对（如"先停车再展开"）；在多个阶段都会执行的动作（如纵队跟随、保持位置在开始阶段就会执行）
@@ -367,15 +380,21 @@ OBLIGATIONS_GUIDE = """把需求条款中关于"什么时候做"的要求写成�
 - 约束检查的是动作是否按时开始，不规定用哪个动作实现：不要因为写约束而选用与本需求无关切片的动作；
 - 选最直接体现条款的动作：搜索开始用开机 / 开始搜索的动作，不用读取航迹类动作；
 - 时长取需求给的数值（"约 10 秒"写 10）；没有给时长的 response 用 10；
-- id 用英文蛇形；clause 写条款编号；description 用一句中文复述要求；
+- 两辆不同车辆之间的先后（如"掩护车就位后跃进车出发"）照常写 precedes：按完成时刻跨车判定；
+- id 用英文蛇形；clause 写条款编号（可写多个，逗号分隔）；description 用一句中文复述要求；
 - 没有可检查的要求就返回空列表。"""
 
 
 def obligations_prompt(
-    requirement: str, clauses: list[dict[str, Any]], actions: str, events: dict[str, str]
+    requirement: str,
+    clauses: list[dict[str, Any]],
+    actions: str,
+    events: dict[str, str],
+    roles: dict[str, str] | None = None,
 ) -> str:
     ev = "\n".join(f"- {k}：{v}" for k, v in events.items()) or "（无）"
-    return f"""你在把战术需求中的时间与先后要求写成可检查的约束。
+    rl = "\n".join(f"- {k}：{v}" for k, v in (roles or {}).items()) or "（未给出）"
+    return f"""你在把战术需求中的时间、先后与效果要求写成可检查的约束。
 
 ## 需求
 {requirement}
@@ -385,6 +404,9 @@ def obligations_prompt(
 
 ## 外部事件
 {ev}
+
+## 角色
+{rl}
 
 ## 可用的动作（ID — 说明）
 {actions}
@@ -410,3 +432,38 @@ def repair_prompt(label: str, numbered: str, problems: list[str], guide: str, co
 
 ## 相关上下文
 {context}"""
+
+
+MAP_GUIDE = """把每个战术条款对到能力集的动作上，判断现有能力能不能真正实现它。
+
+规则：
+- 只有动作说明**本身**就做这件事才算能实现；不能拿做别的事的动作冒充（例如：重新计算编队槽位
+  不等于交换掩护/跃进角色；保持位置不等于报告"到位"；给状态起个名字不实现任何东西）；
+- 条款需要车辆之间传递特定消息（如"Move""Set""就位"报告）时，要有发送和接收这类消息的动作；
+  只有通用的航迹广播、目标共享，不算实现特定的协同消息；
+- 能实现：actions 列出用到的动作 ID，how 用一句话说明怎么组合；missing 留空；
+- 不能实现或只能部分实现：missing 写缺少的原子能力（如"按周期交换掩护/跃进角色""向掩护车发送到位报告"），
+  actions 列出能用上的部分；
+- 每个条款都要给出一项，clause 写条款编号。"""
+
+
+def capability_map_prompt(
+    clauses: list[dict[str, Any]], actions: str, roles: dict[str, str]
+) -> str:
+    rl = "\n".join(f"- {k}：{v}" for k, v in roles.items()) or "（未给出）"
+    listed = "\n".join(f"- {c['id']}：{c['text']}" for c in clauses)
+    return f"""你在核对选定的战术能否用现有能力集实现。
+
+## 战术条款
+{listed}
+
+## 角色
+{rl}
+
+## 可用的动作（ID — 说明）
+{actions}
+
+## 要求
+{MAP_GUIDE}
+
+按给定的结构输出。"""

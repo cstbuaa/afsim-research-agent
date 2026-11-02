@@ -95,9 +95,10 @@ def _parser() -> argparse.ArgumentParser:
     crow.add_argument("--candidates", type=int, default=3)
     crow.add_argument(
         "--missing",
-        choices=("skip", "wait"),
-        default="skip",
-        help="能力目录暂缺的战术要素：skip 本次忽略（默认），wait 写成缺口等待能力开发",
+        choices=("block", "skip", "wait"),
+        default="block",
+        help="能力集实现不了的战术要素：block 核心要素缺能力时不起草（默认，例外处理不实现并声明），"
+        "skip 不实现并声明，wait 写成缺口等待能力开发",
     )
     comp3 = sub.add_parser(
         "compile3", help="v3：战术稿 → IR 2.0 并做 L1–L3（不调用模型，结果写到新目录）"

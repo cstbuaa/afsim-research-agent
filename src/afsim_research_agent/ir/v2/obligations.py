@@ -16,23 +16,68 @@ structure the model chooses:
 ``response``    after the external event ``on_event``, ``action`` starts within ``within_s``
                 ("on a stop request, switch the sensor off within 10 s")
 
+Effect obligations say what the vehicles must *do*, judged on sampled positions (the AFSIM
+run's IR_POS lines, :mod:`afsim_research_agent.ir.v2.effects`); runs without positions
+(the 2D simulation for now) do not judge them:
+
+``keeps_distance``  the vehicles (of ``roles``, default all own) never come closer than
+                    ``min_m`` to an enemy vehicle
+``stays_still``     after ``action`` starts on a vehicle (or after ``on_event``), the vehicle
+                    moves no more than ``tol_m`` within ``duration_s`` (default: to the end)
+``not_all_moving``  at no time are all the vehicles (of ``roles``) moving at once
+``moves_in_turn``   the vehicles (of ``roles``) move in at least ``min_bounds`` separate
+                    bounds of at least ``min_m`` each, and consecutive bounds are made by
+                    different vehicles (bounding overwatch)
+``advances``        the vehicles (of ``roles``) together close at least ``min_m`` on the
+                    enemy
+
 An obligation whose anchor never happens in a run is not judged there (vacuous). Times are
-compared with a tolerance of one update or 10 %, whichever is larger.
+compared with a tolerance of one update or 10 %, whichever is larger. ``precedes`` between
+actions of different vehicles is judged on completions when the run reports them
+(AFSIM: IR_DONE), else on starts of the prerequisite and completions of the follower.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-Kind = Literal["not_before", "precedes", "response"]
-_COMMON = {"id", "kind", "description", "clause"}
+Kind = Literal[
+    "not_before",
+    "precedes",
+    "response",
+    "keeps_distance",
+    "stays_still",
+    "not_all_moving",
+    "moves_in_turn",
+    "advances",
+]
+SPATIAL = frozenset(
+    {"keeps_distance", "stays_still", "not_all_moving", "moves_in_turn", "advances"}
+)
+_COMMON = {"id", "kind", "description", "clause", "roles"}
 _USES = {
     "not_before": {"action", "after", "min_s"},
     "precedes": {"first", "then"},
     "response": {"on_event", "action", "within_s"},
+    "keeps_distance": {"min_m"},
+    "stays_still": {"action", "on_event", "duration_s", "tol_m"},
+    "not_all_moving": {"speed_mps"},
+    "moves_in_turn": {"min_bounds", "min_m"},
+    "advances": {"min_m"},
+}
+_NEED = {
+    "not_before": ("action", "after", "min_s"),
+    "precedes": ("first", "then"),
+    "response": ("on_event", "action", "within_s"),
+    "keeps_distance": ("min_m",),
+    "stays_still": (),
+    "not_all_moving": (),
+    "moves_in_turn": (),
+    "advances": ("min_m",),
 }
 
 
@@ -49,6 +94,20 @@ class Obligation(BaseModel):
     then: str | None = None  # precedes
     on_event: str | None = None  # response
     within_s: float | None = Field(default=None, gt=0)
+    roles: list[str] = Field(default_factory=list)  # effect kinds: whose vehicles
+    min_m: float | None = Field(default=None, ge=0)
+    tol_m: float | None = Field(default=None, ge=0)
+    duration_s: float | None = Field(default=None, gt=0)
+    speed_mps: float | None = Field(default=None, ge=0)
+    min_bounds: int | None = Field(default=None, ge=1)
+
+    @property
+    def spatial(self) -> bool:
+        return self.kind in SPATIAL
+
+    def clauses(self) -> list[str]:
+        """The clause ids this obligation checks (``clause`` may list several)."""
+        return [c.strip() for c in re.split(r"[,，;；\s]+", self.clause or "") if c.strip()]
 
     @model_validator(mode="before")
     @classmethod
@@ -64,12 +123,7 @@ class Obligation(BaseModel):
 
     def problems(self, known_actions: set[str], known_events: set[str]) -> list[str]:
         out = []
-        need = {
-            "not_before": ("action", "after", "min_s"),
-            "precedes": ("first", "then"),
-            "response": ("on_event", "action", "within_s"),
-        }[self.kind]
-        for key in need:
+        for key in _NEED[self.kind]:
             if getattr(self, key) is None:
                 out.append(f"{self.id}: {self.kind} 需要 {key}")
         for a in self.actions():
@@ -77,6 +131,8 @@ class Obligation(BaseModel):
                 out.append(f"{self.id}: {a} 不是能力集的动作")
         if self.on_event and known_events and self.on_event not in known_events:
             out.append(f"{self.id}: {self.on_event} 不是外部事件")
+        if self.kind == "stays_still" and not (self.action or self.on_event):
+            out.append(f"{self.id}: stays_still 需要 action 或 on_event")
         return out
 
 
@@ -180,13 +236,22 @@ def check(
     end_s: float | None = None,
     capable: dict[str, set[str]] | None = None,  # platform → actions its model can run
     after_event: dict[str, dict[str, set[str]]] | None = None,  # platform → event → actions
+    completions: list[tuple[float, str, str]] | None = None,  # (time, platform, action) done
 ) -> list[Verdict]:
     """With ``capable``, an obligation is judged on a platform only when the platform's model
     runs the constrained action. An ordering between actions of different platforms (e.g. the
     leader's broadcast before a member's adoption) is not judged: action starts carry no
     causality across vehicles (a member polls for its task from the start). With
     ``after_event``, a response is judged on a platform only when the states the event
-    leads to (and those after them) run the action."""
+    leads to (and those after them) run the action.
+
+    With ``completions`` (the run reports when actions succeed), an ordering across vehicles
+    is judged: the prerequisite's first completion (else start) on any other vehicle must
+    come no later than the follower's first completion (else start) on this one. Effect
+    kinds (:data:`SPATIAL`) are judged by :mod:`.effects`, not here."""
+    done: dict[str, dict[str, list[float]]] = {}
+    for t, platform, action in completions or []:
+        done.setdefault(platform, {}).setdefault(action, []).append(float(t))
     by_platform: dict[str, dict[str, list[float]]] = {}
     for t, platform, action in activations:
         by_platform.setdefault(platform, {}).setdefault(action, []).append(float(t))
@@ -194,6 +259,8 @@ def check(
         by_platform.setdefault(platform, {})
     out = []
     for ob in obligations:
+        if ob.spatial:
+            continue
         verdicts = []
         for platform, own in sorted(by_platform.items()):
             caps = None if capable is None else capable.get(platform)
@@ -203,6 +270,15 @@ def check(
             if caps is not None and subject not in caps:
                 continue
             prereq = ob.first if ob.kind == "precedes" else ob.after
+            others = {n: o for n, o in by_platform.items() if n != platform}
+            if (
+                ob.kind == "precedes"
+                and completions is not None
+                and ob.first not in own
+                and any(ob.first in o for o in others.values())
+            ):
+                verdicts.append(_across(ob, platform, own, others, done, step_s))
+                continue
             if caps is not None and prereq and prereq not in caps:
                 verdicts.append(
                     Verdict(
@@ -240,6 +316,30 @@ def check(
             bad = [v for v in judged if not v.passed]
             out.append(bad[0] if bad else judged[0])
     return out
+
+
+def _across(ob, platform, own, others, done, step_s) -> Verdict:
+    """``precedes`` with the prerequisite on other vehicles (see :func:`check`)."""
+    then_done = _first(done.get(platform, {}), ob.then)
+    tt = then_done if then_done is not None else _first(own, ob.then)
+    if tt is None:
+        return Verdict(ob.id, True, f"{platform}: {ob.then} 没有执行", judged=False)
+    firsts = []
+    for name, starts in others.items():
+        t = _first(done.get(name, {}), ob.first)
+        t = t if t is not None else _first(starts, ob.first)
+        if t is not None:
+            firsts.append((t, name))
+    tf, who = min(firsts) if firsts else (None, None)
+    ok = tf is not None and tf <= tt + step_s
+    what = "完成" if then_done is not None else "开始"
+    return Verdict(
+        ob.id,
+        ok,
+        f"{platform}: {ob.then} 在 {tt:g} s {what}，"
+        + (f"{who} 的 {ob.first} 在 {tf:g} s" if tf is not None else f"其他车辆没有执行 {ob.first}")
+        + ("" if ok else "（跨车先后不满足）"),
+    )
 
 
 def _first(starts: dict[str, list[float]], action: str | None, since: float = float("-inf")):

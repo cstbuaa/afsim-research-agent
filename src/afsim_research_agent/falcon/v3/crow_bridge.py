@@ -16,6 +16,12 @@ ends with a selected tactic; Falcon v3 starts from a request. This module joins 
 * roles come from the mission profile's own forces (or the cards' roles), named by
   ``role_map`` (Crow's role text → role id, e.g. ``排长车: leader``) or by a small
   keyword table; the slices come from the capability needs Crow annotated (C4b);
+* before drafting, every tactic clause is mapped onto the capability set (Crow's
+  annotation, then Falcon's own check of each clause, :func:`blocked_elements`): a *core*
+  element (a step or a formation) that the set cannot carry blocks the draft by default
+  (``missing_capabilities: block``) — the model would otherwise imitate it with a look-alike
+  action and a fitting state name; ``skip`` leaves such elements out (declared, not silent),
+  ``wait`` keeps them as gaps; exceptions are peripheral and are left out in ``block`` too;
 * Crow's capability annotation (C4b) goes along: for every need of the selected cards,
   the capability-set actions / subtrees Crow mapped it to and how (ready, composable,
   simplified …). Needs Crow found expressible must be built from those, not declared as
@@ -74,7 +80,21 @@ TACTIC_RULES = (
 # others (ready, composable, simplified, partial, confirm) are built from what Crow mapped
 MISSING_STATUSES = frozenset({"ir_extension", "develop"})
 
+CORE_KINDS = ("s", "g")  # steps and formations; exceptions (x) are peripheral
+
+
+def is_core(clause_id: str) -> bool:
+    m = re.search(r"_([sgx])\d+$", clause_id)
+    return bool(m) and m.group(1) in CORE_KINDS
+
+
 _RULES = {
+    "block": (
+        "能力映射（Crow 已逐项核对能力目录；先按目录匹配实现）：\n"
+        "- 列出了动作或子树的要素，用列出的动作或子树实现；简化处理按说明的简化方式落地；\n"
+        "- 标为**暂缺能力**的例外处理本次忽略：不实现、不写 gaps、不写进 implements；\n"
+        "- 不得用做别的事的动作冒充条款，也不得只用状态名表示实现；本次模型不得有 gaps。"
+    ),
     "skip": (
         "能力映射（Crow 已逐项核对能力目录；先按目录匹配实现）：\n"
         "- 列出了动作或子树的要素（可直接实现、可组合实现、简化处理、需确认、部分可实现），用列出的"
@@ -162,7 +182,46 @@ def deferred_elements(entries: list[dict[str, Any]]) -> set[str]:
     return {el for el, flags in by.items() if all(flags)}
 
 
-def capability_text(entries: list[dict[str, Any]], mode: str = "skip") -> str:
+def blocked_elements(
+    clauses: list[dict[str, Any]],
+    entries: list[dict[str, Any]],
+    clause_map: dict[str, dict[str, Any]],
+) -> dict[str, str]:
+    """Tactic clauses the capability set cannot carry: clause id → why. A clause is blocked
+    when Falcon's check names a missing capability, or Crow's annotation of its element
+    has only missing needs."""
+    out: dict[str, str] = {}
+    crow: dict[str, list[dict[str, Any]]] = {}
+    for e in entries:
+        for el in e["elements"]:
+            crow.setdefault(el, []).append(e)
+    for c in clauses:
+        if c.get("origin") != "tactic":
+            continue
+        cid = c["id"]
+        m = clause_map.get(cid) or {}
+        if m.get("missing"):
+            out[cid] = str(m["missing"])
+        elif crow.get(cid) and all(e["missing"] for e in crow[cid]):
+            out[cid] = "；".join(e.get("missing_text") or e["need"] for e in crow[cid])
+    return out
+
+
+def map_text(clause_map: dict[str, dict[str, Any]], blocked: dict[str, str]) -> str:
+    """The clause → actions mapping the draft must follow."""
+    if not clause_map:
+        return ""
+    lines = ["条款与能力的对应（起草前已核对；按此实现，不要换成做别的事的动作）："]
+    for cid, m in clause_map.items():
+        if cid in blocked:
+            lines.append(f"- {cid}：能力集暂缺（{blocked[cid]}），本次不实现，不写进 implements")
+        elif m.get("actions"):
+            how = f"：{m['how']}" if m.get("how") else ""
+            lines.append(f"- {cid}：{'、'.join(m['actions'])}{how}")
+    return "\n".join(lines)
+
+
+def capability_text(entries: list[dict[str, Any]], mode: str = "block") -> str:
     if not entries:
         return ""
     lines = [_RULES[mode]]
@@ -221,7 +280,7 @@ def gap_problems(
                     f"{how}；删除 gaps.{gid}，并把树中 gap.{gid} 的用法换成这些动作或子树。",
                 )
             )
-        elif mode == "skip":
+        elif mode != "wait":
             what = f"「{need['need']}」" if need is not None and score >= threshold else ""
             out.append(
                 (
@@ -389,7 +448,7 @@ def apply_selection(
     entries = capability_map(tactic, contracts)
     mode = request.missing_capabilities
     caps = capability_text(entries, mode)
-    deferred = deferred_elements(entries) if mode == "skip" else set()
+    deferred = deferred_elements(entries) if mode != "wait" else set()
     update: dict[str, Any] = {
         "requirement": tactic.requirement(request.requirement)
         + "\n\n"
@@ -410,7 +469,7 @@ def apply_selection(
         update["display_name"] = "+".join(p.card.name for p in tactic.parts)[:60]
     missing = [e for e in entries if e["missing"]]
     if missing:
-        how = "本次忽略，待能力开发" if mode == "skip" else "写成缺口，等待能力开发"
+        how = "写成缺口，等待能力开发" if mode == "wait" else "本次不实现，待能力开发"
         notes.append(
             f"能力目录暂缺 {len(missing)} 项（{how}）：" + "；".join(e["need"] for e in missing)
         )
@@ -426,19 +485,24 @@ def write_crow_files(
     staging: Path,
     tactic: Any,
     entries: list[dict[str, Any]] | None = None,
-    mode: str = "skip",
+    mode: str = "block",
+    blocked: dict[str, str] | None = None,
 ) -> None:
     (staging / "selected_tactics.yaml").write_text(tactic.selected_document(), encoding="utf-8")
     missing = [e for e in entries or [] if e["missing"]]
-    if missing:
+    if missing or blocked:
         doc = {
             "mode": mode,
-            "meaning": (
-                "能力目录暂缺；本模型忽略这些要素，能力开发后重新起草"
-                if mode == "skip"
-                else "能力目录暂缺；本模型以 gaps 占位，等待能力开发"
-            ),
-            "left_out": sorted(deferred_elements(entries or [])) if mode == "skip" else [],
+            "meaning": {
+                "block": "能力集暂缺；核心要素缺能力时不起草，等能力开发后重新起草",
+                "skip": "能力集暂缺；本模型不实现这些要素，能力开发后重新起草",
+                "wait": "能力集暂缺；本模型以 gaps 占位，等待能力开发",
+            }.get(mode, ""),
+            # Falcon's check of each tactic clause: clause → missing atomic capability
+            "blocked_clauses": dict(blocked or {}),
+            "left_out": sorted(deferred_elements(entries or []) | set(blocked or {}))
+            if mode != "wait"
+            else [],
             "needs": [
                 {
                     k: e[k]
@@ -457,7 +521,10 @@ def write_crow_files(
 
 
 def review_section(
-    tactic: Any, entries: list[dict[str, Any]] | None = None, mode: str = "skip"
+    tactic: Any,
+    entries: list[dict[str, Any]] | None = None,
+    mode: str = "block",
+    blocked: dict[str, str] | None = None,
 ) -> list[str]:
     from afsim_research_agent.falcon.tactic import render_section
 
@@ -470,12 +537,15 @@ def review_section(
         lines += [f"- {e['need']}（{e['label']}）→ {'、'.join(e['refs'])}" for e in mapped]
         if missing:
             how = (
-                "本次忽略，见 deferred_capabilities.yaml，能力开发后重新起草"
-                if mode == "skip"
-                else "以 gaps 占位，等待能力开发"
+                "以 gaps 占位，等待能力开发"
+                if mode == "wait"
+                else "本次不实现，见 deferred_capabilities.yaml，能力开发后重新起草"
             )
             lines += ["", f"暂缺能力（{how}）："]
             lines += [f"- {e['need']}（{e['source']}）" for e in missing]
+    if blocked:
+        lines += ["", "### 起草前核对：能力集实现不了的条款", ""]
+        lines += [f"- {cid}：{why}" for cid, why in blocked.items()]
     return lines
 
 
@@ -488,7 +558,7 @@ def make_request(
     scenario_events: dict[str, str] | None = None,
     candidates: int = 3,
     base: Path | None = None,
-    missing_capabilities: str = "skip",
+    missing_capabilities: str = "block",
 ) -> dict[str, Any]:
     """A v3 request (as a dict to write next to the Crow run) that names the selection."""
     target = tactics_dir if base is None else Path(_relative(tactics_dir, base))

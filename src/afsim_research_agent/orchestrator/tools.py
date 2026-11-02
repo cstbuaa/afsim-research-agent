@@ -68,9 +68,10 @@ class FalconDraft3Args(BaseModel):
     requirement: str = Field("", description="补充的需求原文（默认用 Crow 的需求）")
     candidates: int = Field(3, ge=1, le=5, description="独立起草份数，取检查最好的一份")
     afsim: bool = Field(False, description="本地已配置 AFSIM 时，是否在起草循环中运行 AFSIM")
-    missing_capabilities: Literal["skip", "wait"] = Field(
-        "skip",
-        description="能力目录暂缺的战术要素：skip 本次忽略（默认），wait 写成缺口等待能力开发",
+    missing_capabilities: Literal["block", "skip", "wait"] = Field(
+        "block",
+        description="能力集实现不了的战术要素：block 核心要素缺能力时不起草（默认），"
+        "skip 不实现并在模型包中声明，wait 写成缺口等待能力开发",
     )
 
 
