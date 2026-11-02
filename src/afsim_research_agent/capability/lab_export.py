@@ -806,6 +806,8 @@ class LabExporter:
                 item["role"] = raw["role"]
             if raw.get("description"):
                 item["description"] = raw["description"]
+            if isinstance(raw.get("parameters"), dict) and raw["parameters"]:
+                item["parameters"] = self._parameters(raw["parameters"])
             if isinstance(raw.get("states"), dict):  # one file per role: state -> subtree
                 item["states"] = {s: self._ref(sid, t) for s, t in raw["states"].items()}
             else:

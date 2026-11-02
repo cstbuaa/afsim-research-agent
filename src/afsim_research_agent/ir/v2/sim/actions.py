@@ -362,20 +362,24 @@ class FormationSlots(ActionModel):
             # while this shape is the column) and the followers are away from them
             ctx.write(key, float(away) if away is not None else state["error"])
         done = ctx.options.get("success_within_m")
+        if done is not None and isinstance(ctx.params.get("ready_tolerance_m"), int | float):
+            done = ctx.params["ready_tolerance_m"]  # the step's own readiness parameter
         if done is not None and state["error"] <= float(done):
             return SUCCESS, None
         return RUNNING, None
 
 
 class StandoffCommand(ActionModel):
-    """Range band of the selected target against ``desired_m`` ± ``tolerance_m``; the
+    """Range band of the selected target against ``desired_range_m`` ± ``range_tolerance_m``
+    (the step's parameters; options ``desired_m`` / ``tolerance_m`` otherwise); the
     band is what standoff conditions read. Like the platform step, each update succeeds
     once the command is given (not when the range is in the band) and fails with
     NO_TARGET without a valid target; ``persistent: true`` keeps it running instead."""
 
     def update(self, ctx: ActionContext) -> Status:
-        desired = float(ctx.options.get("desired_m", 500.0))
-        tol = float(ctx.options.get("tolerance_m", 50.0))
+        # the step's parameters when the model gives them, else the configured band
+        desired = float(ctx.params.get("desired_range_m") or ctx.options.get("desired_m", 500.0))
+        tol = float(ctx.params.get("range_tolerance_m") or ctx.options.get("tolerance_m", 50.0))
         rng = ctx.read("selected.range")
         if not ctx.read("selected.valid") or not isinstance(rng, int | float):
             zone = "NO_TARGET"
