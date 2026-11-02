@@ -29,6 +29,7 @@ from afsim_research_agent.ir.v2.contracts import (
     BBField,
     Contracts,
     TacticEntry,
+    param_ref,
 )
 from afsim_research_agent.ir.v2.models import (
     COMPOSITES,
@@ -104,6 +105,8 @@ class _Normalizer:
         self.gap_contracts = {f"{GAP}{gid}": _gap_contract(gid, g) for gid, g in spec.gaps.items()}
         self.gap_uses: dict[str, list[str]] = {gid: [] for gid in spec.gaps}
         self.used_slices: set[str] = set()
+        # values a tactic-set mission reference gives its trees' parameters, per role
+        self.mission_params: dict[str, dict[str, Any]] = {}
         self.declared: dict[str, BBField] = {}
         self.reads: set[str] = set()
 
@@ -246,10 +249,16 @@ class _Normalizer:
         if entry is None or entry.section != "missions":
             self.d.error("TAC001", f"{path}.tactic", f"'{ref.tactic}' is not a tactic-set mission")
             return None
-        for key in sorted(set(ref.params) - set(entry.parameters)):
+        specs = entry.parameters
+        for key in sorted(set(ref.params) - set(specs)):
             self.d.error(
                 "TAC001", f"{path}.params.{key}", f"'{ref.tactic}' has no parameter '{key}'"
             )
+        self.mission_params[rid] = {
+            k: self._param_value(v, specs[k], f"{path}.params.{k}")
+            for k, v in ref.params.items()
+            if k in specs
+        }
         try:
             converted = role_mission(self.c, entry, ref.role)
         except TacticConversionError as exc:
@@ -454,7 +463,8 @@ class _Normalizer:
             self.d.error(code, path, f"'{ref}' is neither a subtree nor a tactic-set tree")
             return None
         self.used_slices.add(entry.slice)
-        return self._tactic_node(entry.raw["root"], entry, prefix, (ref,))
+        bound = self._bind(entry, {}, f"{path}.params", rid)
+        return self._tactic_node(entry.raw["root"], entry, prefix, (ref,), bound, path)
 
     # ------------------------------------------------------------------ layer 5
     def _node(
@@ -534,7 +544,7 @@ class _Normalizer:
                 )
             out["condition"] = node.condition
         elif kind == "tactic":
-            return self._tactic_ref(node, path, node_id, stack)
+            return self._tactic_ref(node, path, rid, node_id, stack)
         elif kind == "subtree":
             sid = node.subtree or ""
             if gap_subtree:
@@ -588,7 +598,7 @@ class _Normalizer:
         return weight
 
     def _tactic_ref(
-        self, node: Node, path: str, node_id: str, stack: tuple[str, ...]
+        self, node: Node, path: str, rid: str, node_id: str, stack: tuple[str, ...]
     ) -> dict[str, Any] | None:
         ref = node.tactic or ""
         entry = self.c.tactics.get(ref)
@@ -597,26 +607,81 @@ class _Normalizer:
                 "TAC001", f"{path}.tactic", f"'{ref}' is not a tactic-set subtree or state tree"
             )
             return None
-        for key in sorted(set(node.params) - set(entry.parameters)):
-            self.d.error(
-                "TAC001", f"{path}.params.{key}", f"'{ref}' has no public parameter '{key}'"
-            )
         self.used_slices.add(entry.slice)
-        built = self._tactic_node(entry.raw["root"], entry, node_id, (*stack, ref))
+        bound = self._bind(entry, node.params, f"{path}.params", rid)
+        built = self._tactic_node(entry.raw["root"], entry, node_id, (*stack, ref), bound, path)
         out = {
             "type": "tactic",
             "node_id": node_id,
             "origin": "model",
             "tactic": ref,
-            "params": dict(node.params),
+            "params": bound,
             "children": [built],
         }
         if _failure_as_running(entry.raw):
             out["failure_as_running"] = True
         return out
 
+    def _bind(
+        self, entry: TacticEntry, given: dict[str, Any], path: str, rid: str | None
+    ) -> dict[str, Any]:
+        """Values of a tactic-set entry's public parameters for one use of it.
+
+        Each parameter takes, in order: the value the call gives (checked against the
+        declaration: type, units, range, choices); for a tree used by the model directly
+        (``rid`` given), the value of its tactic-set mission reference or a model parameter
+        of the same name; the declared default. A parameter left without a value leaves the
+        inner actions on their contract defaults."""
+        specs = entry.parameters
+        out: dict[str, Any] = {}
+        for key in sorted(set(given) - set(specs)):
+            self.d.error("TAC001", f"{path}.{key}", f"'{entry.id}' has no public parameter '{key}'")
+        inherited = self.mission_params.get(rid, {}) if rid is not None else {}
+        for name, spec in specs.items():
+            if name in given:
+                out[name] = self._param_value(given[name], spec, f"{path}.{name}")
+            elif name in inherited:
+                out[name] = inherited[name]
+            elif rid is not None and name in self.params:
+                out[name] = self._param_value({"parameter_ref": name}, spec, f"{path}.{name}")
+            elif "default" in spec:
+                out[name] = spec["default"]
+            elif spec.get("required"):
+                self.d.error("TAC001", f"{path}.{name}", f"'{entry.id}' needs a value for '{name}'")
+        return out
+
+    def _inner_params(
+        self,
+        raw: dict[str, Any],
+        entry: TacticEntry,
+        bound: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Arguments written in a tactic-set tree with its parameters filled in: a
+        ``{"$param": name}`` argument takes the parameter's value, and is left out (the
+        contract default applies) when the parameter has none."""
+        out: dict[str, Any] = {}
+        for key, value in raw.items():
+            name = param_ref(value)
+            if name is None:
+                out[key] = value
+            elif name not in entry.parameters:
+                self.d.error(
+                    "TAC001",
+                    f"tactic:{entry.id}",
+                    f"argument '{key}' refers to '{name}', which is not a public parameter",
+                )
+            elif name in bound:
+                out[key] = bound[name]
+        return out
+
     def _tactic_node(
-        self, raw: dict[str, Any], entry: TacticEntry, node_id: str, stack: tuple[str, ...]
+        self,
+        raw: dict[str, Any],
+        entry: TacticEntry,
+        node_id: str,
+        stack: tuple[str, ...],
+        bound: dict[str, Any] | None = None,
+        path: str = "",
     ) -> dict[str, Any]:
         """Tactic-set content is implemented and tested in the lab; it is expanded as written,
         with two readings of the lab's tree vocabulary (design §5.4):
@@ -625,7 +690,13 @@ class _Normalizer:
           running child (AFSIM ``*_with_memory``): a lab action spans several updates, and
           restarting the sequence would issue it again every update;
         - a subtree marked ``no_target_result: RUNNING`` keeps running instead of failing.
+
+        ``bound`` holds the entry's parameter values (:meth:`_bind`); arguments of inner
+        actions and subtrees that refer to a parameter take its value, and are checked
+        against the action contracts at ``path`` (where the model uses the entry).
         """
+        bound = bound or {}
+        where = f"{path or 'tactic:' + entry.id}.{entry.id}"
         kind = str(raw.get("type"))
         kind = TACTIC_NODES.get(kind, kind)
         out: dict[str, Any] = {"type": kind, "node_id": node_id, "origin": entry.id}
@@ -636,6 +707,15 @@ class _Normalizer:
             contract = self.c.actions.get(str(raw.get("action")))
             if contract is not None:
                 self.used_slices.add(contract.slice)
+            if raw.get("params"):
+                params = self._inner_params(raw["params"], entry, bound)
+                out["params"] = (
+                    self._action_params(
+                        contract, params, f"{where}.{raw.get('action')}", partial=True
+                    )
+                    if contract is not None
+                    else params
+                )
             return out
         if kind == "condition":
             out["tactic_condition"] = raw.get("condition")
@@ -651,8 +731,14 @@ class _Normalizer:
                 out["children"] = []
                 return out
             self.used_slices.add(sub.slice)
+            given = self._inner_params(raw.get("params") or {}, entry, bound)
+            sub_bound = self._bind(sub, given, f"{where}.{ref}", None)
+            if sub_bound:
+                out["params"] = sub_bound
             out["children"] = [
-                self._tactic_node(sub.raw["root"], sub, f"{node_id}.{ref}", (*stack, ref))
+                self._tactic_node(
+                    sub.raw["root"], sub, f"{node_id}.{ref}", (*stack, ref), sub_bound, path
+                )
             ]
             if _failure_as_running(sub.raw):
                 out["failure_as_running"] = True
@@ -673,7 +759,8 @@ class _Normalizer:
                 out["repeat"] = {"duration_s": float(raw.get("duration_s") or 0.0)}
         kids = raw.get("children") or ([raw["child"]] if raw.get("child") else [])
         out["children"] = [
-            self._tactic_node(k, entry, f"{node_id}.{i}", stack) for i, k in enumerate(kids)
+            self._tactic_node(k, entry, f"{node_id}.{i}", stack, bound, path)
+            for i, k in enumerate(kids)
         ]
         return out
 
@@ -719,8 +806,10 @@ class _Normalizer:
         out["params"] = self._action_params(contract, node.params, f"{path}.params")
 
     def _action_params(
-        self, contract: ActionContract, given: dict[str, Any], path: str
+        self, contract: ActionContract, given: dict[str, Any], path: str, partial: bool = False
     ) -> dict[str, Any]:
+        """Arguments checked against the contract. ``partial``: arguments written inside a
+        tactic-set tree, where one left out may come from the scenario (platform data)."""
         specs = contract.parameters
         out: dict[str, Any] = {}
         for name in sorted(set(given) - set(specs)):
@@ -729,7 +818,7 @@ class _Normalizer:
             spec = spec if isinstance(spec, dict) else {}
             p = f"{path}.{name}"
             if name not in given:
-                if spec.get("required") and "default" not in spec:
+                if spec.get("required") and "default" not in spec and not partial:
                     self.d.error("ACT002", p, f"required parameter of '{contract.id}' is missing")
                 continue
             out[name] = self._param_value(given[name], spec, p)
@@ -753,6 +842,16 @@ class _Normalizer:
                 self.d.error("REF001", path, f"parameter '{name}' is not defined")
                 return value
             ptype_param = param.type
+            if (
+                spec.get("enum")
+                and isinstance(param.value, str)
+                and param.value not in spec["enum"]
+            ):
+                self.d.error(
+                    "ACT002",
+                    path,
+                    f"parameter '{name}' = {param.value!r}: expected one of {spec['enum']}",
+                )
             if dim is not None:
                 if ptype_param not in T_PHYSICAL or not T.comparable(ptype_param, dim)[0]:
                     self.d.error(

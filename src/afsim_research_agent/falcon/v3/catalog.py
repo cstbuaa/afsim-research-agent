@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from afsim_research_agent.ir.v2.contracts import Contracts
+from afsim_research_agent.ir.v2.contracts import Contracts, param_ref, param_spec
 
 MAX_DESC = 160
 
@@ -85,7 +85,7 @@ def tree_python(contracts: Contracts, raw: dict[str, Any], indent: str = "    ")
     if kind == "action":
         if raw.get("operation") == "cancel":
             return [f"{indent}# 取消正在执行的 {raw.get('action')}"]
-        params = ", ".join(f"{k}={v!r}" for k, v in (raw.get("params") or {}).items())
+        params = ", ".join(f"{k}={_arg(v)}" for k, v in (raw.get("params") or {}).items())
         return [f"{indent}{raw.get('action')}({params})"]
     if kind == "condition":
         sem = contracts.semantics.tactic_conditions.get(str(raw.get("condition"))) or {}
@@ -94,7 +94,8 @@ def tree_python(contracts: Contracts, raw: dict[str, Any], indent: str = "    ")
         return [f"{indent}assert {raw.get('condition')}  # 事件 {sem.get('event', '?')} 已发生"]
     if kind == "subtree":
         ref = str(raw.get("subtree"))
-        return [f'{indent}tactic("{ref}")']
+        args = "".join(f", {k}={_arg(v)}" for k, v in (raw.get("params") or {}).items())
+        return [f'{indent}tactic("{ref}"{args})']
     if kind == "timeout":
         head = (
             f"{indent}# 战术集的 timeout（IR 没有此节点）：反复执行下面的节点直到成功，"
@@ -233,8 +234,15 @@ def action_list(
     return "\n".join(lines)
 
 
-def _param(spec: dict[str, Any]) -> str:
-    parts = [str(spec.get("type", "any"))]
+CATEGORY_TEXT = {"design": "设计", "platform": "平台", "scenario": "想定"}
+
+
+def _param(spec: Any) -> str:
+    spec = param_spec(spec)
+    parts = []
+    if spec.get("category") in CATEGORY_TEXT:
+        parts.append(f"[{CATEGORY_TEXT[spec['category']]}]")
+    parts.append(str(spec.get("type", "any")))
     if spec.get("units"):
         parts.append(str(spec["units"]))
     if spec.get("required"):
@@ -246,7 +254,18 @@ def _param(spec: dict[str, Any]) -> str:
             parts.append(f"{sym}{spec[key]}")
     if spec.get("enum"):
         parts.append("取值 " + "/".join(map(str, spec["enum"])))
-    return " ".join(parts)
+    effect = f"（{_short(spec['effect'], 60)}）" if spec.get("effect") else ""
+    return " ".join(parts) + effect
+
+
+def params_text(specs: dict[str, Any]) -> str:
+    return "; ".join(f"{k}: {_param(v)}" for k, v in specs.items())
+
+
+def _arg(value: Any) -> str:
+    """An argument of a tactic-set tree in the sheet's form (a parameter by its name)."""
+    name = param_ref(value)
+    return name if name is not None else repr(value)
 
 
 def details(contracts: Contracts, wanted: list[str], policy: str = "all") -> str:
@@ -265,10 +284,12 @@ def details(contracts: Contracts, wanted: list[str], policy: str = "all") -> str
         out += actions
         trees = [t for t in tactics if t.section != "missions"]
         if trees:
-            out.append('战术集子树 / 状态树（写 `tactic("id")`，只能覆盖公开参数）：')
+            out.append(
+                '战术集子树 / 状态树（写 `tactic("id")`；有公开参数时 `tactic("id", 参数=值)`）：'
+            )
             for t in sorted(trees, key=lambda x: x.id):
                 desc = _short(t.raw.get("description"))
-                params = ", ".join(f"{k}={v}" for k, v in t.parameters.items())
+                params = params_text(t.parameters)
                 running = (
                     "；无目标时保持运行"
                     if str(t.raw.get("no_target_result", "")).upper() == "RUNNING"
@@ -288,7 +309,7 @@ def details(contracts: Contracts, wanted: list[str], policy: str = "all") -> str
                 f"{x.get('from')}→{x.get('to')} 当 {x.get('when')}"
                 for x in m.raw.get("transitions") or []
             )
-            params = ", ".join(f"{k}={v}" for k, v in m.parameters.items())
+            params = params_text(m.parameters)
             out.append(
                 f"战术集任务 `{m.id}`"
                 + (f"（参数 {params}）" if params else "")
@@ -469,11 +490,11 @@ def _details_subtrees(contracts: Contracts, wanted: list[str]) -> str:
         subs = sorted((t for t in tactics if t.section == "subtrees"), key=lambda x: x.id)
         if subs:
             out.append(
-                '可引用的战术集子树（写 `tactic("id")`；能力不够时，仿照它们的写法用动作新建子树）：'
+                '可引用的战术集子树（写 `tactic("id")`，公开参数写 `tactic("id", 参数=值)`；能力不够时，仿照它们的写法用动作新建子树）：'
             )
             out.append("```python")
             for t in subs:
-                params = ", ".join(f"{k}={v}" for k, v in t.parameters.items())
+                params = params_text(t.parameters)
                 out.append(f"# {t.id}" + (f"（公开参数 {params}）" if params else ""))
                 result = result_text(t.raw.get("result"), t.raw.get("persistent"))
                 if result:

@@ -29,6 +29,30 @@ FIELD_TYPES = {
 }
 
 
+# who supplies a parameter's value: the tactic's designer, the platform, or the scenario
+PARAM_CATEGORIES = ("design", "platform", "scenario")
+
+
+def param_spec(value: Any) -> dict[str, Any]:
+    """A parameter declaration of an action contract or a tactic-set entry. Older tactic
+    sets give a bare default (``desired_range_m: 500``); ``unit`` is read as ``units``."""
+    if isinstance(value, dict) and not (value and set(value) <= {"value", "unit"}):
+        spec = dict(value)
+    else:
+        spec = {"default": value}
+    if "unit" in spec and "units" not in spec:
+        spec["units"] = spec.pop("unit")
+    return spec
+
+
+def param_ref(value: Any) -> str | None:
+    """The tactic parameter an inner node of a tactic-set tree takes its value from
+    (``{"$param": name}``), or None for a literal value."""
+    if isinstance(value, dict) and set(value) == {"$param"}:
+        return str(value["$param"])
+    return None
+
+
 # resource scopes that name other vehicles than the one running the action
 OTHER_VEHICLES = ("followers", "members", "others")
 
@@ -104,8 +128,9 @@ class TacticEntry:
     raw: dict[str, Any]
 
     @property
-    def parameters(self) -> dict[str, Any]:
-        return dict(self.raw.get("parameters") or {})
+    def parameters(self) -> dict[str, dict[str, Any]]:
+        """Public parameters: name → spec (type, units, default, range, category, …)."""
+        return {k: param_spec(v) for k, v in (self.raw.get("parameters") or {}).items()}
 
 
 class Contracts:
@@ -128,7 +153,7 @@ class Contracts:
                 slice=cap.domain,
                 kind=cap.kind,
                 status=cap.status,
-                parameters=dict(raw.get("parameters") or {}),
+                parameters={k: param_spec(v) for k, v in (raw.get("parameters") or {}).items()},
                 resources=tuple(r for r in raw.get("resources") or [] if isinstance(r, dict)),
                 failure_codes=tuple(raw.get("failure_codes") or ()),
                 platform_classes=cap.platform_classes,

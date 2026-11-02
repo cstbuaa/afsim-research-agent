@@ -12,7 +12,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from afsim_research_agent.ir.v2.contracts import Contracts, TacticEntry
+from afsim_research_agent.ir.v2.contracts import (
+    CONTRACT_UNITS,
+    Contracts,
+    TacticEntry,
+    param_spec,
+)
 
 ROLE_GUARD = re.compile(r"^\s*role\s*==\s*([A-Za-z_][A-Za-z0-9_]*)\s*$")
 _OPS = (
@@ -146,6 +151,11 @@ def _state_trees(
 
 
 def _parameter(name: str, value: Any, mission_id: str) -> dict[str, Any]:
+    spec = param_spec(value)
+    value = spec.get("default")
+    if spec.get("units") in CONTRACT_UNITS and isinstance(value, int | float):
+        dim, unit = CONTRACT_UNITS[str(spec["units"])]
+        return {"type": dim, "value": value, "unit": unit, "description": f"取自 {mission_id}"}
     for suffix, kind, unit in _SUFFIX_TYPES:
         if name.endswith(suffix) and isinstance(value, int | float) and not isinstance(value, bool):
             return {"type": kind, "value": value, "unit": unit, "description": f"取自 {mission_id}"}

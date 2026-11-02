@@ -137,6 +137,9 @@ FIELD_KEYS = (
     "updated",
     "internal",
     "note",
+    # exposed parameters: who supplies the value (design / platform / scenario), its effect
+    "category",
+    "effect",
 )
 
 
@@ -710,6 +713,18 @@ class LabExporter:
             return ref
         return ref if "." in ref else f"{sid}.{ref}"
 
+    @staticmethod
+    def _parameters(raw: dict[str, Any]) -> dict[str, Any]:
+        """Public parameters of a subtree: JSON-Schema style specs (bare values are
+        defaults), the same fields as action parameters."""
+        out: dict[str, Any] = {}
+        for name, p in raw.items():
+            if isinstance(p, dict):
+                out[name] = {k: v for k, v in p.items() if k in FIELD_KEYS or k == "required"}
+            else:
+                out[name] = {"default": p}
+        return out
+
     def _node(self, sid: str, n: Any, acc: dict[str, set[str]]) -> Any:
         if not isinstance(n, dict):
             return n
@@ -721,6 +736,8 @@ class LabExporter:
             acc["actions"].add(ref)
             if n.get("operation"):
                 out["operation"] = n["operation"]
+            if isinstance(n.get("params"), dict) and n["params"]:
+                out["params"] = dict(n["params"])
         elif t == "condition":
             ref = n.get("ref") or n.get("condition")
             out["condition"] = ref
@@ -729,6 +746,8 @@ class LabExporter:
             ref = self._ref(sid, n.get("ref") or n.get("subtree"))
             out["subtree"] = ref
             acc["subtrees"].add(ref)
+            if isinstance(n.get("params"), dict) and n["params"]:
+                out["params"] = dict(n["params"])
         if "duration_s" in n:
             out["duration_s"] = n["duration_s"]
         # parallel success policy and repeat settings of the lab's tree vocabulary
@@ -772,6 +791,8 @@ class LabExporter:
                 item["result"] = dict(raw["result"])
             if "persistent" in raw:
                 item["persistent"] = bool(raw["persistent"])
+            if isinstance(raw.get("parameters"), dict) and raw["parameters"]:
+                item["parameters"] = self._parameters(raw["parameters"])
             item["root"] = self._node(sid, raw.get("root"), acc)
             item["uses"] = {k: sorted(v) for k, v in acc.items() if v}
             all_conditions |= acc["conditions"]

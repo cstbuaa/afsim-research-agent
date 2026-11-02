@@ -90,6 +90,35 @@ def element_actions(spec: dict[str, Any], ref: str, tactics: dict[str, Any]) -> 
     return None
 
 
+def bound_by_name(spec: dict[str, Any], tactics: dict[str, Any]) -> set[str]:
+    """Public parameters of the tactic-set entries the model uses directly (a state tree, a
+    ``tactic(…)`` call, a mission reference): a model parameter of the same name gives
+    their value."""
+    used: set[str] = set()
+    for mapping in (spec.get("state_trees") or {}).values():
+        used |= {str(t) for t in (mapping or {}).values()}
+    for mission in (spec.get("missions") or {}).values():
+        if isinstance(mission, dict) and mission.get("tactic"):
+            used.add(str(mission["tactic"]))
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "tactic" and node.get("tactic"):
+                used.add(str(node["tactic"]))
+            for v in node.values():
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(spec.get("subtrees"))
+    names: set[str] = set()
+    for ref in used:
+        entry = tactics.get(ref)
+        names |= set(getattr(entry, "parameters", None) or {})
+    return names
+
+
 def problems(
     spec: dict[str, Any],
     implements: dict[str, list[str]],
@@ -175,8 +204,9 @@ def problems(
             )
     params = dict(spec.get("parameters") or {})
     rest = json.dumps({k: v for k, v in spec.items() if k != "parameters"}, ensure_ascii=False)
+    bound = bound_by_name(spec, tactics)
     for name in params:
-        if name in (scenario_parameters or set()):
+        if name in (scenario_parameters or set()) or name in bound:
             continue
         if f'"{name}"' not in rest:
             out.append(
