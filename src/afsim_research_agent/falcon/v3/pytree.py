@@ -77,6 +77,7 @@ class TreeSymbols:
     examples: set[str] = field(default_factory=set)  # entries shown as examples only
     points: set[str] = field(default_factory=set)  # scenario interface points (point=…)
     routes: set[str] = field(default_factory=set)  # scenario interface routes (route=…)
+    starts: set[str] = field(default_factory=set)  # interface points at the vehicle's start
 
 
 @dataclass
@@ -229,6 +230,14 @@ class _Translator:
             return None
         if call.args:
             self.fail(call, f"动作 {name} 的参数写成关键字参数，如 {name}(参数=值)")
+        target = next((kw.value for kw in call.keywords if kw.arg == "point"), None)
+        if (
+            name == "movement.move_to_point"
+            and isinstance(target, ast.Name)
+            and target.id in self.s.starts
+        ):
+            # moving to where the vehicle already is (its start): it stays there
+            return self.node({"type": "action", "action": "movement.stop", "params": {}}, call)
         return self.node({"type": "action", "action": name, "params": self.params(call)}, call)
 
     def params(self, call: ast.Call) -> dict[str, Any]:

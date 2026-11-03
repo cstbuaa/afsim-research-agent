@@ -230,3 +230,12 @@ def test_moving_to_the_start_is_staying() -> None:
     blocks = [Block("pytree", "car", "def GO():\n    movement.move_to_point(point=post)\n", 1)]
     fixed, notes = autofix.scenario_refs(blocks, derive(R2))
     assert "movement.stop()" in fixed[0].text and "出发位置" in notes[0]
+
+
+def test_a_move_to_the_start_compiles_to_a_stop(contracts: Contracts) -> None:
+    sheet = _sheet("route=approach").replace(
+        "movement.follow_route(route=approach)", "movement.move_to_point(point=post)"
+    )
+    out = compile_sheet(sheet, contracts, model_id="op", scenario_interface=derive(R2).model_dump())
+    leaf = out.spec["subtrees"][0]["root"]["children"][0]
+    assert leaf["action"] == "movement.stop" and not leaf.get("params")

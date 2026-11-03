@@ -387,7 +387,7 @@ class Drafter:
             # same geometry): met when some scenario shows it
             advances = [o for o in self.obligations if o.kind == "advances"]
             advanced: dict[str, str] = {}
-            for raw in spec.get("scenarios") or []:
+            for raw in [*(spec.get("scenarios") or []), *self._auto_scenarios(spec, model)]:
                 res = simulate(model, self.c, raw, self.binding(model))
                 if advances and res.tracks and self.iface is not None:
                     from afsim_research_agent.ir.v2.effects import judge
@@ -464,10 +464,27 @@ class Drafter:
                 )
             # an obligation on actions the 2D simulation has no model for cannot be covered
             # there (they start but do nothing, so the anchor rarely happens): AFSIM judges it
+            runs_any = set().union(*capable.values()) if capable else set()
+            unused = [
+                o
+                for o in self.obligations
+                if o.id not in covered
+                and not o.spatial
+                and any(a not in runs_any for a in o.actions())
+            ]
+            for o in unused:
+                # the model reaches the requirement another way (follow_route ends stopped,
+                # so there is no separate stop): the obligation names an action it never runs
+                note = f"需求约束 {o.id} 不适用于本模型：模型没有用到 " + "、".join(
+                    a for a in o.actions() if a not in runs_any
+                )
+                if note not in self.notes:
+                    self.notes.append(note)
             missing = [
                 o
                 for o in self.obligations
                 if o.id not in covered
+                and o not in unused
                 and not o.spatial  # effect obligations: judged on AFSIM positions only
                 and not any(a in unmodelled or not self._modelled(a) for a in o.actions())
             ]
@@ -804,6 +821,34 @@ class Drafter:
             self.notes.append(
                 f"需求约束 {ob.id}：想定接口有前出路线，要求实际前出至少 {ob.min_m:g} m"
             )
+
+    def _auto_scenarios(self, spec: dict[str, Any], model: dict[str, Any]) -> list[dict[str, Any]]:
+        """2D scenarios the binding adds so every "respond to an order" obligation has its
+        order raised once (the drafter's scenarios often leave an order out)."""
+        if self.iface is None:
+            return []
+        externals = {
+            k
+            for k, v in (model.get("events") or {}).items()
+            if isinstance(v, dict) and v.get("source") == "external"
+        }
+        raised = {
+            str(e.get("event"))
+            for sc in spec.get("scenarios") or []
+            for e in (sc.get("events") or [])
+            if isinstance(e, dict)
+        }
+        wanted = sorted({o.on_event for o in self.obligations if o.on_event} & externals - raised)
+        end = self.binding(model).end_s + 40.0
+        return [
+            {
+                "id": f"auto_{ev}",
+                "description": f"想定绑定自动补充：运行中发出 {ev}",
+                "environment": {"duration_s": end},
+                "events": [{"at_s": round(end * 0.6), "event": ev}],
+            }
+            for ev in wanted
+        ]
 
     def _align_roles(self, model: dict[str, Any]) -> None:
         """Obligations name roles of the request; a draft may name its only role otherwise

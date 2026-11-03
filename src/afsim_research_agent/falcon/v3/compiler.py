@@ -274,6 +274,9 @@ class SheetCompiler:
             expr=self.expr,
             points=set(self.iface.points) if self.iface else set(),
             routes=set(self.iface.routes) if self.iface else set(),
+            starts={k for k, v in self.iface.points.items() if v.anchor == "own_start"}
+            if self.iface
+            else set(),
         )
         self._trees(spec, tree_symbols, event_ids)
         verification = self.yaml_block("verification")
