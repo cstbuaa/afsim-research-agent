@@ -381,6 +381,12 @@ def test_draft_loop_repairs_and_writes_the_package(set_root: Path, tmp_path: Pat
                 "roles": {"scout": {"capability_class": "ground_vehicle"}},
                 "capability_set": str(set_root),
                 "allow_mission_ref": False,
+                # this test is about the repair loop: the vehicle starts at its post (no
+                # route forward, so no advance is required of it)
+                "scenario_interface": {
+                    "points": {"post": {"anchor": "own_start"}},
+                    "events": {"cancelled": {"kind": "request"}},
+                },
             },
             allow_unicode=True,
         ),

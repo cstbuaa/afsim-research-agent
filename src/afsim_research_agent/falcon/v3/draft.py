@@ -383,8 +383,19 @@ class Drafter:
                 for name, rid in instances
             }
             after = {name: per_event.get(rid, {}) for name, rid in instances}
+            # "advances" is judged on the 2D positions too (the binding gives both runs the
+            # same geometry): met when some scenario shows it
+            advances = [o for o in self.obligations if o.kind == "advances"]
+            advanced: dict[str, str] = {}
             for raw in spec.get("scenarios") or []:
                 res = simulate(model, self.c, raw, self.binding(model))
+                if advances and res.tracks and self.iface is not None:
+                    from afsim_research_agent.ir.v2.effects import judge
+
+                    own = dict(instances)
+                    for v in judge(advances, res.tracks, own, res.activations, res.events):
+                        if v.judged and (v.passed or v.id not in advanced):
+                            advanced[v.id] = ("ok " if v.passed else "") + v.detail
                 verdicts = check_obligations(
                     self.obligations,
                     res.activations,
@@ -431,6 +442,24 @@ class Drafter:
                         "duration_s": float(
                             ((raw.get("environment") or {}).get("duration_s")) or 0.0
                         ),
+                    }
+                )
+            short = [(k, d) for k, d in advanced.items() if not d.startswith("ok ")]
+            if short:
+                out.l3.append(
+                    {
+                        "id": "effect_advances",
+                        "passed": False,
+                        "render": "effect_advances: FAIL\n"
+                        + "\n".join(
+                            f"  [FAIL] 需求约束 {k}：没有任何想定中车辆实际前出够远（{d}）；"
+                            "检查前出的状态是否走完路线后才转出（不要在边走边搜时一发现目标就停下）"
+                            for k, d in short
+                        ),
+                        "obligations": [],
+                        "states": {},
+                        "transitions": {},
+                        "duration_s": 0.0,
                     }
                 )
             # an obligation on actions the 2D simulation has no model for cannot be covered
@@ -740,6 +769,41 @@ class Drafter:
                 continue
             seen.add(ob.id)
             self.obligations.append(ob)
+        self._interface_obligations(known, events)
+
+    def _interface_obligations(self, known: set[str], events: set[str]) -> None:
+        """Effect obligations the scenario interface implies, whatever the extraction wrote:
+        a route forward means the vehicles must actually advance along it (at least half of
+        its bound length) — otherwise a draft that never moves passes every check."""
+        from afsim_research_agent.ir.v2.scenario_interface import bind
+
+        iface = self.iface
+        if iface is None or not iface.routes:
+            return
+        if any(o.kind == "advances" for o in self.obligations):
+            return
+        bound = bind(iface, self.kit)
+        length = 0.0
+        for r in bound.routes.values():
+            (x0, y0), (x1, y1) = r.plane[0], r.plane[-1]
+            length = max(length, ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5)
+        if length <= 0:
+            return
+        tactic = [c["id"] for c in self.clauses if c.get("origin") == "tactic"]
+        ob = Obligation.model_validate(
+            {
+                "id": "scn_advance_along_route",
+                "kind": "advances",
+                "description": "沿想定接口的前出路线实际前出（由想定接口推导）",
+                "clause": tactic[0] if tactic else None,
+                "min_m": round(length / 2),
+            }
+        )
+        if not ob.problems(known, events):
+            self.obligations.append(ob)
+            self.notes.append(
+                f"需求约束 {ob.id}：想定接口有前出路线，要求实际前出至少 {ob.min_m:g} m"
+            )
 
     def _align_roles(self, model: dict[str, Any]) -> None:
         """Obligations name roles of the request; a draft may name its only role otherwise

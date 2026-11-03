@@ -129,6 +129,9 @@ class SimResult:
     step_s: float = 1.0
     duration_s: float = 0.0
     error: str | None = None
+    # positions every update (x east, y north, m), own vehicles "blue", hostiles "red":
+    # effect obligations (ir.v2.effects) can be judged on them
+    tracks: Any = None
 
     @property
     def passed(self) -> bool:
@@ -288,6 +291,9 @@ def simulate(
         if rid not in model["roles"]:
             result.error = f"scenario places vehicles for unknown role '{rid}'"
             return result
+    from afsim_research_agent.ir.v2.effects import Sample, Tracks
+
+    tracks = Tracks()
     pending = sorted(sc.events, key=lambda e: e.at_s)
     faults = sorted(sc.faults, key=lambda f: f.at_s)
     steps = int(round(env.duration_s / env.step_s))
@@ -317,6 +323,14 @@ def simulate(
             for t in inst.trace[hops:]:
                 result.states[inst.name].append((now, t["to"]))
         world.step(env.step_s)
+        for name, v in world.vehicles.items():
+            tracks.by_platform.setdefault(name, []).append(Sample(world.now, v.x, v.y, v.speed))
+            tracks.side[name] = "blue"
+        for h in world.hostiles:
+            if h.present(world.now):
+                tracks.by_platform.setdefault(h.id, []).append(Sample(world.now, h.x, h.y, 0.0))
+                tracks.side[h.id] = "red"
+    result.tracks = tracks
     for inst in instances:
         result.unresolved |= inst.unresolved
         result.transitions[inst.name] = list(inst.trace)

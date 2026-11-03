@@ -208,3 +208,19 @@ def test_the_interface_is_shown_to_the_drafter() -> None:
     text = derive(R2).prompt_text()
     assert "post" in text and "可选" in text and "point=" in text
     assert ScenarioInterface.model_validate(derive(R1).model_dump()).check() == []
+
+
+def test_the_2d_simulation_records_positions_for_effect_checks(contracts: Contracts) -> None:
+    from afsim_research_agent.ir.v2.effects import judge
+    from afsim_research_agent.ir.v2.obligations import Obligation
+
+    iface = derive(R1).model_dump()
+    spec = compile_sheet(
+        _sheet("route=approach"), contracts, model_id="op", scenario_interface=iface
+    ).spec
+    model = normalize(spec, contracts).model
+    raw = {"id": "main", "environment": {"duration_s": 80}}
+    res = simulate(model, contracts, raw, binding_for(model))
+    ob = Obligation.model_validate({"id": "adv", "kind": "advances", "min_m": 150})
+    (verdict,) = judge([ob], res.tracks, {"car_0": "car"}, res.activations, res.events)
+    assert verdict.judged and verdict.passed, verdict.detail
