@@ -675,6 +675,11 @@ class Drafter:
             )
             answer = await self.run("v3:obligations", prompt, ObligationAnswer)
             raw = [self._grounded(dict(o)) for o in answer.obligations]
+            for item in raw:
+                # one sentence: a model's reasoning does not belong in the description
+                text = str(item.get("description") or "")
+                if len(text) > 80:
+                    item["description"] = text[:80].rstrip() + "…"
         seen: set[str] = set()
         for item in raw:
             try:

@@ -20,7 +20,9 @@ wrong roles and data. This module lays out a run from the model itself:
   (``[slices.movement] aux`` with ``{ahead_lat_deg}`` / ``{ahead_lon_deg}``); a field
   several used slices set is written once;
 * checks: the run's generic rules and the model's own obligations (judged by the run
-  anyway); when a role's trees fire a weapon, at least one shot by that role.
+  anyway); when a role's trees fire a weapon in a state the run can reach (not only
+  after an external event the run does not send, such as a fire order), at least one
+  shot by that role.
 
 The kit is the platform project's file and stays next to it (it names native platform
 types, auxiliary-data keys and observer files); this module only fills it in::
@@ -115,6 +117,36 @@ def route_names(node: Any, out: set[str] | None = None) -> set[str]:
     elif isinstance(node, list):
         for value in node:
             route_names(value, out)
+    return out
+
+
+def reachable_refs(model: dict[str, Any], rid: str, sent: set[str]) -> set[str]:
+    """Capability references of the states of role ``rid`` the run can reach: transitions
+    on an external event the run does not send are never taken (a fire order the run never
+    gives cannot make the role fire, so no shot is expected of it)."""
+    role = (model.get("roles") or {}).get(rid) or {}
+    mission = role.get("mission") or {}
+    events = model.get("events") or {}
+    if not mission.get("initial_state"):
+        return model_refs(model).get(rid, set())  # no state machine: every state counts
+
+    def open_(t: dict[str, Any]) -> bool:
+        ev = events.get(t.get("on"))
+        return not (isinstance(ev, dict) and ev.get("source") == "external") or t["on"] in sent
+
+    states = {mission.get("initial_state")}
+    globals_ = [t for t in mission.get("global") or [] if open_(t)]
+    states |= {t.get("to") for t in globals_}
+    changed = True
+    while changed:
+        changed = False
+        for t in mission.get("transitions") or []:
+            if t.get("from") in states and t.get("to") not in states and open_(t):
+                states.add(t.get("to"))
+                changed = True
+    out: set[str] = set()
+    for st in states:
+        _refs((role.get("states") or {}).get(st), out)  # trees are expanded in the states
     return out
 
 
@@ -327,8 +359,9 @@ def generate(
     expect: dict[str, Any] = {"events": []}
     exp = kit.get("expect") or {}
     fire = set(exp.get("fire_actions") or [])
+    sent = {e["event"] for e in events}
     for rid in order:
-        if refs.get(rid, set()) & fire:
+        if reachable_refs(model, rid, sent) & fire:
             expect["events"].append(
                 {
                     "kind": exp.get("fire_event", "WEAPON_FIRED"),

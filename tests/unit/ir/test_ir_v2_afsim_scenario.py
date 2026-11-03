@@ -142,3 +142,18 @@ def test_a_field_two_used_slices_set_is_written_once() -> None:
         "double end_lon = -121.0",
         "edit something end_edit",
     ]
+
+
+def test_no_shot_is_expected_when_only_an_unsent_order_leads_to_firing() -> None:
+    model = _model()
+    model["events"]["fire_order"] = {"source": "external"}
+    model["roles"]["member"]["mission"] = {
+        "initial_state": "WAIT",
+        "transitions": [{"from": "WAIT", "to": "FIRE", "on": "fire_order"}],
+        "global": [],
+    }
+    model["roles"]["member"]["states"]["WAIT"] = {"tree": {"type": "action", "action": "org.load"}}
+    assert generate(model, KIT, _contracts()).expect.events == []
+    kit = {**KIT, "events": {**KIT["events"], "fire_order": 30}}
+    run = generate(model, kit, _contracts())
+    assert [(x.kind, x.by) for x in run.expect.events] == [("WEAPON_FIRED", "member")]

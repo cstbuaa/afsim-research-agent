@@ -30,7 +30,7 @@ POS = re.compile(
 ORIGIN = re.compile(r"^IR_POS_ORIGIN\|([^|]+)\|([^|\r\n]+)", re.M)
 MOVING_MPS = 0.5  # faster than this counts as moving
 STOP_SETTLE_S = 3.0  # a vehicle may still roll this long after a stop
-STOP_TOL_M = 10.0
+STOP_TOL_M = 20.0  # loose first (a vehicle settling after a stop); tighten later
 # actions that should make a vehicle move (NO_MOTION; after a stop they end STOP_DRIFT's window)
 MOVE_ACTIONS = frozenset(
     {
