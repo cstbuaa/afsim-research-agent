@@ -24,6 +24,11 @@ action uses. These checks look at the compiled spec (no model call):
 * ``FIRE_BY_TIME``  a transition into a state that fires weapons can be taken by time alone
   (a timer event, or a condition that holds with every field still at its initial value
   once enough time has passed): the vehicle fires without a command or a target condition;
+* ``ROLE_COUNT``    a state's tree needs more vehicles than its role has (its capability
+  card, ``ir.v2.cards``: formation slots, standoff commands, target sharing, …): a single
+  vehicle running a formation subtree waits for followers for ever;
+* ``TREE_EVENT_NEVER`` a transition waits for the tree success event of a state whose tree
+  never ends (holding, tracking): it never happens;
 * ``NEXT_STATE_FIELD`` a transition condition reads a field that, in its role, only the
   target state's actions write: it cannot change before the transition, so the transition
   is decided by the rest of the condition (often a timer — e.g. entering a firing state
@@ -366,23 +371,25 @@ def entry_true(
     return list(ENTRY_ITEMS)
 
 
-def _persistent(item: str, contracts: Any, tactics: dict[str, Any]) -> bool:
-    a = contracts.actions.get(item)
-    if a is not None and (
-        getattr(a, "persistent", None) or (getattr(a, "success", None) or {}).get("persistent")
-    ):
-        return True
-    t = tactics.get(item)
-    return bool(t is not None and (getattr(t, "raw", None) or {}).get("persistent"))
+def state_card(spec: dict[str, Any], role: str, state: str, contracts: Any) -> Any:
+    """Capability card of a state's tree (``ir.v2.cards``); None when the state has none."""
+    from afsim_research_agent.ir.v2.cards import tree_card
+
+    ref = ((spec.get("state_trees") or {}).get(role) or {}).get(state)
+    if not ref:
+        return None
+    subtrees = {s["id"]: s.get("root") for s in spec.get("subtrees") or [] if "id" in s}
+    return tree_card(contracts, {"type": "subtree", "subtree": ref}, subtrees)
 
 
 def finite_state(
     spec: dict[str, Any], role: str, state: str, contracts: Any, tactics: dict[str, Any]
 ) -> bool:
-    """The state's tree ends by itself (nothing in it runs for ever: no holding, tracking,
-    …), so a tree event fires when its work is done."""
-    items = element_actions(spec, f"{role}.{state}", tactics)
-    return bool(items) and not any(_persistent(i, contracts, tactics) for i in items)
+    """The state's tree ends by itself (its capability card says ``ends``: nothing in it
+    holds, tracks, keeps a formation or waits for a target), so a tree success event fires
+    when its work is done."""
+    card = state_card(spec, role, state, contracts)
+    return card is not None and card.termination == "ends"
 
 
 MOVES = {
@@ -459,9 +466,53 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
     writers = _writers(contracts)
     static = getattr(contracts, "blackboard", {})
     reported: set[tuple[str, str]] = set()
+    tree_events = {
+        e["id"]
+        for e in spec.get("events") or []
+        if isinstance(e, dict) and e.get("source") == "tree" and e.get("result") == "success"
+    }
+    roles = spec.get("roles") or []
+    counts = {
+        str(r.get("id")): int(r.get("count") or 1)
+        for r in (roles if isinstance(roles, list) else [{"id": k, **v} for k, v in roles.items()])
+        if isinstance(r, dict)
+    }
     for role, mission in (spec.get("missions") or {}).items():
         if not isinstance(mission, dict) or not mission.get("states"):
             continue
+        # capability cards of the role's state trees: who can run them, whether they end
+        cards: dict[str, Any] = {}
+        for st in mission["states"]:
+            card = state_card(spec, role, st, contracts)
+            if card is None:
+                continue
+            cards[st] = card
+            count = counts.get(role, 1)
+            if card.min_vehicles > count:
+                out.append(
+                    (
+                        f"state_trees.{role}.{st}",
+                        f"ROLE_COUNT 角色 {role} 只有 {count} 辆车，状态 {st} 的树要求至少 "
+                        f"{card.min_vehicles} 辆（{card.reason or '用到编队、协同类能力'}）：它会一直"
+                        "等其他车辆，单车用不了。单车改用机动、感知等单车能力"
+                        "（如前出用 movement.follow_route，到达用它的树完成事件）",
+                        "ROLE_COUNT",
+                    )
+                )
+        for t in mission.get("transitions") or []:
+            if t.get("on") in tree_events:
+                card = cards.get(str(t.get("from")))
+                if card is not None and card.termination == "never":
+                    out.append(
+                        (
+                            f"missions.{role}",
+                            f"TREE_EVENT_NEVER 状态 {t.get('from')} → {t.get('to')} 由树完成事件 "
+                            f"{t.get('on')} 触发，但 {t.get('from')} 的树不会结束（{card.reason}），"
+                            "这个转换永远不会发生。改用字段条件、计时或外部事件，"
+                            "或把一直运行的部分移到下一个状态",
+                            "TREE_EVENT_NEVER",
+                        )
+                    )
         states = {
             s: element_actions(spec, f"{role}.{s}", tactics) or set() for s in mission["states"]
         }

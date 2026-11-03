@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-PROMPT_VERSION = "falcon-v3-2026.11.03c"
+PROMPT_VERSION = "falcon-v3-2026.11.03d"
 
 RULES = """你在为作战仿真编写战术行为模型。模型分七层，你只写上三层：任务状态机、状态树、子树；
 动作、黑板、仲裁、能力层由程序从能力集引用、推导和校验。你写的是"战术稿"：若干带标签的 Markdown 代码块。
@@ -107,6 +107,9 @@ CONTROL_GUIDE = """```python conditions``` 块：每行 `条件名 = 表达式`�
   "走完路线/到达位置/停稳"就用树事件，不要写 range_to_target_m 与 arrival_tolerance_m 的比较；
   树里有一直运行的分支（保持位置、跟踪、repeat(until_done=True)）时树不会结束，
   "发现目标""目标丢失"这类时刻要用字段条件（如 perception.selected_target.valid），不要用树事件；
+- 能力标签：[单车可用/需≥N车] 是能运行它的最少车辆数，车辆数不够的角色不能用（单车不用编队类子树）；
+  [自行结束/满足条件才结束/不会结束] 说明它的树会不会结束：用树完成事件转出的状态，树里只能是
+  [自行结束] 的；[不会结束] 的（保持、跟踪）放在最后一个状态，或用字段条件、外部事件转出；
 - 停在原地：movement.stop，然后 movement.hold_position 不给经纬度（保持当前位置）；不要自编经纬度，
   坐标只能来自想定；
 - 上级的命令（开火命令、新指令、展开命令）在 model 的 events 中声明外部事件 `名字: {source: external}`，

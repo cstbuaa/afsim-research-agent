@@ -298,7 +298,7 @@ def details(contracts: Contracts, wanted: list[str], policy: str = "all") -> str
                 uses = (t.raw.get("uses") or {}).get("actions") or []
                 result = result_text(t.raw.get("result"), t.raw.get("persistent"))
                 out.append(
-                    f"- `{t.id}`"
+                    f"- `{t.id}` {card_text(contracts, t.id)}"
                     + (f"（参数 {params}）" if params else "")
                     + f" — {desc}{running}"
                     + (f"；{result}" if result else "")
@@ -335,6 +335,20 @@ UPDATED_TEXT = {
     "on_success": "成功时写入",
     "on_failure": "失败时写入",
 }
+
+
+def card_text(contracts: Any, cid: str, reason: bool = True) -> str:
+    """Capability-card labels (``ir.v2.cards``): who can run it and whether it ends, e.g.
+    ``[需≥2车][满足条件才结束：…]``; empty when the capability set has no such entry."""
+    from afsim_research_agent.ir.v2.cards import cards
+
+    card = cards(contracts).get(cid)
+    if card is None:
+        return ""
+    tags = card.tags()
+    if reason and card.reason and card.termination != "ends":
+        tags = tags[:-1] + "：" + _short(card.reason, 60) + "]"
+    return tags
 
 
 def result_text(result: Any, persistent: Any = None) -> str:
@@ -410,7 +424,10 @@ def _actions_text(contracts: Contracts, sid: str) -> list[str]:
             text = _writes_text(contracts, a, common)
             if not (common and text == "不写黑板字段"):
                 extra.append(text)
-        out.append(f"- `{a.id}`({params}) — {desc}" + (f"［{'；'.join(extra)}］" if extra else ""))
+        out.append(
+            f"- `{a.id}`({params}) {card_text(contracts, a.id)} — {desc}"
+            + (f"［{'；'.join(extra)}］" if extra else "")
+        )
     if common:
         out.append(f"  （以上动作执行时都会更新：{', '.join(sorted(common))}）")
     return out
@@ -495,7 +512,10 @@ def _details_subtrees(contracts: Contracts, wanted: list[str]) -> str:
             out.append("```python")
             for t in subs:
                 params = params_text(t.parameters)
-                out.append(f"# {t.id}" + (f"（公开参数 {params}）" if params else ""))
+                out.append(
+                    f"# {t.id} {card_text(contracts, t.id)}"
+                    + (f"（公开参数 {params}）" if params else "")
+                )
                 result = result_text(t.raw.get("result"), t.raw.get("persistent"))
                 if result:
                     out.append(f"# {result}")

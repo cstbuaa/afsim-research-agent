@@ -83,7 +83,10 @@ GUIDE = """把选定的完整战术化简成"现有能力集就能执行"的版�
 - 例外只保留触发情况能用能力集判断的（如目标丢失、外部命令、距离过近）；"遭直射火力""位置暴露"
   这类能力集判断不了的情况列入 deferred；需求本身没有要求的撤离、返回等后续阶段也不必保留；
 - 不引入完整战术和需求里都没有的新手段；
-- 尽量简单：步骤宜少（通常 2–5 步），能用战术集子树完成的阶段直接用子树；
+- 尽量简单：步骤宜少（通常 2–5 步）；能用一个动作完成的不用组合子树；
+- 看能力标签选：[需≥N车] 的（编队、协同类）只能给车辆数够的角色用，单车不能用；
+  "直到到达/走完/停稳"这类靠完成进入下一步的步骤，只用 [自行结束] 的动作或子树
+  （如前出用 movement.follow_route，不用边走边搜的编队子树）；
 - 步骤的 until 写可观察的结束条件，优先用"动作完成""路线走完""目标被选定"这类由动作给出的
   结果，不要写需要额外感知能力才能判断的条件；
 - 战术中的数值（距离、间距、速度、时间）原样保留在文字里，供起草时设成参数；
@@ -111,6 +114,8 @@ def full_elements(tactic: Any) -> dict[str, str]:
 
 
 def capability_text(contracts: Any, action_list: str) -> str:
+    from afsim_research_agent.falcon.v3.catalog import card_text
+
     """Actions (with descriptions) and tactic-set subtrees (with their public parameters)."""
     subs = []
     for t in sorted(contracts.tactics.values(), key=lambda x: x.id):
@@ -118,8 +123,16 @@ def capability_text(contracts: Any, action_list: str) -> str:
             continue
         desc = str(t.raw.get("description") or "")[:80]
         params = ", ".join(t.parameters)
-        subs.append(f"- {t.id} — {desc}" + (f"（参数 {params}）" if params else ""))
-    return "## 动作\n" + action_list + "\n\n## 战术集子树\n" + ("\n".join(subs) or "（无）")
+        subs.append(
+            f"- {t.id} {card_text(contracts, t.id)} — {desc}"
+            + (f"（参数 {params}）" if params else "")
+        )
+    return (
+        "## 动作\n"
+        + action_list
+        + "\n\n## 战术集子树（[单车可用/需≥N车][是否自行结束]）\n"
+        + ("\n".join(subs) or "（无）")
+    )
 
 
 def prompt(requirement: str, tactic: Any, capabilities: str, problems: list[str]) -> str:

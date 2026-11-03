@@ -168,3 +168,44 @@ def test_a_delay_the_requirement_does_not_give_becomes_an_order() -> None:
     assert d._grounded(dict(item)) == {"id": "o1", "kind": "precedes", "first": "a", "then": "b"}
     assert d.notes
     assert d._grounded({**item, "min_s": 10})["kind"] == "not_before"
+
+
+def test_a_single_vehicle_cannot_run_a_formation_subtree_or_wait_for_a_tree_that_never_ends() -> (
+    None
+):
+    from afsim_research_agent.ir.v2.contracts import Contracts
+
+    c = Contracts.load()
+    spec = {
+        "roles": [{"id": "car", "count": 1}],
+        "subtrees": [
+            {
+                "id": "watch",
+                "root": {"type": "tactic", "tactic": "perception.track_selected_target"},
+            }
+        ],
+        "state_trees": {
+            "car": {"GO": "formation_standoff.formation_search_advance", "WATCH": "watch"}
+        },
+        "conditions": [],
+        "events": [
+            {"id": "go_done", "source": "tree", "result": "success"},
+            {"id": "watch_done", "source": "tree", "result": "success"},
+        ],
+        "missions": {
+            "car": {
+                "initial_state": "GO",
+                "states": ["GO", "WATCH", "END"],
+                "terminal": ["END"],
+                "transitions": [
+                    {"from": "GO", "to": "WATCH", "on": "go_done"},
+                    {"from": "WATCH", "to": "END", "on": "watch_done"},
+                ],
+            }
+        },
+    }
+    problems = S.role_problems(spec, c, c.tactics)
+    codes = [code for _p, _m, code in problems]
+    assert codes.count("ROLE_COUNT") == 1 and codes.count("TREE_EVENT_NEVER") == 1
+    assert next(p for p, _m, code in problems if code == "ROLE_COUNT") == "state_trees.car.GO"
+    assert not S.finite_state(spec, "car", "GO", c, c.tactics)

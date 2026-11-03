@@ -1,0 +1,7 @@
+# Corrections to the capability cards derived from the capability set (see cards.py).
+# Use it when a lab probe run in AFSIM shows a capability behaving differently from what
+# its tree structure says. Keys: capability id; values: any of
+#   min_vehicles: 1 | 2 | ...
+#   termination: ends | conditional | never
+#   note: why (shown to the drafter)
+overrides: {}
