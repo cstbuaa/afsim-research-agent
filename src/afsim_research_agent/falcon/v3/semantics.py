@@ -229,17 +229,22 @@ def problems(
 
 
 # ---------------------------------------------------------------------- role / entry checks
-def _fields(expr: Any) -> set[str]:
+def _fields(
+    expr: Any, conds: dict[str, Any] | None = None, seen: frozenset = frozenset()
+) -> set[str]:
+    """Blackboard fields an expression reads (through named conditions it refers to)."""
     out: set[str] = set()
     if isinstance(expr, dict):
         for key, value in expr.items():
             if key == "bb" and isinstance(value, str):
                 out.add(value)
+            elif key == "condition_ref" and conds and value in conds and value not in seen:
+                out |= _fields(conds[value], conds, seen | {value})
             else:
-                out |= _fields(value)
+                out |= _fields(value, conds, seen)
     elif isinstance(expr, list):
         for value in expr:
-            out |= _fields(value)
+            out |= _fields(value, conds, seen)
     return out
 
 
@@ -250,6 +255,13 @@ class _Unknown(Exception):
 def _eval(expr: Any, values: dict[str, Any], conds: dict[str, Any], params: dict[str, Any]) -> Any:
     """Value of an IR expression on the given field values (time functions are 0 s into the
     state, i.e. false); _Unknown when it cannot be decided."""
+    if isinstance(expr, dict) and set(expr) == {"value", "unit"}:
+        from afsim_research_agent.ir.units import infer_dimension, to_canonical
+
+        dim = infer_dimension(str(expr["unit"]))
+        if dim is None:
+            raise _Unknown
+        return to_canonical(float(expr["value"]), str(expr["unit"]), dim)
     if not isinstance(expr, dict) or len(expr) != 1:
         if isinstance(expr, (int, float, str, bool)):
             return expr
@@ -296,8 +308,6 @@ def _eval(expr: Any, values: dict[str, Any], conds: dict[str, Any], params: dict
             }[op]
         except (KeyError, TypeError) as exc:
             raise _Unknown from exc
-    if set(expr) == {"value", "unit"}:
-        raise _Unknown
     raise _Unknown
 
 
@@ -354,7 +364,7 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
             if cid not in conds:
                 continue
             expr = conds[cid]
-            fields = _fields(expr)
+            fields = _fields(expr, conds)
             for f in sorted(fields):
                 w = writers.get(f)
                 bf = static.get(f)

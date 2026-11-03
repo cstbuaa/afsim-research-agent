@@ -556,7 +556,7 @@ class Drafter:
         if not items:
             return check
         before = self.blocks
-        self.blocks, notes = autofix.entry_events(self.blocks, items)
+        self.blocks, notes = autofix.entry_guards(self.blocks, items)
         if not notes:
             self.blocks = before
             return check
