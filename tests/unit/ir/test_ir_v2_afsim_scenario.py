@@ -125,3 +125,20 @@ def test_routes_the_model_names_are_laid_out() -> None:
     run = generate(model, KIT, _contracts())
     assert "route east\n position 45:00:00.00n 121:00:00.00w speed 8 m/s" in run.preamble
     assert run.preamble.count("route r1") == 1  # the kit's own route is not laid out again
+
+
+def test_a_field_two_used_slices_set_is_written_once() -> None:
+    from afsim_research_agent.ir.v2.afsim.scenario import _dedupe_aux
+
+    out = _dedupe_aux(
+        [
+            'string role = "LEADER" double end_lat = 45.1',
+            "double end_lat = 45.1 double end_lon = -121.0",
+            "edit something end_edit",
+        ]
+    )
+    assert out == [
+        'string role = "LEADER" double end_lat = 45.1',
+        "double end_lon = -121.0",
+        "edit something end_edit",
+    ]

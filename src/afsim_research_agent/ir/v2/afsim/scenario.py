@@ -15,7 +15,10 @@ wrong roles and data. This module lays out a run from the model itself:
   (``cancelled`` near the end);
 * every route the model names (a ``route_name`` given to an action) and the kit does not
   define is laid out from the origin to the point ``ahead_m`` towards the enemy, at
-  ``route_speed_mps`` (default 8): a route the run does not define moves nothing;
+  ``route_speed_mps`` (default 8): a route the run does not define moves nothing. A route
+  action that also needs its endpoint as platform data gets it from the kit
+  (``[slices.movement] aux`` with ``{ahead_lat_deg}`` / ``{ahead_lon_deg}``); a field
+  several used slices set is written once;
 * checks: the run's generic rules and the model's own obligations (judged by the run
   anyway); when a role's trees fire a weapon, at least one shot by that role.
 
@@ -155,6 +158,28 @@ def _fill(text: str, values: dict[str, Any]) -> str:
     return out
 
 
+_AUX_FIELD = re.compile(r'(\w+)\s+(\w+)\s*=\s*("[^"]*"|\S+)')
+
+
+def _dedupe_aux(lines: list[str]) -> list[str]:
+    """Aux fields of all used slices, each key once (the first wins): two slices may set
+    the same field (e.g. a route endpoint given by the movement slice and by a formation
+    slice's leader)."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for line in lines:
+        fields = _AUX_FIELD.findall(line)
+        plain = "".join(t + k + "=" + v for t, k, v in fields) == re.sub(r"\s+", "", line)
+        if not fields or not plain:
+            out.append(line)  # not plain fields: keep as written
+            continue
+        kept = [f for f in fields if f[1] not in seen]
+        seen |= {f[1] for f in fields}
+        if kept:
+            out.append(" ".join(f"{t} {k} = {v}" for t, k, v in kept))
+    return out
+
+
 def generate(
     model: dict[str, Any],
     kit: dict[str, Any],
@@ -238,7 +263,7 @@ def generate(
             ]
             body.append(_fill(pick(sk.get(f"{kind}_body"), n), values))
             per_platform.append(_fill(sk.get("per_platform", ""), values))
-        aux = [a for a in aux if a.strip()]
+        aux = _dedupe_aux([a for a in aux if a.strip()])
         lines = [
             "side blue",
             f"position {values['lat']} {values['lon']}",
