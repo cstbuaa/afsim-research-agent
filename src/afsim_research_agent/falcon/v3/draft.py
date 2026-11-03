@@ -26,6 +26,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from afsim_research_agent.falcon.errors import FalconError
 from afsim_research_agent.falcon.llm import FalconModel, ModelRunner
 from afsim_research_agent.falcon.models import FalconRequest, PlatformHint, TextAnswer
 from afsim_research_agent.falcon.sheet.blocks import Block, SheetProblem, join_sheet
@@ -117,6 +118,10 @@ class V3Request(BaseModel):
     # (default "block"): a core element (step, formation) the capability set cannot carry
     # stops the draft (status needs_capability) instead of being imitated
     missing_capabilities: Literal["block", "skip", "wait"] = "block"
+    # a Crow tactic is first reduced to an executable version built from the existing
+    # actions and subtrees ("simple"); the full tactic is kept for later. "full": draft the
+    # tactic as Crow wrote it
+    tactic_level: Literal["simple", "full"] = "simple"
 
     @model_validator(mode="after")
     def _input(self) -> V3Request:
@@ -247,6 +252,7 @@ class Drafter:
         self.afsim_budget = 0  # AFSIM runs the repair loop may still start
         self.afsim_verdicts: dict[str, AfsimNote] = {}  # sheet hash -> AFSIM verdict
         self.tactic: Any = None  # the Crow selection (falcon.tactic.SelectedTactic)
+        self.simplified: Any = None  # simplify.Simplified: the executable version's record
         self.afsim_history: Any = None  # AfsimHistory of the chosen draft (coverage)
         # tactic clause → {"actions", "how", "missing"} (map_stage) and the clauses the
         # capability set cannot carry (clause → missing capability)
@@ -986,6 +992,7 @@ def write_package(
             drafter.crow_caps,
             request.missing_capabilities,
             drafter.blocked,
+            drafter.simplified,
         )
     if spec:
         (staging / "behavior_spec.yaml").write_text(
@@ -1037,7 +1044,11 @@ def write_package(
         from afsim_research_agent.falcon.v3.crow_bridge import review_section
 
         section = review_section(
-            drafter.tactic, drafter.crow_caps, request.missing_capabilities, drafter.blocked
+            drafter.tactic,
+            drafter.crow_caps,
+            request.missing_capabilities,
+            drafter.blocked,
+            drafter.simplified,
         )
         review += "\n" + "\n".join(section) + "\n"
     for outcome in fixes or []:
@@ -1183,7 +1194,12 @@ def _blocked_package(staging: Path, target: Path, request: V3Request, lead: Draf
     from afsim_research_agent.falcon.v3.crow_bridge import review_section, write_crow_files
 
     write_crow_files(
-        staging, lead.tactic, lead.crow_caps, request.missing_capabilities, lead.blocked
+        staging,
+        lead.tactic,
+        lead.crow_caps,
+        request.missing_capabilities,
+        lead.blocked,
+        lead.simplified,
     )
     report = {
         "stage": "falcon_draft3",
@@ -1211,7 +1227,13 @@ def _blocked_package(staging: Path, target: Path, request: V3Request, lead: Draf
         lines.append(f"- {cid}：{mark}（{acts}）")
     lines += [
         "",
-        *review_section(lead.tactic, lead.crow_caps, request.missing_capabilities, lead.blocked),
+        *review_section(
+            lead.tactic,
+            lead.crow_caps,
+            request.missing_capabilities,
+            lead.blocked,
+            lead.simplified,
+        ),
     ]
     (staging / "falcon_review.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     if target.exists():
@@ -1240,19 +1262,37 @@ async def run_draft3(
     if candidates is not None:
         request = request.model_copy(update={"candidates": candidates})
     contracts = Contracts.load(request.capability_set)
-    tactic, bridge_notes = None, []
+    run = ModelRunner(model)
+    tactic, bridge_notes, simplified = None, [], None
     if request.tactic_selection is not None:
-        from afsim_research_agent.falcon.v3.crow_bridge import apply_selection
+        from afsim_research_agent.falcon.tactic import load_selection
+        from afsim_research_agent.falcon.v3.crow_bridge import apply_selection, resolve_selection
 
-        request, tactic, bridge_notes = apply_selection(request, request_path, contracts)
+        loaded = load_selection(resolve_selection(request, request_path))
+        if request.tactic_level == "simple":
+            from afsim_research_agent.falcon.v3.simplify import simplify
+
+            try:
+                simplified = await simplify(
+                    run,
+                    loaded,
+                    contracts,
+                    loaded.requirement(request.requirement),
+                    K.action_list(contracts, None, None),
+                )
+                loaded = simplified.tactic
+            except FalconError as exc:
+                bridge_notes.append(f"化简为可执行版失败，按完整战术起草：{exc}")
+        request, tactic, notes = apply_selection(request, request_path, contracts, loaded)
+        bridge_notes = notes + (simplified.notes if simplified else []) + bridge_notes
     target = _target(request, request_path, out_dir)
     staging = target.with_name(target.name + ".partial")
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
-    run = ModelRunner(model)
     lead = Drafter(request, contracts, run)
     lead.tactic, lead.notes = tactic, list(bridge_notes)
+    lead.simplified = simplified
     caps: list[dict[str, Any]] = []
     if tactic is not None:
         from afsim_research_agent.falcon.v3.crow_bridge import capability_map
@@ -1290,7 +1330,7 @@ async def run_draft3(
         for _ in range(request.candidates - 1):
             d = Drafter(request, contracts, run)
             d.clauses, d.obligations, d.notes = list(lead.clauses), list(lead.obligations), []
-            d.tactic, d.crow_caps = tactic, caps
+            d.tactic, d.crow_caps, d.simplified = tactic, caps, simplified
             d.clause_map, d.blocked = lead.clause_map, lead.blocked
             drafters.append(d)
         outcomes = await asyncio.gather(

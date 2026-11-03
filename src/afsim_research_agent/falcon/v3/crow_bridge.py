@@ -438,12 +438,14 @@ def derive_slices(tactic: Any, contracts: Any) -> list[str]:
 
 
 def apply_selection(
-    request: V3Request, request_path: Path, contracts: Any
+    request: V3Request, request_path: Path, contracts: Any, tactic: Any = None
 ) -> tuple[V3Request, Any, list[str]]:
-    """The request with the selected tactic folded in; the loaded selection; notes."""
+    """The request with the selected tactic folded in; the loaded selection; notes.
+    ``tactic``: an already loaded (e.g. simplified, see ``simplify``) selection."""
     from afsim_research_agent.falcon.tactic import load_selection
 
-    tactic = load_selection(resolve_selection(request, request_path))
+    if tactic is None:
+        tactic = load_selection(resolve_selection(request, request_path))
     notes = [f"输入来自 Crow 选定战术 {tactic.source_label}"]
     entries = capability_map(tactic, contracts)
     mode = request.missing_capabilities
@@ -487,10 +489,17 @@ def write_crow_files(
     entries: list[dict[str, Any]] | None = None,
     mode: str = "block",
     blocked: dict[str, str] | None = None,
+    simplified: Any = None,
 ) -> None:
     (staging / "selected_tactics.yaml").write_text(tactic.selected_document(), encoding="utf-8")
+    extra: dict[str, Any] = {}
+    if simplified is not None:
+        from afsim_research_agent.falcon.v3.simplify import deferred_section, full_document
+
+        (staging / "full_tactic.yaml").write_text(full_document(simplified), encoding="utf-8")
+        extra = deferred_section(simplified)
     missing = [e for e in entries or [] if e["missing"]]
-    if missing or blocked:
+    if missing or blocked or extra:
         doc = {
             "mode": mode,
             "meaning": {
@@ -511,6 +520,7 @@ def write_crow_files(
                 }
                 for e in missing
             ],
+            **extra,
         }
         (staging / DEFERRED_FILE).write_text(
             yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
@@ -525,10 +535,27 @@ def review_section(
     entries: list[dict[str, Any]] | None = None,
     mode: str = "block",
     blocked: dict[str, str] | None = None,
+    simplified: Any = None,
 ) -> list[str]:
     from afsim_research_agent.falcon.tactic import render_section
 
     lines = list(render_section(tactic, number="Crow"))
+    if simplified is not None:
+        lines += [
+            "",
+            "### 可执行版与完整战术",
+            "",
+            "上面是按现有能力集化简后的可执行版（本模型按它起草）。完整战术见 full_tactic.yaml；"
+            "以下要素暂不实现，原子能力补齐后按完整战术重新起草：",
+            "",
+        ]
+        lines += [
+            f"- {d['element']}：{d['what']}"
+            + (f"（缺：{d['missing']}）" if d.get("missing") else "")
+            for d in simplified.deferred
+        ] or ["- （无）"]
+        if simplified.answer.kept_constraints:
+            lines += ["", "保留的需求约束：" + "；".join(simplified.answer.kept_constraints)]
     entries = entries or []
     if entries:
         mapped = [e for e in entries if not e["missing"]]
