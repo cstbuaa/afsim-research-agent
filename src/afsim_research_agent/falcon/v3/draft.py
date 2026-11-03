@@ -674,7 +674,7 @@ class Drafter:
                 {k: v.description or k for k, v in self.r.roles.items()},
             )
             answer = await self.run("v3:obligations", prompt, ObligationAnswer)
-            raw = [dict(o) for o in answer.obligations]
+            raw = [self._grounded(dict(o)) for o in answer.obligations]
         seen: set[str] = set()
         for item in raw:
             try:
@@ -691,6 +691,23 @@ class Drafter:
                 continue
             seen.add(ob.id)
             self.obligations.append(ob)
+
+    def _grounded(self, item: dict[str, Any]) -> dict[str, Any]:
+        """An extracted ``not_before`` whose delay the requirement and its clauses do not
+        state is only an order: it becomes ``precedes`` (a made-up "at least 5 s after"
+        fails a correct model that acts at once)."""
+        if item.get("kind") != "not_before" or item.get("min_s") is None:
+            return item
+        text = self.r.requirement + "\n" + "\n".join(str(c.get("text", "")) for c in self.clauses)
+        value = float(item["min_s"])
+        numbers = {float(n) for n in re.findall(r"\d+(?:\.\d+)?", text)}
+        if value in numbers or value <= 0:
+            return item
+        self.notes.append(
+            f"需求约束 {item.get('id')}：需求没有给出 {value:g} s 的间隔，按先后顺序（precedes）判定"
+        )
+        out = {k: v for k, v in item.items() if k not in ("action", "after", "min_s", "kind")}
+        return {**out, "kind": "precedes", "first": item.get("after"), "then": item.get("action")}
 
     async def structure_stage(self) -> Check:
         classes = {v.capability_class for v in self.r.roles.values()} or None

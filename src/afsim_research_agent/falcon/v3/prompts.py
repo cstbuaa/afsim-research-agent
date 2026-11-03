@@ -365,6 +365,7 @@ OBLIGATIONS_GUIDE = """把需求条款中关于"什么时候做"的要求写成�
 
 - not_before：动作 action 第一次开始，不早于动作 after 第一次开始后 min_s 秒。
   例："前进约 10 秒后开始搜索" → {kind: not_before, action: <开始搜索的动作>, after: <前进的动作>, min_s: 10}
+  只有需求或条款写明了间隔时才用 not_before，min_s 用写明的数值；只要求先后时用 precedes；
 - precedes：动作 then 开始前，动作 first 已经开始过。
   例："先停车，再展开" → {kind: precedes, first: <停车的动作>, then: <展开的动作>}
 - response：外部事件 on_event 发生后 within_s 秒内动作 action 开始。

@@ -385,12 +385,30 @@ def finite_state(
     return bool(items) and not any(_persistent(i, contracts, tactics) for i in items)
 
 
+MOVES = {
+    "movement.follow_route",
+    "movement.move_to_point",
+    "movement.stop",
+}
+
+
+def _motion(fields: set[str]) -> bool:
+    """The fields are the vehicle's own motion (speed, position, range to its target)."""
+    return bool(fields) and all(
+        f.startswith(("self.speed", "self.position", "movement.")) for f in fields
+    )
+
+
 def completion_items(
     spec: dict[str, Any], contracts: Any, tactics: dict[str, Any]
 ) -> list[tuple[str, str, str, str, bool]]:
     """Transitions whose condition cannot work as written, as (role, from, to, condition id,
-    the source state's tree ends by itself): ENTRY_TRUE, or the condition reads a field no
-    action writes, or none of the role's actions writes."""
+    repair with a tree event): ENTRY_TRUE; a condition reading a field no action (or none of
+    the role's actions) writes; or "arrived" judged from the vehicle's motion fields in a
+    state whose tree drives somewhere and ends by itself (speed is still 0 while the vehicle
+    starts moving, so ``speed <= 0.1 and time_in_state() >= 2 s`` leaves before it moved).
+    A tree event is used when the source state's tree ends by itself and the condition is
+    about motion or cannot change; otherwise the trigger waits for the state's actions."""
     entry = set(entry_true(spec, contracts, tactics))
     conds = {c["id"]: c.get("expression") for c in spec.get("conditions") or [] if "id" in c}
     writers = _writers(contracts)
@@ -407,7 +425,9 @@ def completion_items(
             if cid not in conds:
                 continue
             stuck = False
-            for f in _fields(conds[cid], conds):
+            fields = _fields(conds[cid], conds)
+            moving = (element_actions(spec, f"{role}.{src}", tactics) or set()) & MOVES
+            for f in fields:
                 bf = board.get(f)
                 if bf is not None and getattr(bf, "unwritten", False):
                     stuck = True
@@ -417,8 +437,15 @@ def completion_items(
                     and getattr(bf, "updated", None) not in ("constant", "state_entry", "always")
                 ):
                     stuck = True
-            if stuck or (role, src, dst, cid) in entry:
-                out.append((role, src, dst, cid, finite_state(spec, role, src, contracts, tactics)))
+            finite = finite_state(spec, role, src, contracts, tactics)
+            arrival = finite and bool(moving) and _motion(fields)
+            if not (stuck or (role, src, dst, cid) in entry or arrival):
+                continue
+            # a tree event stands for "the state's work is done": only for arrival (motion
+            # fields) or a field that cannot change; "no target yet" and the like keep their
+            # meaning and wait for the state's actions instead
+            done = finite and (stuck or _motion(fields))
+            out.append((role, src, dst, cid, done))
     return out
 
 
