@@ -222,6 +222,8 @@ class _Normalizer:
             elif param.type in T_PHYSICAL and value is not None and not unit:
                 self.d.error("UNIT001", f"parameters.{name}.unit", "a quantity needs a unit")
             out[name] = {"type": param.type, "value": value}
+            if param.scenario:
+                out[name]["scenario"] = param.scenario
         return out
 
     # ------------------------------------------------------------------ layer 7

@@ -123,9 +123,21 @@ class SheetCompiler:
         pending_triggers: bool = False,
         slices: list[str] | None = None,
         scenario_events: dict[str, str] | None = None,
+        scenario_interface: dict[str, Any] | None = None,
     ) -> None:
+        from afsim_research_agent.ir.v2.scenario_interface import ScenarioInterface
+
         self.slices_override = slices
-        self.scenario_events = scenario_events or {}
+        # the scenario interface (points, routes, events the scenario supplies): the model
+        # refers to them by name; optional events may be left unused
+        self.iface = (
+            ScenarioInterface.model_validate(scenario_interface) if scenario_interface else None
+        )
+        self.scenario_events = dict(scenario_events or {})
+        self.optional_events: set[str] = set()
+        if self.iface is not None:
+            self.scenario_events = {**self.iface.event_texts(), **self.scenario_events}
+            self.optional_events = self.iface.optional_events()
         self.c = contracts
         # structure stage: a bare name in a transition is a condition to be written later
         self.pending_triggers = pending_triggers
@@ -260,6 +272,8 @@ class SheetCompiler:
             gaps={str(k): str(v.get("kind")) for k, v in gaps.items() if isinstance(v, dict)},
             parameters=set(spec["parameters"]),
             expr=self.expr,
+            points=set(self.iface.points) if self.iface else set(),
+            routes=set(self.iface.routes) if self.iface else set(),
         )
         self._trees(spec, tree_symbols, event_ids)
         verification = self.yaml_block("verification")
@@ -313,7 +327,8 @@ class SheetCompiler:
                     list(self.scenario_events),
                 )
             own = [m for m in spec["missions"].values() if "tactic" not in m]
-            for eid in sorted(set(self.scenario_events) - external):
+            for eid in sorted(set(self.scenario_events) - external - self.optional_events):
+                # SCN_EVENT_REQUIRED: an optional order (a fire order, …) may stay unused
                 if own:
                     self.fail(
                         "model",
@@ -877,6 +892,12 @@ class SheetCompiler:
                     "value": sp.get("placeholder", name),
                     "description": sp.get("description", "由想定提供"),
                 }
+        if self.iface is not None:
+            from afsim_research_agent.ir.v2.scenario_interface import interface_parameters
+
+            # the interface's points and routes as scenario parameters (values come from the
+            # scenario binding; whatever the sheet wrote for them is replaced)
+            out.update(interface_parameters(self.iface))
         return out
 
     def _blackboard(self, raw: Any) -> dict[str, Any]:

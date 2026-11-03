@@ -75,6 +75,8 @@ class TreeSymbols:
     parameters: set[str]
     expr: ExprCompiler
     examples: set[str] = field(default_factory=set)  # entries shown as examples only
+    points: set[str] = field(default_factory=set)  # scenario interface points (point=…)
+    routes: set[str] = field(default_factory=set)  # scenario interface routes (route=…)
 
 
 @dataclass
@@ -230,10 +232,33 @@ class _Translator:
         return self.node({"type": "action", "action": name, "params": self.params(call)}, call)
 
     def params(self, call: ast.Call) -> dict[str, Any]:
+        from afsim_research_agent.ir.v2.scenario_interface import point_params, route_param
+
         out: dict[str, Any] = {}
         for kw in call.keywords:
             if kw.arg is None:
                 self.fail(call, "不支持 **参数")
+                continue
+            if kw.arg in ("point", "route"):
+                # a scenario interface name: expands to the scenario parameters it stands for
+                known = self.s.points if kw.arg == "point" else self.s.routes
+                name = kw.value.id if isinstance(kw.value, ast.Name) else None
+                if name is None and isinstance(kw.value, ast.Constant):
+                    name = str(kw.value.value)
+                if name not in known:
+                    self.fail(
+                        kw.value,
+                        f"SCN_UNKNOWN {kw.arg}={ast.unparse(kw.value)[:30]} 不是想定接口中的"
+                        f"{'位置' if kw.arg == 'point' else '路线'}："
+                        + ("、".join(sorted(known)) if known else "想定没有提供"),
+                        sorted(known),
+                    )
+                    continue
+                if kw.arg == "point":
+                    lat, lon = point_params(name)
+                    out["latitude_deg"], out["longitude_deg"] = f"${lat}", f"${lon}"
+                else:
+                    out["route_name"] = f"${route_param(name)}"
                 continue
             value = self.value(kw.value)
             if value is not None:

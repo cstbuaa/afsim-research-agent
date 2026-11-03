@@ -232,7 +232,17 @@ class SimHost:
 
 
 # ------------------------------------------------------------------------ L3
-def simulate(model: dict[str, Any], contracts: Contracts, raw: dict[str, Any]) -> SimResult:
+def simulate(
+    model: dict[str, Any], contracts: Contracts, raw: dict[str, Any], binding: Any = None
+) -> SimResult:
+    """Run one 2D scenario. With a scenario binding (``ir.v2.scenario_interface``) the
+    origin, routes, vehicles and (unless the scenario writes them) hostiles come from the
+    binding, and the model's scenario parameters take the bound values."""
+    if binding is not None:
+        from afsim_research_agent.ir.v2.scenario_interface import apply, bind_scenario
+
+        raw = bind_scenario(raw, model, binding)
+        model = apply(model, binding)
     try:
         sc = Scenario.model_validate(raw)
     except ValidationError as exc:

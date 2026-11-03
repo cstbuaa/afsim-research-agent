@@ -53,6 +53,7 @@ from afsim_research_agent.ir.v2 import Contracts, normalize
 from afsim_research_agent.ir.v2.obligations import Obligation, event_actions, state_actions
 from afsim_research_agent.ir.v2.obligations import check as check_obligations
 from afsim_research_agent.ir.v2.obligations import render as render_obligations
+from afsim_research_agent.ir.v2.scenario_interface import scenario_tags
 from afsim_research_agent.ir.v2.sim import run_l2, simulate
 
 FALCON_V3_VERSION = "falcon-3.0.0"
@@ -123,6 +124,9 @@ class V3Request(BaseModel):
     # actions and subtrees ("simple"); the full tactic is kept for later. "full": draft the
     # tactic as Crow wrote it
     tactic_level: Literal["simple", "full"] = "simple"
+    # the scenario interface (ir.v2.scenario_interface): the points, routes and events the
+    # scenario supplies; derived from the requirement when not given
+    scenario_interface: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def _input(self) -> V3Request:
@@ -178,6 +182,8 @@ class Check:
     problems: list[SheetProblem]  # errors to repair, with block and line
     l2: list[dict[str, Any]] = field(default_factory=list)
     l3: list[dict[str, Any]] = field(default_factory=list)
+    # what the scenario binding cannot give the model (not the drafter's to repair)
+    binding: list[str] = field(default_factory=list)
 
     @property
     def l1_ok(self) -> bool:
@@ -260,8 +266,34 @@ class Drafter:
         self.clause_map: dict[str, dict[str, Any]] = {}
         self.blocked: dict[str, str] = {}
         self.crow_caps: list[dict[str, Any]] = []  # Crow's capability map of that selection
+        self.kit: dict[str, Any] | None = None  # the scenario kit (binding values), if any
 
     # ------------------------------------------------------------------ helpers
+    @property
+    def iface(self) -> Any:
+        from afsim_research_agent.ir.v2.scenario_interface import ScenarioInterface
+
+        if not self.r.scenario_interface:
+            return None
+        return ScenarioInterface.model_validate(self.r.scenario_interface)
+
+    def binding(self, model: dict[str, Any]) -> Any:
+        """The scenario binding of a normalized model (kit values, defaults otherwise)."""
+        from afsim_research_agent.ir.v2.scenario_interface import binding_for
+
+        return binding_for(model, self.kit, self.iface)
+
+    def scenario_text(self, model: dict[str, Any] | None = None) -> str:
+        iface = self.iface
+        if iface is None:
+            return ""
+        text = iface.prompt_text()
+        if model is not None:
+            from afsim_research_agent.ir.v2.scenario_interface import summary
+
+            text += "\n想定绑定（二维仿真的基准环境）：\n" + summary(self.binding(model))
+        return text
+
     @property
     def sheet(self) -> str:
         return join_sheet(self.blocks, self.r.display_name or self.r.model_id)
@@ -276,6 +308,7 @@ class Drafter:
             reference_policy=self.r.reference_policy,
             scenario_parameters={k: v.model_dump() for k, v in self.r.scenario_parameters.items()},
             scenario_events=dict(self.r.scenario_events),
+            scenario_interface=self.r.scenario_interface,
             pending_triggers=pending,
             slices=self.r.slices,
         )
@@ -308,7 +341,7 @@ class Drafter:
                 tactic,
                 self.clause_map,
                 self.c.tactics,
-                set(self.r.scenario_parameters),
+                set(self.r.scenario_parameters) | set(scenario_tags(compiled.spec)),
             ):
                 if code == "UNUSED_PARAM" and not tactic:
                     continue  # checked for drafts of a selected tactic (Crow) only
@@ -319,7 +352,17 @@ class Drafter:
             ):
                 block, line = compiled.locate(path)
                 problems.append(SheetProblem(block, line, message, code=code))
+            if self.iface is not None:
+                for path, message, code in semantics.scenario_literals(compiled.spec):
+                    block, line = compiled.locate(path)
+                    problems.append(SheetProblem(block, line, message, code=code))
         out = Check(compiled, model, diags, problems)
+        if model is not None:
+            self._align_roles(model)
+        if model is not None and self.iface is not None:
+            from afsim_research_agent.ir.v2.scenario_interface import check_binding
+
+            out.binding = check_binding(model, self.binding(model))
         if verify and out.l1_ok and model is not None:
             spec = compiled.spec or {}
             out.l2 = [
@@ -341,7 +384,7 @@ class Drafter:
             }
             after = {name: per_event.get(rid, {}) for name, rid in instances}
             for raw in spec.get("scenarios") or []:
-                res = simulate(model, self.c, raw)
+                res = simulate(model, self.c, raw, self.binding(model))
                 verdicts = check_obligations(
                     self.obligations,
                     res.activations,
@@ -558,7 +601,8 @@ class Drafter:
             entry = set(semantics.entry_true(spec, self.c, self.c.tactics))
             guard = [i[:4] for i in items if not i[4] and i[:4] in entry]
             fire = semantics.fire_by_time(spec, self.c, self.c.tactics)
-            out: list[Any] = [autofix.held_here]
+            iface = self.iface
+            out: list[Any] = [lambda bl: autofix.scenario_refs(bl, iface), autofix.held_here]
             order = next(
                 (
                     (k, v)
@@ -697,6 +741,17 @@ class Drafter:
             seen.add(ob.id)
             self.obligations.append(ob)
 
+    def _align_roles(self, model: dict[str, Any]) -> None:
+        """Obligations name roles of the request; a draft may name its only role otherwise
+        (``role_1`` → ``observer_vehicle``): the obligation follows it instead of judging no
+        vehicle at all."""
+        roles = list(model.get("roles") or {})
+        if len(roles) != 1:
+            return
+        for ob in self.obligations:
+            if ob.roles and not set(ob.roles) <= set(roles):
+                ob.roles = list(roles)
+
     def _grounded(self, item: dict[str, Any]) -> dict[str, Any]:
         """An extracted ``not_before`` whose delay the requirement and its clauses do not
         state is only an order: it becomes ``precedes`` (a made-up "at least 5 s after"
@@ -727,6 +782,7 @@ class Drafter:
             scenario_events=self.r.scenario_events,
             policy=self.r.reference_policy,
             obligations=self.obligations_text,
+            interface=self.scenario_text(),
         )
         await self.ask("v3:structure", prompt, STRUCTURE_KINDS)
         check = self.check(pending=True)
@@ -781,6 +837,7 @@ class Drafter:
             pending=self._pending(structure.compiled),
             policy=self.r.reference_policy,
             obligations=self.obligations_text,
+            interface=self.scenario_text(),
             mission_refs=[
                 r
                 for r, m in ((structure.compiled.spec or {}).get("missions") or {}).items()
@@ -799,7 +856,11 @@ class Drafter:
 
     async def verification_stage(self, control: Check) -> Check:
         prompt = P.verification_prompt(
-            self.r.requirement, self.sheet, self._summary(control), self.obligations_text
+            self.r.requirement,
+            self.sheet,
+            self._summary(control),
+            self.obligations_text,
+            interface=self.scenario_text(control.model),
         )
         await self.ask("v3:verification", prompt, ("verification",), single="verification")
         check = self.check(verify=True)
@@ -960,6 +1021,18 @@ def _review(request: V3Request, drafter: Drafter, check: Check, status: str) -> 
         else ("允许整体引用战术集任务" if request.allow_mission_ref else "不允许整体引用战术集任务")
     )
     lines.append(f"- 引用方式：{policy}")
+    if request.scenario_interface:
+        iface = drafter.iface
+        lines += ["", "## 想定接口与绑定", "", iface.prompt_text()]
+        if check.model is not None:
+            from afsim_research_agent.ir.v2.scenario_interface import summary
+
+            bound = drafter.binding(check.model)
+            lines += ["", "默认绑定：", summary(bound)]
+            lines += [f"- 默认取值：{d}" for d in bound.defaults]
+        if check.binding:
+            lines += ["", "绑定问题（模型无误，想定提供不了；不交给起草修复）："]
+            lines += [f"- {b}" for b in check.binding]
     cover = coverage(drafter, check, drafter.afsim_history)
     if cover:
         lines += ["", "## 战术条款的验证", ""]
@@ -1107,6 +1180,17 @@ def write_package(
             ),
             encoding="utf-8",
         )
+    if request.scenario_interface:
+        # the two layers: the model names the scenario's points, routes and events; the
+        # binding (here: the default one, laid out from the kit) gives them values
+        doc: dict[str, Any] = {"scenario_interface": request.scenario_interface}
+        if check.model is not None:
+            bound = drafter.binding(check.model)
+            doc["binding"] = bound.model_dump(mode="json")
+            doc["binding_problems"] = check.binding
+        (staging / "scenario_interface.yaml").write_text(
+            yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
     gaps = (check.model or {}).get("gaps") or {}
     if gaps:
         (staging / "gaps.yaml").write_text(
@@ -1126,6 +1210,7 @@ def write_package(
         "capability": (check.model or {}).get("capability"),
         "diagnostics": [d.model_dump(mode="json") for d in check.diagnostics],
         "problems": [p.render() for p in check.problems],
+        "binding_problems": check.binding,
         "l2": check.l2,
         "l3": [
             {k: v for k, v in s.items() if k != "render"} | {"summary": s["render"]}
@@ -1243,26 +1328,12 @@ def compile_package(sheet_path: Path, request_path: Path, out: Path) -> V3Result
     return V3Result(out, status, check, [])
 
 
-COMMANDS = (
-    # (pattern in the requirement, event id, description)
-    (
-        r"(开火|射击|攻击)(命令|指令)|未经(命令|批准|许可)[^。；，,]{0,6}(开火|射击)",
-        "fire_order",
-        "上级下达开火命令",
-    ),
-    (r"展开(命令|指令)|(命令|指令)[^。；，,]{0,6}展开", "deploy_order", "上级下达展开命令"),
-    (
-        r"撤(离|退)(命令|指令)|(命令|指令)[^。；，,]{0,6}撤(离|退)",
-        "withdraw_order",
-        "上级下达撤离命令",
-    ),
-)
-
-
 def command_events(requirement: str) -> dict[str, str]:
     """External events for the orders a requirement says the vehicles wait for (a fire
-    order, a deploy order, …)."""
-    return {eid: text for pattern, eid, text in COMMANDS if re.search(pattern, requirement or "")}
+    order, a deploy order, …): the command events of the derived scenario interface."""
+    from afsim_research_agent.ir.v2.scenario_interface import derive
+
+    return {k: v.description for k, v in derive(requirement).events.items() if v.kind == "command"}
 
 
 class _NoModel:
@@ -1308,6 +1379,32 @@ async def _draft(
 
 
 NEEDS_CAPABILITY = "needs_capability"
+NEEDS_BINDING = "needs_binding"
+
+
+def with_interface(request: V3Request) -> tuple[V3Request, list[str]]:
+    """The request with its scenario interface (given, or derived from the requirement);
+    the request's scenario events join it as optional requests."""
+    from afsim_research_agent.ir.v2.scenario_interface import (
+        InterfaceEvent,
+        ScenarioInterface,
+        derive,
+    )
+
+    if request.scenario_interface:
+        iface = ScenarioInterface.model_validate(request.scenario_interface)
+        notes = ["想定接口由请求给出"]
+    else:
+        iface = derive(request.requirement)
+        notes = ["想定接口由需求推导：" + "；".join(iface.sources)]
+    for eid, text in request.scenario_events.items():
+        iface.events.setdefault(eid, InterfaceEvent(kind="request", description=text))
+    for problem in iface.check():
+        notes.append("想定接口问题：" + problem)
+    request = request.model_copy(
+        update={"scenario_interface": iface.model_dump(), "scenario_events": iface.event_texts()}
+    )
+    return request, notes
 
 
 def _blocked_package(staging: Path, target: Path, request: V3Request, lead: Drafter) -> V3Result:
@@ -1407,25 +1504,20 @@ async def run_draft3(
                 bridge_notes.append(f"化简为可执行版失败，按完整战术起草：{exc}")
         request, tactic, notes = apply_selection(request, request_path, contracts, loaded)
         bridge_notes = notes + (simplified.notes if simplified else []) + bridge_notes
-    commands = {
-        k: v
-        for k, v in command_events(request.requirement).items()
-        if k not in request.scenario_events
-    }
-    if commands:
-        # orders the requirement says the vehicles wait for: external events of the run
-        request = request.model_copy(
-            update={"scenario_events": {**request.scenario_events, **commands}}
-        )
-        bridge_notes.append(
-            "需求中的命令作为外部事件：" + "；".join(f"{k}（{v}）" for k, v in commands.items())
-        )
+    request, iface_notes = with_interface(request)
+    bridge_notes += iface_notes
     target = _target(request, request_path, out_dir)
     staging = target.with_name(target.name + ".partial")
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
+    kit = None
+    if afsim is not None and afsim.kit is not None:
+        from afsim_research_agent.ir.v2.afsim.scenario import load_kit
+
+        kit = load_kit(afsim.kit)
     lead = Drafter(request, contracts, run)
+    lead.kit = kit
     lead.tactic, lead.notes = tactic, list(bridge_notes)
     lead.simplified = simplified
     caps: list[dict[str, Any]] = []
@@ -1472,6 +1564,7 @@ async def run_draft3(
             d.clauses, d.obligations, d.notes = list(lead.clauses), list(lead.obligations), []
             d.tactic, d.crow_caps, d.simplified = tactic, caps, simplified
             d.clause_map, d.blocked = lead.clause_map, lead.blocked
+            d.kit = kit
             drafters.append(d)
         outcomes = await asyncio.gather(
             _draft(lead, run, structure), *(_draft(d, run) for d in drafters[1:])
@@ -1491,7 +1584,7 @@ async def run_draft3(
                 if i != best:
                     (staging / f"candidate_{i + 1}.md").write_text(d.sheet, encoding="utf-8")
         history = None
-        if afsim is not None and check.l1_ok and check.model is not None:
+        if afsim is not None and check.l1_ok and check.model is not None and not check.binding:
             check, history = await _afsim_rounds(drafter, run, check, fixes, afsim, staging)
             drafter.afsim_history = history
         ok = check.verified and (history is None or history.passed)
@@ -1500,6 +1593,9 @@ async def run_draft3(
         if ok and any(not c["verified"] for c in cover.values()):
             # every check passed, but some tactic clause was never judged by any run
             status = UNVERIFIED
+        if check.l1_ok and check.binding:
+            # the model is fine, the scenario cannot give it what it names
+            status = NEEDS_BINDING
         write_package(staging, request, drafter, check, status, fixes)
         if history is not None:
             (staging / "afsim_rounds.md").write_text(_afsim_report(history), encoding="utf-8")

@@ -1125,6 +1125,18 @@
           "default": null,
           "title": "Minimum"
         },
+        "scenario": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scenario"
+        },
         "type": {
           "enum": [
             "distance",

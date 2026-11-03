@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-PROMPT_VERSION = "falcon-v3-2026.11.03e"
+PROMPT_VERSION = "falcon-v3-2026.11.03f"
 
 RULES = """你在为作战仿真编写战术行为模型。模型分七层，你只写上三层：任务状态机、状态树、子树；
 动作、黑板、仲裁、能力层由程序从能力集引用、推导和校验。你写的是"战术稿"：若干带标签的 Markdown 代码块。
@@ -77,7 +77,7 @@ CONTROL_GUIDE = """```python conditions``` 块：每行 `条件名 = 表达式`�
 - 战术集子树 / 状态树：`tactic("id")`，有公开参数时写 `tactic("id", 参数=值)`；缺口占位：`gap("id", 参数=值)`；
 - 可调参数：动作和子树的参数标有类别。[设计] 参数（队形、间距、保持距离、速度、时效、开火上限等）
   由你按战术和资料给值：在 model 的 parameters 中定义（写清依据），再在调用处写 `参数=参数名`；
-  不写则用默认值。[平台] 参数是车辆性能，不要改；[想定] 参数（路线、坐标）由想定给出。
+  不写则用默认值。[平台] 参数是车辆性能，不要改；[想定] 参数（路线、坐标）由想定接口给出（point= / route=）。
   直接引用战术集树（状态函数只写一句 `tactic("…")`）时，它的公开参数自动取 parameters 中同名参数的值；
 - 条件：`assert 条件名或表达式`（不成立时该分支失败）；
 - 函数体里依次写多句 = 带记忆的顺序（逐个完成，运行中的子节点下次继续）；
@@ -112,10 +112,13 @@ CONTROL_GUIDE = """```python conditions``` 块：每行 `条件名 = 表达式`�
   [自行结束] 的；[不会结束] 的（保持、跟踪）放在最后一个状态，或用字段条件、外部事件转出；
 - 阈值先宽松：条件和参数中的距离、到达、静止判定先取较大的容差（20 m 以上），计时留足余量，
   先保证模型在 AFSIM 中能跑通，以后再收紧；需求明确给出的数值照用；
-- 停在原地：movement.stop，然后 movement.hold_position 不给经纬度（保持当前位置）；不要自编经纬度，
-  坐标只能来自想定；
-- 上级的命令（开火命令、新指令、展开命令）在 model 的 events 中声明外部事件 `名字: {source: external}`，
-  用它触发相应状态；不要用计时、毁伤或其他状态才写入的字段代替命令。需求禁止主动开火时，
+- 位置和路线只写想定接口中的名字：`point=<名字>`（展开为经纬度）、`route=<名字>`（路线）；
+  不写经纬度、路线名的具体值，也不要为位置另设参数。已在阵位：停车（movement.stop）后保持当前位置
+  （movement.hold_position 不带位置）；需要前出：movement.follow_route(route=<接口路线>)；
+  去某一点：movement.move_to_point(point=<接口位置>)；
+- 上级的命令（开火命令、新指令、展开命令）用想定接口中的事件，在 model 的 events 中声明为
+  `名字: {source: external}`，用它触发相应状态；接口标为"可选"的命令可以不用（不用即永远不执行），
+  不要为了用上它而把它接到与它无关的状态；不要用计时、毁伤或其他状态才写入的字段代替命令。需求禁止主动开火时，
   进入开火状态只能由外部命令事件触发；
 - 转换条件读的是"进入本状态时已经成立"还是"本状态新产生的变化"要分清：开火计数大于 0、毁伤时刻有效、
   分配数大于 0 这类字段在上一轮之后仍然成立，状态会一进入就转出、一拍内连跳；要等本轮的结果，用树事件
@@ -146,9 +149,8 @@ tests:            # L2 单步测试：给定状态、黑板、事件，执行一
     expect: {next_state: 状态}   # 一般只写 next_state；tree_status 只在确实要检查树的结果时写
 scenarios:        # L3 二维仿真：平面坐标（米），x 向东、y 向北
   - id: 英文ID
-    environment: {origin_deg: [纬度, 经度], duration_s: 200, step_s: 1, routes: {路线名: [[x, y], …]}}
-    vehicles: {角色: [{position_m: [x, y], heading_deg: 90, max_speed_mps: 10}]}
-    hostiles: [{id: h1, position_m: [x, y], velocity_mps: [vx, vy], appear_s: 0, remove_s: null}]
+    environment: {duration_s: 200, step_s: 1}
+    hostiles: [{id: h1, position_m: [x, y], velocity_mps: [vx, vy], appear_s: 0, remove_s: null}]   # 可省略
     events: [{at_s: 150, event: 事件ID}]
     faults: [{at_s: 60, role: 角色, sensor_operational: false}]
     expect: [{id: 英文ID, role: 角色, state_sequence: [完整的状态访问序列，从初始状态到最后]} 或 {visits_in_order: [只检查这些状态按此顺序出现]} 或 {reaches: 状态, within_s: 60（从仿真开始计）} 或 {reaches: 状态, after_event: 事件, within_s: 10（从该事件起计）} 或 {never: 状态}]
@@ -156,7 +158,9 @@ scenarios:        # L3 二维仿真：平面坐标（米），x 向东、y 向�
 - 想定 events 只能写模型 events 里的外部事件；目标丢失、传感器故障、车辆不能动这类情况用 hostiles 的
   remove_s 或 faults 制造（不是事件）。故障要在后面的流程（如结束时的关机）之前用第二条 faults 恢复，
   除非这个想定就是要测故障下的收尾。
-- 路线的键用路线参数的 value。"""
+- 出发位置、路线、车辆位置和敌方基准位置由想定绑定给出（见"想定绑定"）：environment 只写 duration_s
+  和 step_s，不写 origin_deg 和 routes，不写 vehicles；hostiles 省略时按绑定放置敌方，需要制造目标
+  出现、丢失、移动时再写 hostiles（平面坐标以出发位置为原点，米，x 向东、y 向北）。"""
 
 EXAMPLE = """示例（虚构能力集）：
 ```yaml model
@@ -250,9 +254,10 @@ def structure_prompt(
     scenario_events: dict[str, str] | None = None,
     policy: str = "all",
     obligations: str = "",
+    interface: str = "",
 ) -> str:
     names = ""
-    if scenario_events:
+    if scenario_events and not interface:
         names += (
             "\n想定会发出的外部事件（需求中的外部请求照用这些事件 ID，在 events 中声明为 external）："
             + "；".join(f"{k}（{v}）" for k, v in scenario_events.items())
@@ -269,7 +274,7 @@ def structure_prompt(
 ## 需求条款
 {_clauses(clauses)}
 {tactic_brief}
-{_obligations_section(obligations)}## 约定
+{_scenario_section(interface)}{_obligations_section(obligations)}## 约定
 {_hints(roles, scenario, allow_mission_ref, policy)}{names}
 
 ## 能力集切片索引
@@ -294,6 +299,7 @@ def control_prompt(
     mission_refs: list[str] | None = None,
     policy: str = "all",
     obligations: str = "",
+    interface: str = "",
 ) -> str:
     need = "；".join(f"{r}: {', '.join(states.get(r, []))}" for r in roles_needing_trees)
     if pending:
@@ -316,7 +322,7 @@ def control_prompt(
 ## 需求条款
 {_clauses(clauses)}
 
-{_obligations_section(obligations)}## 已写好的部分
+{_scenario_section(interface)}{_obligations_section(obligations)}## 已写好的部分
 {sheet}
 
 ## 能力集详细内容（只用这里的 ID 和字段）
@@ -331,7 +337,9 @@ def control_prompt(
 只输出这几个代码块，不要重复已写好的块，不要解释。"""
 
 
-def verification_prompt(requirement: str, sheet: str, summary: str, obligations: str = "") -> str:
+def verification_prompt(
+    requirement: str, sheet: str, summary: str, obligations: str = "", interface: str = ""
+) -> str:
     cover = (
         "\n想定要能覆盖下面的需求约束：让约束的前提（相关动作开始、外部事件发生）在想定中出现，"
         "程序会在每个想定的运行轨迹上检查它们。\n"
@@ -343,7 +351,7 @@ def verification_prompt(requirement: str, sheet: str, summary: str, obligations:
 ## 需求
 {requirement}
 {_obligations_section(obligations)}{cover}
-## 战术稿
+{_scenario_section(interface)}## 战术稿
 {sheet}
 
 ## 编译结果摘要
@@ -353,6 +361,15 @@ def verification_prompt(requirement: str, sheet: str, summary: str, obligations:
 {VERIFICATION_GUIDE}
 
 只输出这一个代码块，不要解释。"""
+
+
+def _scenario_section(text: str) -> str:
+    if not text:
+        return ""
+    return (
+        "## 想定接口（想定提供的位置、路线、外部事件；模型只用这些名字，具体值由想定绑定给出）\n"
+        f"{text}\n\n"
+    )
 
 
 def _obligations_section(text: str) -> str:

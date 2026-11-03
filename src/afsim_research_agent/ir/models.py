@@ -270,6 +270,9 @@ class Parameter(_Strict):
     description: str = ""
     vocabulary: list[str] | None = None
     basis: Basis | None = None
+    # a value only the scenario knows (IR 2.0, ``ir.v2.scenario_interface``):
+    # "point:<id>:lat" / "point:<id>:lon" / "route:<id>"; the scenario binding supplies it
+    scenario: str | None = None
 
 
 class Resource(_Strict):

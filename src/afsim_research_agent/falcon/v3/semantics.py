@@ -489,11 +489,20 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
             cards[st] = card
             count = counts.get(role, 1)
             if card.min_vehicles > count:
+                from afsim_research_agent.ir.v2.cards import cards as all_cards
+
+                known = all_cards(contracts)
+                needs = sorted(
+                    i
+                    for i in element_actions(spec, f"{role}.{st}", tactics) or set()
+                    if i in known and known[i].min_vehicles > count
+                )
+                what = "、".join(needs[:4]) or "编队、协同类能力"
                 out.append(
                     (
                         f"state_trees.{role}.{st}",
                         f"ROLE_COUNT 角色 {role} 只有 {count} 辆车，状态 {st} 的树要求至少 "
-                        f"{card.min_vehicles} 辆（{card.reason or '用到编队、协同类能力'}）：它会一直"
+                        f"{card.min_vehicles} 辆（用到 {what}，要指挥或等待其他车辆）：它会一直"
                         "等其他车辆，单车用不了。单车改用机动、感知等单车能力"
                         "（如前出用 movement.follow_route，到达用它的树完成事件）",
                         "ROLE_COUNT",
@@ -624,4 +633,51 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
                             "ENTRY_TRUE",
                         )
                     )
+    return out
+
+
+SCN_PARAMS = ("latitude_deg", "longitude_deg", "route_name")
+
+
+def scenario_literals(spec: dict[str, Any]) -> list[Problem]:
+    """SCN_LITERAL: a position or route an action is given as a value, not as a name of the
+    scenario interface (``point=…`` / ``route=…``): the scenario does not know it, and a
+    made-up coordinate sends the vehicle somewhere the tactic never meant."""
+    from afsim_research_agent.ir.v2.scenario_interface import scenario_tags
+
+    tags = scenario_tags(spec)
+    out: list[Problem] = []
+    seen: set[tuple[str, str]] = set()
+
+    def walk(node: Any, where: str) -> None:
+        if isinstance(node, dict):
+            if node.get("type") in ("action", "tactic"):
+                ref = str(node.get("action") or node.get("tactic"))
+                for name, value in (node.get("params") or {}).items():
+                    if name not in SCN_PARAMS:
+                        continue
+                    if isinstance(value, str) and value.startswith("$") and value[1:] in tags:
+                        continue
+                    if (ref, name) in seen:
+                        continue
+                    seen.add((ref, name))
+                    kind = "路线" if name == "route_name" else "位置"
+                    use = "route=<接口路线>" if name == "route_name" else "point=<接口位置>"
+                    out.append(
+                        (
+                            where,
+                            f"SCN_LITERAL {ref} 的 {name} 写成了 {value!r}：{kind}只能用想定接口中的"
+                            f"名字（{use}），具体值由想定给出；已在阵位就停车并保持当前位置",
+                            "SCN_LITERAL",
+                        )
+                    )
+            for value in node.values():
+                if isinstance(value, dict | list):
+                    walk(value, where)
+        elif isinstance(node, list):
+            for value in node:
+                walk(value, where)
+
+    for sub in spec.get("subtrees") or []:
+        walk(sub.get("root"), f"subtrees.{sub.get('id')}")
     return out

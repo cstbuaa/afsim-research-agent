@@ -447,7 +447,7 @@ class SheetFixer:
         if raw is None:
             ids = [s.get("id") for s in (self.last.compiled.spec or {}).get("scenarios") or []]
             return f"没有想定 {scenario}；现有：{ids}"
-        return simulate(model, self.d.c, raw).render()
+        return simulate(model, self.d.c, raw, self.d.binding(model)).render()
 
     # ------------------------------------------------------------------ diagnosis / AFSIM
     @property

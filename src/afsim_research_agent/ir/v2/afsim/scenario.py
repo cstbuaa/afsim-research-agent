@@ -219,9 +219,14 @@ def generate(
     *,
     run_id: str | None = None,
 ) -> RunConfig:
+    from afsim_research_agent.ir.v2.scenario_interface import binding_for
+
     meta = kit.get("meta") or {}
     slices_kit = kit.get("slices") or {}
     refs = model_refs(model)
+    # the scenario binding: every point, route and scenario value the model names gets a
+    # value here (the kit's, or a reasonable default)
+    bound = binding_for(model, kit)
 
     def slice_of(ref: str) -> str | None:
         action = contracts.actions.get(ref)
@@ -285,6 +290,22 @@ def generate(
             "lon": _pos(lat, lon)[1],
         }
         aux: list[str] = []
+        provides = kit.get("provides") or {}
+        if bound.routes and provides.get("route_endpoint"):
+            # what a route action needs as platform data (its route's end), in the kit's
+            # own field names
+            first = next(iter(bound.routes.values()))
+            end_lat, end_lon = first.geo[-1]
+            aux.append(
+                _fill(
+                    str(provides["route_endpoint"]),
+                    {
+                        "lat_deg": f"{end_lat:.7f}",
+                        "lon_deg": f"{end_lon:.7f}",
+                        "tolerance_m": f"{first.arrival_tolerance_m:g}",
+                    },
+                )
+            )
         body: list[str] = [_fill(meta.get("body", ""), values)]
         for sid in sorted(used):
             sk = slices_kit.get(sid) or {}
@@ -330,6 +351,15 @@ def generate(
     parameters: dict[str, Any] = {}
     shared = {**common, "leader": leader}
     speed = float(meta.get("route_speed_mps", 8.0))
+    for r in bound.routes.values():
+        lines = [f"route {r.name}"]
+        lines += [
+            f" position {' '.join(_pos(lat, lon))} speed {r.speed_mps:g} m/s" for lat, lon in r.geo
+        ]
+        preamble.append("\n".join([*lines, " stop", "end_route"]))
+    for name, value in bound.parameters.items():
+        if name in (model.get("parameters") or {}):
+            parameters[name] = value
     for name in sorted(route_names(model)):
         kit_text = "\n".join(
             [meta.get("preamble", "")]
