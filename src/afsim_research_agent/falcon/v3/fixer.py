@@ -46,6 +46,7 @@ from afsim_research_agent.ir.v2.sim import simulate
 RESULT_LIMIT = 5000
 MAX_READS = 4  # consecutive show calls without an edit before show is refused
 STALL = 8  # steps without beating the best score: stop
+READ_ALLOWANCE = 6  # reads after the last progress that do not count towards the stall
 HISTORY = 5
 SHOW_LINES = 120
 
@@ -934,7 +935,15 @@ async def fix_sheet(
         ):
             fixer.best_step = step
             best_step = step
-        if step - max(best_step, 0) >= STALL and action.action not in ("finish", "ask_human"):
+        # looking things up (show / lookup / explain) is how a diagnosis is reached: it
+        # counts towards the stall only beyond READ_ALLOWANCE reads since the last progress
+        reads = sum(
+            1
+            for r in records
+            if r["step"] > max(best_step, 0) and r["action"] in ("show", "lookup", "explain")
+        )
+        idle = step - max(best_step, 0) - min(reads, READ_ALLOWANCE)
+        if idle >= STALL and action.action not in ("finish", "ask_human"):
             records[-1]["result"] += f"\n（连续 {STALL} 步没有改进，结束）"
             break
         if action.action == "finish" and finish_refused:

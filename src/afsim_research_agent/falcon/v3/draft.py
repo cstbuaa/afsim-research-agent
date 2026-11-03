@@ -313,6 +313,11 @@ class Drafter:
                     continue  # checked for drafts of a selected tactic (Crow) only
                 block, line = compiled.locate(path)
                 problems.append(SheetProblem(block, line, message, code=code))
+            for path, message, code in semantics.role_problems(
+                compiled.spec, self.c, self.c.tactics
+            ):
+                block, line = compiled.locate(path)
+                problems.append(SheetProblem(block, line, message, code=code))
         out = Check(compiled, model, diags, problems)
         if verify and out.l1_ok and model is not None:
             spec = compiled.spec or {}
@@ -390,6 +395,7 @@ class Drafter:
                 o
                 for o in self.obligations
                 if o.id not in covered
+                and not o.spatial  # effect obligations: judged on AFSIM positions only
                 and not any(a in unmodelled or not self._modelled(a) for a in o.actions())
             ]
             if missing and spec.get("scenarios"):

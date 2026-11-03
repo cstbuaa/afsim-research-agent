@@ -757,7 +757,7 @@ def test_fix_loop_stops_reading_and_cannot_write_the_verification_block(
     contracts: Contracts,
 ) -> None:
     from afsim_research_agent.falcon.llm import ModelRunner, ScriptedModel
-    from afsim_research_agent.falcon.v3.fixer import STALL, SheetFixer, fix_sheet
+    from afsim_research_agent.falcon.v3.fixer import READ_ALLOWANCE, STALL, SheetFixer, fix_sheet
 
     no_verification = SHEET.split("```yaml verification")[0]
     fixer = SheetFixer(_fix_drafter(contracts, no_verification))
@@ -765,6 +765,7 @@ def test_fix_loop_stops_reading_and_cannot_write_the_verification_block(
     fixer.diagnosis["where"].append("verification")  # the block does not exist yet
     assert "验证阶段" in fixer.edit([{"block": "verification", "text": "tests: []"}], "x")
     # a model that only reads: show is refused after a few reads, the loop stops on stall
+    # (reads count towards the stall beyond the allowance)
     reads = [
         {"action": "show", "args": {"block": "pytree:scout", "start": i}} for i in range(40, 60)
     ]
@@ -772,7 +773,7 @@ def test_fix_loop_stops_reading_and_cannot_write_the_verification_block(
     outcome = asyncio.run(
         fix_sheet(drafter, ModelRunner(ScriptedModel({"fix:v3:step": reads})), max_steps=20)
     )
-    assert outcome.steps == STALL
+    assert outcome.steps == STALL + READ_ALLOWANCE
     assert any("连续查看" in r["result"] for r in outcome.log)
     assert any("没有修改" in r["result"] for r in outcome.log)
     # the same range shown twice is said to be unchanged
