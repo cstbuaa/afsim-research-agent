@@ -153,3 +153,15 @@ def test_package_keeps_the_full_tactic_and_the_deferred_parts(tmp_path: Path) ->
     } in elements
     review = "\n".join(B.review_section(out.tactic, [], "block", {}, out))
     assert "可执行版与完整战术" in review and "tc_01_s2" in review and "未经命令不得开火" in review
+
+
+def test_the_executable_mapping_is_adopted_without_a_second_judgment() -> None:
+    from afsim_research_agent.falcon.v3.draft import Drafter
+
+    out = S.apply(_tactic(), S.SimplifyAnswer.model_validate(GOOD))
+    d = Drafter.__new__(Drafter)
+    d.clause_map, d.blocked = {}, {"old": "x"}
+    d.clauses = [{"id": c["id"], "origin": "tactic"} for c in B.tactic_clauses(out.tactic)]
+    assert d.adopt_map(out) == {}
+    assert d.clause_map["tc_01_s1"]["actions"] == ["movement.follow_route"]
+    assert d.clause_map["tc_01_s2"]["actions"] == ["movement.stop", "perception.search_for_target"]

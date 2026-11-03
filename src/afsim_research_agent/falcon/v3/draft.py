@@ -18,6 +18,7 @@ existing package directory is never overwritten.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -543,6 +544,23 @@ class Drafter:
                 else set()
             )
             self.clauses += tactic_clauses(self.tactic, skip=skip)
+
+    def adopt_map(self, simplified: Any) -> dict[str, str]:
+        """Clause → actions from the executable version (see ``simplify``): nothing in it
+        is missing, so nothing is blocked."""
+        kinds = {"steps": "s", "exceptions": "x", "geometry": "g"}
+        for part in simplified.tactic.parts:
+            for need in part.card.capability_needs:
+                m = re.match(r"(steps|exceptions|geometry)\[(\d+)\]", need.source)
+                if not m:
+                    continue
+                cid = f"{part.card.id}_{kinds[m.group(1)]}{int(m.group(2)) + 1}"
+                self.clause_map[cid] = {"actions": list(need.maps_to), "how": "", "missing": ""}
+        for c in self.clauses:
+            if c.get("origin") == "tactic":
+                self.clause_map.setdefault(c["id"], {"actions": [], "how": "", "missing": ""})
+        self.blocked = {}
+        return self.blocked
 
     async def map_stage(self) -> dict[str, str]:
         """Map each tactic clause onto the capability set before drafting (Falcon's own
@@ -1312,7 +1330,12 @@ async def run_draft3(
         if tactic is not None:
             from afsim_research_agent.falcon.v3.crow_bridge import is_core, map_text
 
-            blocked = await lead.map_stage()
+            if simplified is not None:
+                # the executable version names, per element, the actions it uses (checked
+                # against the capability set when it was made): no second judgment of its text
+                blocked = lead.adopt_map(simplified)
+            else:
+                blocked = await lead.map_stage()
             mode = request.missing_capabilities
             core = {cid: why for cid, why in blocked.items() if is_core(cid)}
             if core and mode == "block":
