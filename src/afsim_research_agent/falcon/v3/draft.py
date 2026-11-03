@@ -34,6 +34,7 @@ from afsim_research_agent.falcon.sheet.blocks import Block, SheetProblem, join_s
 from afsim_research_agent.falcon.sheet.generate import merge
 from afsim_research_agent.falcon.v3 import catalog as K
 from afsim_research_agent.falcon.v3 import prompts as P
+from afsim_research_agent.falcon.v3 import triage
 from afsim_research_agent.falcon.v3.afsim_loop import (
     AfsimConfig,
     AfsimHistory,
@@ -1362,6 +1363,9 @@ def write_package(
                         "log": o.log,
                         "diagnoses": o.diagnoses,
                         "afsim_runs": o.afsim_runs,
+                        "classified": o.classified,
+                        "findings": o.findings,
+                        "diagnosed_unfixed": o.diagnosed_unfixed,
                         "edits": [e.__dict__ for e in o.edits],
                     }
                     for o in fixes
@@ -1749,7 +1753,17 @@ async def _afsim_rounds(
         )
         passed = error is None and bool(results) and all(r.passed for r in results or [])
         missions = {rid: role.get("mission") for rid, role in (model.get("roles") or {}).items()}
-        text = "" if passed else feedback(results, runs, error, missions, meanings)
+        findings = (
+            []
+            if passed or error is not None
+            else triage.from_afsim(
+                results,
+                runs,
+                model,
+                drafter.iface.optional_events() if drafter.iface is not None else None,
+            )
+        )
+        text = "" if passed else feedback(results, runs, error, missions, meanings, findings)
         local = error or "\n".join(r.render() for r in results or [])
         judged = {
             str(v["id"]): bool(v["passed"])
@@ -1757,12 +1771,17 @@ async def _afsim_rounds(
             for v in r.obligations
             if v.get("judged", True)
         }
-        history.rounds.append(AfsimRound(index, passed, text, local, out, judged))
+        history.rounds.append(
+            AfsimRound(index, passed, text, local, out, judged, [f.to_dict() for f in findings])
+        )
         drafter.notes.append(f"AFSIM 第 {index + 1} 次运行：{'通过' if passed else '未通过'}")
-        drafter.afsim_note = AfsimNote(sheet_hash(drafter.sheet), text, passed)
+        drafter.afsim_note = AfsimNote(sheet_hash(drafter.sheet), text, passed, findings)
         drafter.afsim_verdicts[drafter.afsim_note.sheet_hash] = drafter.afsim_note
         infra = any(getattr(r, "infrastructure", False) for r in results or [])
-        return passed, text, infra
+        # every finding is the scenario's, the judge's or the capability set's: editing the
+        # sheet cannot repair it either
+        outside = not passed and triage.only_outside_sheet(findings)
+        return passed, text, infra or outside
 
     passed, _text, infra = await probe(check.model or {})
     if passed or cfg.rounds <= 0:
@@ -1774,8 +1793,8 @@ async def _afsim_rounds(
         # the binding, the compiler or the lab files failed: editing the sheet cannot
         # repair it, so no repair round is spent on it
         drafter.notes.append(
-            "AFSIM 运行失败出在绑定、编译器或实验室文件（基础设施），不交给战术稿修复；"
-            "见 afsim_rounds.md"
+            "AFSIM 运行失败不是战术稿的问题（基础设施，或规则判定为想定/判定误报/能力缺失），"
+            "不交给战术稿修复；见 afsim_rounds.md"
         )
         return drafter.check(verify=True), history
     drafter.afsim_probe = probe
@@ -1812,4 +1831,8 @@ def _afsim_report(history: AfsimHistory) -> str:
         ]
         if r.feedback:
             lines += ["交给修复循环的反馈：", "", "```text", r.feedback, "```", ""]
+        if r.findings:
+            lines += ["规则判定：", ""]
+            lines += [f"- {f.get('text')}" for f in r.findings]
+            lines.append("")
     return "\n".join(lines)

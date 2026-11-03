@@ -10,7 +10,15 @@ blackboard fields), ``explain`` (one problem with its context, e.g. which refere
 subtree already holds a resource), ``try_tick`` (one L2 step), ``simulate`` (one L3
 scenario), ``edit`` (several blocks at once, applied together), ``revert``, ``finish``,
 ``ask_human``; ``diagnose`` (issue, place, cause, plan: required before editing once
-L1 passes) and ``run_afsim`` (re-run AFSIM on the current sheet, when AFSIM is in the loop).
+L1 passes), ``run_afsim`` (re-run AFSIM on the current sheet, when AFSIM is in the loop) and
+``classify`` (a failed check that is not the sheet's to fix: scenario, judge, capability).
+
+Rule triage (falcon.v3.triage) comes first: every failed run is classified (the sheet's
+model or verification block / the scenario / a false alarm of the judge / a missing
+capability) and the sheet's failures come with their likely cause and change. The loop does
+not start, or ends, when nothing left is the sheet's; it may not classify a failure the rules
+put on the sheet; after a diagnosis it may read at most twice before editing, and finish is
+refused while a diagnosis has not been followed by an edit.
 
 Guards enforced here, not only in the prompt:
 
@@ -41,6 +49,7 @@ from pydantic import BaseModel, Field
 from afsim_research_agent.falcon.llm import ModelRunner
 from afsim_research_agent.falcon.sheet.blocks import Block
 from afsim_research_agent.falcon.v3 import catalog as K
+from afsim_research_agent.falcon.v3 import triage
 from afsim_research_agent.ir.v2.sim import simulate
 
 RESULT_LIMIT = 5000
@@ -49,6 +58,11 @@ STALL = 8  # steps without beating the best score: stop
 READ_ALLOWANCE = 6  # reads after the last progress that do not count towards the stall
 HISTORY = 5
 SHOW_LINES = 120
+LOOKS = 5  # reads in a row (show / lookup / explain / try_tick / simulate) before a
+# diagnosis is written; more are refused once L1 passes
+LOOKS_AFTER_DIAGNOSIS = 2  # reads between a diagnosis and its edit
+READS = ("show", "lookup", "explain", "try_tick", "simulate")
+OUTSIDE = (triage.SCENARIO, triage.JUDGE, triage.CAPABILITY)
 
 
 class FixStep(BaseModel):
@@ -66,6 +80,7 @@ class FixStep(BaseModel):
         "ask_human",
         "diagnose",
         "run_afsim",
+        "classify",
     ]
     args: dict[str, Any] = Field(default_factory=dict)
 
@@ -93,6 +108,10 @@ class FixOutcome:
     score_end: tuple[int, int, int] = (0, 0, 0)
     diagnoses: list[dict[str, Any]] = field(default_factory=list)
     afsim_runs: int = 0  # AFSIM re-runs inside the loop
+    # failed checks recorded as not the sheet's to fix (classify): check, category, reason
+    classified: list[dict[str, Any]] = field(default_factory=list)
+    findings: list[dict[str, Any]] = field(default_factory=list)  # triage at the end
+    diagnosed_unfixed: bool = False  # diagnosed, but no edit was ever applied
 
 
 def _clip(text: str, limit: int = RESULT_LIMIT) -> str:
@@ -142,6 +161,9 @@ RULES = """你在修正一份战术稿（v3）。每一步调用一个工具，�
 - revert {"block": "块名"}：把一个块恢复为修正开始前的内容。
 - diagnose {"issue": "要解决的问题（抄检查结果里的原文）", "where": ["块名", …], "cause": "为什么会这样", "plan": "打算怎么改"}：
   写下诊断。L1 通过后（修 L2/L3/AFSIM 问题时），每次 edit 之前必须先有诊断，edit 只能改诊断 where 里列出的块。
+- classify {"check": "失败项 ID（想定 ID 或 afsim）", "category": "scenario|judge|capability", "reason": "…"}：
+  记录一个失败项不是战术稿的问题（想定/绑定没给出条件、判定误报、能力集缺能力）。检查结果里"定位与改法"
+  标为稿件的问题不能这样记录。
 - run_afsim {}：用真实 AFSIM 复验当前稿件（只在有 AFSIM 反馈时可用，次数有限）；二维检查全部通过时会自动复验。
 - finish {"summary": "…"}：结束（有 AFSIM 反馈时，AFSIM 复验通过前不接受）。
 - ask_human {"question": "…"}：问题需要人决定时结束并提问。
@@ -152,6 +174,10 @@ RULES = """你在修正一份战术稿（v3）。每一步调用一个工具，�
 - 状态树和任务状态机自己写；只能用 tactic("…") 引用战术集子树，不能引用战术集状态树和任务。
 - 引用的战术集子树已经包含的动作，不要在并行分支里再写一遍（会争用同一独占资源）。
 - 不能删测试、想定和想定期望；期望与需求不符时可以改，但不能为了通过而改成与需求不符的期望。
+- 检查结果里有"定位与改法"时先照它处理：标为稿件的，按给出的原因和改法 diagnose 再 edit；
+  标为想定/判定误报/能力缺失的，不要改稿件，用 classify 记录。
+- 写了诊断就要改：诊断之后最多再查看 2 次，然后 edit；改不了就重新 diagnose 或 classify，不能只诊断不改。
+- 位置和路线只用 point=<接口点> / route=<接口路线>，不要写经纬度，也不要改成 latitude_deg 等参数。
 - L2/L3/AFSIM 问题：先 diagnose 再 edit。诊断要指到具体的状态、转换、条件或动作，说明它为什么导致
   这个问题；不知道原因时先用 show / lookup / try_tick / simulate 查清楚。
 - AFSIM 复验仍未通过时，上一份诊断作废：对照新的反馈重新 diagnose，不要在别处随手改。
@@ -177,6 +203,10 @@ class SheetFixer:
         self.diagnosis: dict[str, Any] | None = None  # the plan edits must follow
         self.diagnoses: list[dict[str, Any]] = []  # every diagnosis, for the review page
         self.afsim_runs = 0  # AFSIM re-runs started by this loop
+        self.looks = 0  # reads in a row (any read tool) since the last diagnosis / edit
+        self.edited_since_diagnosis = False
+        self.classified: list[dict[str, Any]] = []
+        self.finish_refusals = 0
 
     # ------------------------------------------------------------------ scoring
     @staticmethod
@@ -216,12 +246,12 @@ class SheetFixer:
                 lines.append(f"L3 {s['id']}：{'通过' if s['passed'] else '未通过'}")
                 if not s["passed"]:
                     keep = 24 if s.get("afsim") else 6
-                    lines += ["    " + x for x in s["render"].splitlines()[1:keep]]
-                    lines += ["    " + x for x in _skipped(s, self._conditions())]
+                    # the AFSIM feedback's own triage is shown once, below, with the 2D one
+                    render = s["render"].split("  定位与改法", 1)[0]
+                    lines += ["    " + x for x in render.splitlines()[1:keep]]
                     spec = self.last.compiled.spec if getattr(self.last, "compiled", None) else None
                     lines += ["    " + x for x in _never_entered(s, spec or {})]
-            for key, line in self.d._stuck(check)[:4]:
-                lines.append(f"提示（{key}）：{line[2:]}")
+            lines += self._triage_lines(check)
             if not check.l2 and not check.l3 and not self.l1_only:
                 lines.append("还没有可运行的测试或想定（verification 块）")
         if self.solved and self.l1_only:
@@ -229,6 +259,88 @@ class SheetFixer:
         elif self.solved:
             lines.append("全部检查通过，可以 finish。")
         return "\n".join(lines)
+
+    # ------------------------------------------------------------------ triage
+    def findings(self, check: Any | None = None) -> list[triage.Finding]:
+        """Rule findings for the failed checks: the 2D scenarios', and the AFSIM run's while
+        its check is failed."""
+        check = check or self.last
+        out = triage.from_check(check)
+        if any(s.get("afsim") and not s["passed"] for s in check.l3):
+            note = getattr(self.d, "afsim_note", None)
+            out += list(getattr(note, "findings", None) or [])
+        return out
+
+    def _triage_lines(self, check: Any) -> list[str]:
+        found = self.findings(check)
+        done = {c["check"] for c in self.classified}
+        found = [f for f in found if not (f.check in done and not f.sheet)]
+        return triage.render(found)
+
+    def _explained(self, check_id: str, found: list[triage.Finding]) -> bool:
+        """A failed check that is not the sheet's to fix: every finding on it says so (or
+        none does and the loop classified it)."""
+        mine = [f for f in found if f.check == check_id]
+        if any(f.sheet for f in mine):
+            return False
+        return bool(mine) or any(c["check"] == check_id for c in self.classified)
+
+    def outside_left(self) -> bool:
+        """L1 passes and every failed L2/L3/AFSIM check is someone else's to fix."""
+        check = self.last
+        if not check.l1_ok or any(not t["passed"] for t in check.l2):
+            return False
+        failed = [str(s["id"]) for s in check.l3 if not s["passed"]]
+        if not failed:
+            return False
+        found = self.findings(check)
+        return all(self._explained(cid, found) for cid in failed)
+
+    def classify(self, args: dict[str, Any]) -> str:
+        cid = str(args.get("check") or "").strip()
+        category = str(args.get("category") or "").strip()
+        reason = str(args.get("reason") or "").strip()
+        failed = [str(s["id"]) for s in self.last.l3 if not s["passed"]]
+        if not cid or cid not in failed:
+            return f"check 写失败项的 ID；当前未通过的：{failed or '无'}"
+        if category not in OUTSIDE:
+            return f"category 只能是 {', '.join(OUTSIDE)}；稿件自己的问题请 diagnose 后 edit"
+        if not reason:
+            return "写出 reason：为什么这不是战术稿的问题"
+        mine = [f for f in self.findings() if f.check == cid and f.sheet]
+        if mine:
+            self.refused += 1
+            return "不接受：规则判定这一项是稿件的问题，要修改稿件：\n" + "\n".join(
+                "  " + f.render() for f in mine[:3]
+            )
+        self.classified.append(
+            {"step": self.step, "check": cid, "category": category, "reason": reason[:300]}
+        )
+        self.looks = 0
+        left = [c for c in failed if not self._explained(c, self.findings())]
+        return f"已记录：{cid} 归为 {triage.CATEGORY_TEXT[category]}。" + (
+            f"还要处理的失败项：{left}" if left else "其余失败项都不是稿件的问题，可以 finish。"
+        )
+
+    def read_refused(self, action: str) -> str | None:
+        """Reads stop once there is enough to act on (L2/L3/AFSIM stage)."""
+        if not self.needs_diagnosis:
+            return None
+        if self.diagnosis is not None and not self.edited_since_diagnosis:
+            if self.looks >= LOOKS_AFTER_DIAGNOSIS:
+                self.refused += 1
+                return (
+                    f"{action} 被拒绝：诊断之后已经查看 {self.looks} 次。按诊断的改法 edit"
+                    f"（块：{', '.join(self.diagnosis['where'])}）；改法不对就重新 diagnose；"
+                    "不是稿件的问题就 classify"
+                )
+        elif self.looks >= LOOKS:
+            self.refused += 1
+            return (
+                f"{action} 被拒绝：已经连续查看 {self.looks} 次。照检查结果里的"
+                '"定位与改法"写 diagnose（标为稿件的问题）或 classify（其余问题）'
+            )
+        return None
 
     def _conditions(self) -> dict[str, str]:
         """Condition id → its expression, compact (for diagnostics)."""
@@ -488,7 +600,12 @@ class SheetFixer:
             "plan": plan[:600],
         }
         self.diagnoses.append(dict(self.diagnosis))
-        return f"诊断已记录（可改的块：{', '.join(where)}）。下一步按计划 edit。"
+        self.looks = 0
+        self.edited_since_diagnosis = False
+        return (
+            f"诊断已记录（可改的块：{', '.join(where)}）。下一步按计划 edit"
+            f"（之后最多再查看 {LOOKS_AFTER_DIAGNOSIS} 次）。"
+        )
 
     def _allowed(self, key: str) -> bool:
         """A block the current diagnosis allows editing. A trigger renamed in a state
@@ -614,13 +731,19 @@ class SheetFixer:
             self.d.blocks = before_blocks
             self.last = before_check
             self.refused += 1
-            return f"修改被拒绝：会让 L1 不通过：\n{problems}"
+            self.looks = 0
+            return (
+                f"修改被拒绝：会让 L1 不通过：\n{problems}\n诊断仍然有效：照上面的报错改写 new 再"
+                "提交（位置和路线用 point=/route= 引用想定接口，不写坐标、不改参数名）"
+            )
         for key, text in texts.items():
             old_text = next((b.text for b in before_blocks if b.key == key), "")
             if text != old_text:
                 self.edits.append(
                     EditRecord(self.step, key, old_text, text, reason, before_score, after)
                 )
+        self.looks = 0
+        self.edited_since_diagnosis = True
         trend = "变好" if after < before_score else ("变差" if after > before_score else "不变")
         return f"已修改（得分 {before_score} → {after}，{trend}）\n" + self.summary(check)
 
@@ -820,6 +943,10 @@ async def fix_sheet(
     for step in range(1, max_steps + 1):
         if fixer.solved:
             break
+        if fixer.outside_left():
+            # nothing left the sheet can fix (rule triage): no step is spent on it
+            drafter.notes.append("纠错循环：剩下的失败项按规则判定都不是战术稿的问题，未修改")
+            break
         fixer.step = step
         started = time.perf_counter()
         try:
@@ -841,13 +968,30 @@ async def fix_sheet(
             continue
         a = action.args
         reason = str(a.get("reason") or action.thought)[:300]
-        if action.action in ("edit", "revert", "diagnose"):
+        if action.action in ("edit", "revert", "diagnose", "classify"):
             fixer.reads = 0
         finish_refused = False
-        if action.action == "finish":
+        refused_read = fixer.read_refused(action.action) if action.action in READS else None
+        if refused_read is not None:
+            result = refused_read
+        elif action.action == "finish":
             outcome.summary = str(a.get("summary") or action.thought)[:500]
             result = fixer.check()
-            if fixer.afsim_pending and getattr(drafter, "afsim_budget", 0) > 0:
+            if fixer.outside_left():
+                result += "\n（剩下的失败项都不是战术稿的问题，结束）"
+            elif (
+                fixer.diagnosis is not None
+                and not fixer.edited_since_diagnosis
+                and not fixer.solved
+                and fixer.finish_refusals < 2
+            ):
+                fixer.finish_refusals += 1
+                finish_refused = True
+                result = (
+                    "不接受 finish：写了诊断但还没有按它修改。按诊断 edit；改法不对就重新 "
+                    "diagnose；确认不是稿件的问题就 classify。\n" + result
+                )
+            elif fixer.afsim_pending and getattr(drafter, "afsim_budget", 0) > 0:
                 if fixer._only_afsim_left():
                     result = await fixer.run_afsim(auto=True)
                     if not fixer.solved:
@@ -863,6 +1007,8 @@ async def fix_sheet(
                 finish_refused = not fixer.solved
         elif action.action == "diagnose":
             result = fixer.diagnose(a)
+        elif action.action == "classify":
+            result = fixer.classify(a)
         elif action.action == "run_afsim":
             result = await fixer.run_afsim()
         elif action.action == "ask_human":
@@ -891,16 +1037,18 @@ async def fix_sheet(
                 result += "\n" + await fixer.run_afsim(auto=True)
         else:
             result = fixer.revert(str(a.get("block", "")), reason)
-        if action.action == "show":
+        if action.action in READS and refused_read is None:
+            fixer.looks += 1
+        if action.action == "show" and refused_read is None:
             same = [r["step"] for r in records if r["action"] == "show" and r["args"] == a]
             if same:
                 result += f"\n（与第 {same[-1]} 步看过的内容相同，战术稿没有变化）"
         idle = 0
         for r in reversed(records):
-            if r["action"] in ("edit", "revert", "diagnose", "run_afsim"):
+            if r["action"] in ("edit", "revert", "diagnose", "run_afsim", "classify"):
                 break
             idle += 1
-        quiet = ("edit", "revert", "finish", "ask_human", "diagnose", "run_afsim")
+        quiet = ("edit", "revert", "finish", "ask_human", "diagnose", "run_afsim", "classify")
         if action.action not in quiet and idle >= 3:
             nxt = (
                 "先 diagnose 写出诊断，再 edit"
@@ -930,9 +1078,9 @@ async def fix_sheet(
             best_step = step
         # progress also counts an applied edit or an AFSIM re-run (an edit that leaves the
         # 2D score unchanged may still fix what AFSIM showed)
-        if action.action in ("edit", "revert", "run_afsim") and not str(result).startswith(
-            "修改被拒绝"
-        ):
+        if action.action in ("edit", "revert", "run_afsim", "classify") and not str(
+            result
+        ).startswith(("修改被拒绝", "不接受", "check 写", "category", "写出")):
             fixer.best_step = step
             best_step = step
         # looking things up (show / lookup / explain) is how a diagnosis is reached: it
@@ -948,6 +1096,9 @@ async def fix_sheet(
             break
         if action.action == "finish" and finish_refused:
             continue
+        if fixer.outside_left() and action.action != "finish":
+            records[-1]["result"] += "\n（剩下的失败项都不是战术稿的问题，结束）"
+            break
         if action.action in ("finish", "ask_human"):
             if action.action == "finish" and not fixer.solved:
                 records[-1]["result"] += "\n（检查尚未全部通过；按最好的版本结束）"
@@ -958,13 +1109,17 @@ async def fix_sheet(
         f"得分 {outcome.score_start} → {fixer.score(fixer.last)}"
         + (
             f"；诊断 {len(fixer.diagnoses)} 次，AFSIM 复验 {fixer.afsim_runs} 次"
-            if fixer.diagnoses or fixer.afsim_runs
+            + (f"，记录非稿件问题 {len(fixer.classified)} 项" if fixer.classified else "")
+            if fixer.diagnoses or fixer.afsim_runs or fixer.classified
             else ""
         )
     )
     outcome.solved = fixer.solved
     outcome.diagnoses = list(fixer.diagnoses)
     outcome.afsim_runs = fixer.afsim_runs
+    outcome.classified = list(fixer.classified)
+    outcome.findings = [f.to_dict() for f in fixer.findings()]
+    outcome.diagnosed_unfixed = bool(fixer.diagnoses) and not fixer.edits
     outcome.steps = len(records)
     outcome.edits = fixer.edits
     outcome.log = records
@@ -984,6 +1139,18 @@ def render_fix(outcome: FixOutcome) -> list[str]:
         lines.append(f"需要人决定：{outcome.question}")
     if outcome.afsim_runs:
         lines.append(f"循环内 AFSIM 复验 {outcome.afsim_runs} 次。")
+    if outcome.diagnosed_unfixed:
+        lines.append("写了诊断但没有一处修改被采用。")
+    for c in outcome.classified:
+        lines.append(
+            f"- 第 {c['step']} 步记录 {c['check']} 不是稿件问题"
+            f"（{triage.CATEGORY_TEXT.get(c['category'], c['category'])}）：{c['reason']}"
+        )
+    left = [f for f in outcome.findings if f.get("text")]
+    if left:
+        lines.append("")
+        lines.append("结束时的规则判定：")
+        lines += ["- " + f["text"] for f in left[:8]]
     for dg in outcome.diagnoses:
         lines.append("")
         lines.append(

@@ -51,6 +51,8 @@ class AfsimRound:
     package: Path | None = None
     # obligation id → passed, for the obligations this run judged (coverage of the clauses)
     judged: dict[str, bool] = field(default_factory=dict)
+    # triage of the failure (falcon.v3.triage): category, symptom, cause, change
+    findings: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -58,6 +60,7 @@ class AfsimNote:
     sheet_hash: str  # the sheet the last AFSIM run judged
     feedback: str
     passed: bool = False
+    findings: list[Any] = field(default_factory=list)  # triage.Finding of this run
 
 
 @dataclass
@@ -103,6 +106,7 @@ def feedback(
     # action id → the contract's failure meaning: its text, or {"failure": text, "codes":
     # {code: text}} when the capability set explains single failure codes
     failure_meanings: dict[str, Any] | None = None,
+    findings: list[Any] | None = None,  # triage.Finding: whose fault, cause, change
 ) -> str:
     """What a failed AFSIM round tells the repair loop (sanitized, see the module doc)."""
     if compile_error is not None:
@@ -176,6 +180,10 @@ def feedback(
             lines.append(line)
         if not issues and (not res.completed or res.errors):
             lines.append("  问题：AFSIM 没有完成仿真（细节只在本地记录）")
+    if findings:
+        from afsim_research_agent.falcon.v3.triage import render
+
+        lines += ["  " + x for x in render(list(findings))]
     return "\n".join(lines)
 
 
