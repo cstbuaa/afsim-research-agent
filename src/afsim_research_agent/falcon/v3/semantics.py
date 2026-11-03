@@ -20,7 +20,17 @@ action uses. These checks look at the compiled spec (no model call):
 * ``ENTRY_TRUE``    a transition condition already holds when its state is entered, before
   the state's own actions have run (the fields they write still hold their initial values):
   the state is left at once and its work never happens (e.g. "arrived" written as
-  ``range_to_target_m <= 5`` on a field that starts at 0).
+  ``range_to_target_m <= 5`` on a field that starts at 0);
+* ``FIRE_BY_TIME``  a transition into a state that fires weapons can be taken by time alone
+  (a timer event, or a condition that holds with every field still at its initial value
+  once enough time has passed): the vehicle fires without a command or a target condition;
+* ``NEXT_STATE_FIELD`` a transition condition reads a field that, in its role, only the
+  target state's actions write: it cannot change before the transition, so the transition
+  is decided by the rest of the condition (often a timer — e.g. entering a firing state
+  30 s after tracking began, where the tactic meant "on a fire command").
+
+``completion_items`` lists the transitions ``autofix`` repairs mechanically: ENTRY_TRUE,
+and conditions that read a field nothing (or nothing in the role) writes.
 """
 
 from __future__ import annotations
@@ -252,6 +262,9 @@ class _Unknown(Exception):
     pass
 
 
+_TIME = [False]  # value of time functions in _eval (False: 0 s into the state)
+
+
 def _eval(expr: Any, values: dict[str, Any], conds: dict[str, Any], params: dict[str, Any]) -> Any:
     """Value of an IR expression on the given field values (time functions are 0 s into the
     state, i.e. false); _Unknown when it cannot be decided."""
@@ -291,7 +304,7 @@ def _eval(expr: Any, values: dict[str, Any], conds: dict[str, Any], params: dict
     if key == "function_call":
         name = str((value or {}).get("name", ""))
         if name.startswith(("time_in_state", "elapsed_since")):
-            return False
+            return _TIME[0]
         raise _Unknown
     if key == "compare":
         left = _eval(value.get("left"), values, conds, params)
@@ -332,6 +345,16 @@ def _initial(contracts: Any, path: str) -> Any:
 
 
 ENTRY_ITEMS: list[tuple[str, str, str, str]] = []
+FIRE = re.compile(r"(^|\.)fire_")
+FIRE_ITEMS: list[tuple[str, str, str, str]] = []
+
+
+def fire_by_time(
+    spec: dict[str, Any], contracts: Any, tactics: dict[str, Any]
+) -> list[tuple[str, str, str, str]]:
+    """FIRE_BY_TIME transitions as (role, from, to, condition id)."""
+    role_problems(spec, contracts, tactics)
+    return list(FIRE_ITEMS)
 
 
 def entry_true(
@@ -343,9 +366,66 @@ def entry_true(
     return list(ENTRY_ITEMS)
 
 
+def _persistent(item: str, contracts: Any, tactics: dict[str, Any]) -> bool:
+    a = contracts.actions.get(item)
+    if a is not None and (
+        getattr(a, "persistent", None) or (getattr(a, "success", None) or {}).get("persistent")
+    ):
+        return True
+    t = tactics.get(item)
+    return bool(t is not None and (getattr(t, "raw", None) or {}).get("persistent"))
+
+
+def finite_state(
+    spec: dict[str, Any], role: str, state: str, contracts: Any, tactics: dict[str, Any]
+) -> bool:
+    """The state's tree ends by itself (nothing in it runs for ever: no holding, tracking,
+    …), so a tree event fires when its work is done."""
+    items = element_actions(spec, f"{role}.{state}", tactics)
+    return bool(items) and not any(_persistent(i, contracts, tactics) for i in items)
+
+
+def completion_items(
+    spec: dict[str, Any], contracts: Any, tactics: dict[str, Any]
+) -> list[tuple[str, str, str, str, bool]]:
+    """Transitions whose condition cannot work as written, as (role, from, to, condition id,
+    the source state's tree ends by itself): ENTRY_TRUE, or the condition reads a field no
+    action writes, or none of the role's actions writes."""
+    entry = set(entry_true(spec, contracts, tactics))
+    conds = {c["id"]: c.get("expression") for c in spec.get("conditions") or [] if "id" in c}
+    writers = _writers(contracts)
+    board = getattr(contracts, "blackboard", {})
+    out: list[tuple[str, str, str, str, bool]] = []
+    for role, mission in (spec.get("missions") or {}).items():
+        if not isinstance(mission, dict) or not mission.get("states"):
+            continue
+        runs: set[str] = set()
+        for s in mission["states"]:
+            runs |= element_actions(spec, f"{role}.{s}", tactics) or set()
+        for t in mission.get("transitions") or []:
+            cid, src, dst = t.get("on"), str(t.get("from")), str(t.get("to"))
+            if cid not in conds:
+                continue
+            stuck = False
+            for f in _fields(conds[cid], conds):
+                bf = board.get(f)
+                if bf is not None and getattr(bf, "unwritten", False):
+                    stuck = True
+                elif (
+                    writers.get(f)
+                    and not (writers[f] & runs)
+                    and getattr(bf, "updated", None) not in ("constant", "state_entry", "always")
+                ):
+                    stuck = True
+            if stuck or (role, src, dst, cid) in entry:
+                out.append((role, src, dst, cid, finite_state(spec, role, src, contracts, tactics)))
+    return out
+
+
 def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any]) -> list[Problem]:
-    """ROLE_FIELD and ENTRY_TRUE (see the module doc)."""
+    """ROLE_FIELD, ENTRY_TRUE and NEXT_STATE_FIELD (see the module doc)."""
     ENTRY_ITEMS.clear()
+    FIRE_ITEMS.clear()
     out: list[Problem] = []
     conds = {c["id"]: c.get("expression") for c in spec.get("conditions") or [] if "id" in c}
     params = dict(spec.get("parameters") or {})
@@ -383,6 +463,52 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
                             "ROLE_FIELD",
                         )
                     )
+            # FIRE_BY_TIME: entering a firing state needs more than time
+            if any(FIRE.search(a) for a in states.get(str(t.get("to"))) or ()):
+                values = {f: _initial(contracts, f) for f in fields}
+                _TIME[0] = True
+                try:
+                    by_time = bool(_eval(expr, values, conds, params))
+                except _Unknown:
+                    by_time = False
+                finally:
+                    _TIME[0] = False
+                if by_time:
+                    FIRE_ITEMS.append((role, str(t.get("from")), str(t.get("to")), cid))
+                    out.append(
+                        (
+                            f"conditions.{cid}",
+                            f"FIRE_BY_TIME 进入开火状态 {t.get('to')} 的条件 {cid} 只靠计时就会成立"
+                            "（其余字段都还是初值时也成立），车辆会不经命令、不看目标就开火。"
+                            "开火要由外部命令事件（model 的 events 中声明 `名字: {source: external}`）"
+                            "或目标条件触发；需求禁止主动开火时只能用外部命令事件",
+                            "FIRE_BY_TIME",
+                        )
+                    )
+            # NEXT_STATE_FIELD: in this role, only the target state's actions write the field
+            target = states.get(str(t.get("to"))) or set()
+            here = states.get(str(t.get("from"))) or set()
+            others = set().union(
+                *(v for k, v in states.items() if k not in (t.get("to"), t.get("from")))
+            )
+            for f in sorted(fields):
+                w = writers.get(f) or set()
+                bf = static.get(f)
+                if getattr(bf, "updated", None) in ("constant", "state_entry", "always"):
+                    continue
+                if w & target and not (w & here) and not (w & others):
+                    out.append(
+                        (
+                            f"conditions.{cid}",
+                            f"NEXT_STATE_FIELD 状态 {t.get('from')} → {t.get('to')} 的条件 {cid} 读取 "
+                            f"{f}，在角色 {role} 中只有目标状态 {t.get('to')} 的动作写入它，转换前它不会"
+                            "变化，转换实际由条件的其余部分（如计时）决定。上级的命令（开火命令、新指令）"
+                            "在 model 的 events 中声明外部事件 `名字: {source: external}` 并用它触发；"
+                            "需求禁止主动开火时，不得用计时进入开火状态",
+                            "NEXT_STATE_FIELD",
+                        )
+                    )
+                    break
             # ENTRY_TRUE: every field read is written by the state's own actions (still at
             # its initial value) or is the vehicle's own motion (at rest on entry)
             source = states.get(str(t.get("from")))

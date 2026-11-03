@@ -546,31 +546,55 @@ class Drafter:
             self.clauses += tactic_clauses(self.tactic, skip=skip)
 
     def autofix(self, check: Check) -> Check:
-        """Mechanical repairs (``autofix``) kept only when the sheet checks better."""
+        """Mechanical repairs (``autofix``), each kept only when the sheet checks no worse:
+        invented hold coordinates dropped; firing taken by time alone put on an external
+        fire order; broken "arrived / done" conditions of a state whose tree ends by itself
+        made tree events; other ENTRY_TRUE triggers wait until the state's actions have run."""
         from afsim_research_agent.falcon.v3 import autofix, semantics
 
-        spec = check.compiled.spec
-        if spec is None:
+        def fixes(spec: dict[str, Any]) -> list[Any]:
+            items = semantics.completion_items(spec, self.c, self.c.tactics)
+            done = [i[:4] for i in items if i[4]]
+            entry = set(semantics.entry_true(spec, self.c, self.c.tactics))
+            guard = [i[:4] for i in items if not i[4] and i[:4] in entry]
+            fire = semantics.fire_by_time(spec, self.c, self.c.tactics)
+            out: list[Any] = [autofix.held_here]
+            order = next(
+                (
+                    (k, v)
+                    for k, v in self.r.scenario_events.items()
+                    if "fire" in k or "开火" in str(v) or "射击" in str(v)
+                ),
+                None,
+            )
+            if fire and order:
+                out.append(lambda bl: autofix.fire_orders(bl, fire, *order))
+            if done:
+                out.append(lambda bl: autofix.completion_events(bl, done))
+            if guard:
+                out.append(lambda bl: autofix.entry_guards(bl, guard))
+            return out
+
+        if check.compiled.spec is None:
             return check
-        items = semantics.entry_true(spec, self.c, self.c.tactics)
-        if not items:
-            return check
-        before = self.blocks
-        self.blocks, notes = autofix.entry_guards(self.blocks, items)
-        if not notes:
-            self.blocks = before
-            return check
-        after = self.check()
-        if (
-            after.compiled.spec is None
-            or len(after.problems) > len(check.problems)
-            or (check.l1_ok and not after.l1_ok)
-        ):
-            self.blocks = before
-            self.notes.append("ENTRY_TRUE 自动修正后检查变差，已撤回：" + "；".join(notes))
-            return check
-        self.notes += notes
-        return after
+        for fix in fixes(check.compiled.spec):
+            before = self.blocks
+            self.blocks, notes = fix(self.blocks)
+            if not notes:
+                self.blocks = before
+                continue
+            after = self.check()
+            if (
+                after.compiled.spec is None
+                or len(after.problems) > len(check.problems)
+                or (check.l1_ok and not after.l1_ok)
+            ):
+                self.blocks = before
+                self.notes.append("自动修正后检查变差，已撤回：" + "；".join(notes))
+                continue
+            self.notes += notes
+            check = after
+        return check
 
     def adopt_map(self, simplified: Any) -> dict[str, str]:
         """Clause → actions from the executable version (see ``simplify``): nothing in it
@@ -1197,6 +1221,28 @@ def compile_package(sheet_path: Path, request_path: Path, out: Path) -> V3Result
     return V3Result(out, status, check, [])
 
 
+COMMANDS = (
+    # (pattern in the requirement, event id, description)
+    (
+        r"(开火|射击|攻击)(命令|指令)|未经(命令|批准|许可)[^。；，,]{0,6}(开火|射击)",
+        "fire_order",
+        "上级下达开火命令",
+    ),
+    (r"展开(命令|指令)|(命令|指令)[^。；，,]{0,6}展开", "deploy_order", "上级下达展开命令"),
+    (
+        r"撤(离|退)(命令|指令)|(命令|指令)[^。；，,]{0,6}撤(离|退)",
+        "withdraw_order",
+        "上级下达撤离命令",
+    ),
+)
+
+
+def command_events(requirement: str) -> dict[str, str]:
+    """External events for the orders a requirement says the vehicles wait for (a fire
+    order, a deploy order, …)."""
+    return {eid: text for pattern, eid, text in COMMANDS if re.search(pattern, requirement or "")}
+
+
 class _NoModel:
     name = "none"
 
@@ -1339,6 +1385,19 @@ async def run_draft3(
                 bridge_notes.append(f"化简为可执行版失败，按完整战术起草：{exc}")
         request, tactic, notes = apply_selection(request, request_path, contracts, loaded)
         bridge_notes = notes + (simplified.notes if simplified else []) + bridge_notes
+    commands = {
+        k: v
+        for k, v in command_events(request.requirement).items()
+        if k not in request.scenario_events
+    }
+    if commands:
+        # orders the requirement says the vehicles wait for: external events of the run
+        request = request.model_copy(
+            update={"scenario_events": {**request.scenario_events, **commands}}
+        )
+        bridge_notes.append(
+            "需求中的命令作为外部事件：" + "；".join(f"{k}（{v}）" for k, v in commands.items())
+        )
     target = _target(request, request_path, out_dir)
     staging = target.with_name(target.name + ".partial")
     if staging.exists():

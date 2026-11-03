@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-PROMPT_VERSION = "falcon-v3-2026.11.03b"
+PROMPT_VERSION = "falcon-v3-2026.11.03c"
 
 RULES = """你在为作战仿真编写战术行为模型。模型分七层，你只写上三层：任务状态机、状态树、子树；
 动作、黑板、仲裁、能力层由程序从能力集引用、推导和校验。你写的是"战术稿"：若干带标签的 Markdown 代码块。
@@ -103,8 +103,15 @@ CONTROL_GUIDE = """```python conditions``` 块：每行 `条件名 = 表达式`�
   以"结果"为准（例如保持距离步骤每拍成功只表示指令已下达，不表示已进入距离带）；
 - "某阶段的工作做完了"（如集结完成、收尾完成）：有字段表达到位程度就读字段；否则用树事件——在 model 的
   events 中声明 `名字: {source: tree, result: success}`，状态图里用它作转换（本状态的树成功时触发）。
-  树事件只在整棵树结束时触发：树里有一直运行的分支（沿路线走完、repeat(until_done=True)、保持、跟踪）时，
+  树事件只在整棵树结束时触发：沿路线行驶（follow_route）、移动到点、停车这类动作会自行完成，
+  "走完路线/到达位置/停稳"就用树事件，不要写 range_to_target_m 与 arrival_tolerance_m 的比较；
+  树里有一直运行的分支（保持位置、跟踪、repeat(until_done=True)）时树不会结束，
   "发现目标""目标丢失"这类时刻要用字段条件（如 perception.selected_target.valid），不要用树事件；
+- 停在原地：movement.stop，然后 movement.hold_position 不给经纬度（保持当前位置）；不要自编经纬度，
+  坐标只能来自想定；
+- 上级的命令（开火命令、新指令、展开命令）在 model 的 events 中声明外部事件 `名字: {source: external}`，
+  用它触发相应状态；不要用计时、毁伤或其他状态才写入的字段代替命令。需求禁止主动开火时，
+  进入开火状态只能由外部命令事件触发；
 - 转换条件读的是"进入本状态时已经成立"还是"本状态新产生的变化"要分清：开火计数大于 0、毁伤时刻有效、
   分配数大于 0 这类字段在上一轮之后仍然成立，状态会一进入就转出、一拍内连跳；要等本轮的结果，用树事件
   （本状态的工作完成）、计时，或与进入时的值比较的字段；
