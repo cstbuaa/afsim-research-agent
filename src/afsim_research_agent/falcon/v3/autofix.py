@@ -257,18 +257,30 @@ def scenario_refs(blocks: list[Block], iface: Any) -> tuple[list[Block], list[st
         if b.kind != "pytree":
             continue
         text = b.text
+        done: list[str] = []
         if len(routes) == 1:
 
             def route(m: re.Match[str]) -> str:
                 value = m.group(1)
                 if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
                     dropped.add(value)
+                done.append(f"路线改用接口路线 {routes[0]}")
                 return f"route={routes[0]}"
 
             text = _ROUTE_ARG.sub(route, text)
 
         def move(m: re.Match[str]) -> str:
             args = [a.strip() for a in m.group(1).split(",") if a.strip()]
+            target = next(
+                (a.split("=", 1)[1].strip() for a in args if re.match(r"point\s*=", a)), None
+            )
+            if target is not None:
+                p = iface.points.get(target)
+                # "go to where you already are": the vehicle is at its start, it stops there
+                if p is not None and p.anchor == "own_start":
+                    done.append(f"移动到出发位置 {target} 改为停车（车辆已在那里）")
+                    return "movement.stop()"
+                return m.group(0)
             coords = [a for a in args if re.match(r"(latitude_deg|longitude_deg)\s*=", a)]
             if not coords:
                 return m.group(0)
@@ -278,20 +290,17 @@ def scenario_refs(blocks: list[Block], iface: Any) -> tuple[list[Block], list[st
                     dropped.add(value)
             rest = [a for a in args if a not in coords]
             if len(points) == 1:
+                done.append(f"坐标改用接口位置 {points[0]}")
                 return "movement.move_to_point(" + ", ".join([f"point={points[0]}", *rest]) + ")"
             if not points:
+                done.append("已在阵位：自编坐标的移动改为停车")
                 return "movement.stop()"  # already at the post: stay
             return m.group(0)
 
         text = _MOVE.sub(move, text)
         if text != b.text:
             b.text = text
-            notes.append(
-                f"自动修正：{b.role} 中写成具体值的路线 / 位置改用想定接口名"
-                + (f"（路线 {routes[0]}）" if len(routes) == 1 else "")
-                + (f"（位置 {points[0]}）" if len(points) == 1 else "")
-                + ("（已在阵位：移动改为停车）" if not points else "")
-            )
+            notes.append(f"自动修正（想定接口）：{b.role} " + "；".join(dict.fromkeys(done)))
     if notes:
         _drop_unused(out, dropped, notes)
     return out, notes

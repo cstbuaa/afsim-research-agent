@@ -224,3 +224,9 @@ def test_the_2d_simulation_records_positions_for_effect_checks(contracts: Contra
     ob = Obligation.model_validate({"id": "adv", "kind": "advances", "min_m": 150})
     (verdict,) = judge([ob], res.tracks, {"car_0": "car"}, res.activations, res.events)
     assert verdict.judged and verdict.passed, verdict.detail
+
+
+def test_moving_to_the_start_is_staying() -> None:
+    blocks = [Block("pytree", "car", "def GO():\n    movement.move_to_point(point=post)\n", 1)]
+    fixed, notes = autofix.scenario_refs(blocks, derive(R2))
+    assert "movement.stop()" in fixed[0].text and "出发位置" in notes[0]
