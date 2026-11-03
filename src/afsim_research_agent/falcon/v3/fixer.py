@@ -110,6 +110,8 @@ def _counts(blocks: list[Block]) -> dict[str, int]:
         data = yaml.safe_load(block.text) or {}
     except yaml.YAMLError:
         return {"tests": -1, "scenarios": -1, "expectations": -1}
+    if not isinstance(data, dict):  # an edit left the block as a list or a scalar
+        return {"tests": -1, "scenarios": -1, "expectations": -1}
     if isinstance(data.get("verification"), dict):
         data = data["verification"]
     tests = data.get("tests") or []
