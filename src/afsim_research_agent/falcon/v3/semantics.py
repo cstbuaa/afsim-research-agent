@@ -321,8 +321,21 @@ def _initial(contracts: Any, path: str) -> Any:
     return {"bool": False, "string": "", "any": None}.get(kind, 0.0)
 
 
+ENTRY_ITEMS: list[tuple[str, str, str, str]] = []
+
+
+def entry_true(
+    spec: dict[str, Any], contracts: Any, tactics: dict[str, Any]
+) -> list[tuple[str, str, str, str]]:
+    """ENTRY_TRUE transitions as (role, from, to, condition id)."""
+    ENTRY_ITEMS.clear()
+    role_problems(spec, contracts, tactics)
+    return list(ENTRY_ITEMS)
+
+
 def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any]) -> list[Problem]:
     """ROLE_FIELD and ENTRY_TRUE (see the module doc)."""
+    ENTRY_ITEMS.clear()
     out: list[Problem] = []
     conds = {c["id"]: c.get("expression") for c in spec.get("conditions") or [] if "id" in c}
     params = dict(spec.get("parameters") or {})
@@ -383,6 +396,7 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
                 except _Unknown:
                     continue
                 if holds:
+                    ENTRY_ITEMS.append((role, str(t.get("from")), str(t.get("to")), cid))
                     shown = "，".join(f"{k}={v}" for k, v in sorted(values.items()))
                     out.append(
                         (

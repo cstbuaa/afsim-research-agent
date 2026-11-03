@@ -545,6 +545,33 @@ class Drafter:
             )
             self.clauses += tactic_clauses(self.tactic, skip=skip)
 
+    def autofix(self, check: Check) -> Check:
+        """Mechanical repairs (``autofix``) kept only when the sheet checks better."""
+        from afsim_research_agent.falcon.v3 import autofix, semantics
+
+        spec = check.compiled.spec
+        if spec is None:
+            return check
+        items = semantics.entry_true(spec, self.c, self.c.tactics)
+        if not items:
+            return check
+        before = self.blocks
+        self.blocks, notes = autofix.entry_events(self.blocks, items)
+        if not notes:
+            self.blocks = before
+            return check
+        after = self.check()
+        if (
+            after.compiled.spec is None
+            or len(after.problems) > len(check.problems)
+            or (check.l1_ok and not after.l1_ok)
+        ):
+            self.blocks = before
+            self.notes.append("ENTRY_TRUE 自动修正后检查变差，已撤回：" + "；".join(notes))
+            return check
+        self.notes += notes
+        return after
+
     def adopt_map(self, simplified: Any) -> dict[str, str]:
         """Clause → actions from the executable version (see ``simplify``): nothing in it
         is missing, so nothing is blocked."""
@@ -555,7 +582,10 @@ class Drafter:
                 if not m:
                     continue
                 cid = f"{part.card.id}_{kinds[m.group(1)]}{int(m.group(2)) + 1}"
-                self.clause_map[cid] = {"actions": list(need.maps_to), "how": "", "missing": ""}
+                # steps must use what they were reduced to; exceptions and formations are
+                # guidance only (an exception often reuses the tree of another state)
+                acts = list(need.maps_to) if m.group(1) == "steps" else []
+                self.clause_map[cid] = {"actions": acts, "how": "", "missing": ""}
         for c in self.clauses:
             if c.get("origin") == "tactic":
                 self.clause_map.setdefault(c["id"], {"actions": [], "how": "", "missing": ""})
@@ -1187,13 +1217,13 @@ async def _draft(
     request = drafter.r
     if structure is None:
         structure = await drafter.structure_stage()
-    control = await drafter.control_stage(structure)
+    control = drafter.autofix(await drafter.control_stage(structure))
     budget = request.fix_steps
     fixes: list[Any] = []
     if not control.l1_ok and budget:
         fixes.append(await fix_sheet(drafter, run, max(1, budget // 2), l1_only=True))
         budget -= fixes[-1].steps
-        control = drafter.check()
+        control = drafter.autofix(drafter.check())
     check = await drafter.verification_stage(control) if control.l1_ok else control
     if not check.verified and budget > 0:
         fixes.append(await fix_sheet(drafter, run, budget))
