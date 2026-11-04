@@ -167,3 +167,12 @@ def test_an_approaching_enemy_gets_a_route_towards_the_own_start() -> None:
     assert red.count("position ") == 2 and red.endswith("end_platform") and "end_route" in red
     still = generate(_model(), KIT, _contracts())
     assert "route" not in [x for x in still.extra.splitlines() if "red_1" in x][0]
+
+
+def test_a_delayed_enemy_approach_pauses_at_its_start() -> None:
+    enemy = {**KIT["enemy"], "range_m": 7000.0, "approach_speed_mps": 5.0}
+    run = generate(_model(), {**KIT, "enemy": {**enemy, "approach_start_s": 800.0}}, _contracts())
+    red = [line for line in run.extra.splitlines() if line.startswith("platform red_1")][0]
+    assert "speed 5 m/s pause_time 800 sec position" in red
+    now = generate(_model(), {**KIT, "enemy": enemy}, _contracts())
+    assert "pause_time" not in now.extra

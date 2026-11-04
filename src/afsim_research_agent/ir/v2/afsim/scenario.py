@@ -352,10 +352,13 @@ def generate(
             north2 = stop * math.cos(ahead) + side_off * math.cos(across)
             east2 = stop * math.sin(ahead) + side_off * math.sin(across)
             lat2, lon2 = _pos(*_offset(lat0, lon0, north2, east2))
+            # approach_start_s: the enemy waits at its start until then (waypoint pause)
+            wait = max(0.0, float(enemy.get("approach_start_s", 0.0) or 0.0))
+            pause = f" pause_time {wait:g} sec" if wait > 0 else ""
             text = text.replace(
                 f"position {lat} {lon}",
                 f"heading {(heading + 180.0) % 360.0:g} deg route position {lat} {lon} speed "
-                f"{speed:g} m/s position {lat2} {lon2} speed {speed:g} m/s end_route",
+                f"{speed:g} m/s{pause} position {lat2} {lon2} speed {speed:g} m/s end_route",
             )
         enemies.append(text)
 

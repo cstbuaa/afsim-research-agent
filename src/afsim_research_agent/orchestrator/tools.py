@@ -155,6 +155,9 @@ class ScenarioSetArgs(PackageArgs):
         None, description="敌方向我方开进的速度，米/秒；0 为静止"
     )
     enemy_stop_range_m: float | None = Field(None, description="敌方开进到距我方多远停下，米")
+    enemy_approach_start_s: float | None = Field(
+        None, description="敌方何时开始开进，秒；此前原地不动（如等我方停下监视后再推进）"
+    )
     events: dict[str, float] = Field(
         default_factory=dict, description="模型事件的发出时间，秒；负数为结束前多少秒"
     )

@@ -224,6 +224,9 @@ class Binding(_Strict):
     # the distance from the origin where the approach ends (AFSIM route end)
     enemy_velocity: tuple[float, float] = (0.0, 0.0)
     enemy_stop_m: float | None = None
+    # when the approach starts and ends (s); before the start the enemy stands still
+    enemy_move_start_s: float = 0.0
+    enemy_move_stop_s: float | None = None
     defaults: list[str] = Field(default_factory=list)  # values initialised by default
 
     def route_named(self, name: str) -> BoundRoute | None:
@@ -344,6 +347,10 @@ def bind(
         # the enemy drives towards the own start, along the heading
         out.enemy_velocity = (round(-approach * math.sin(h), 3), round(-approach * math.cos(h), 3))
         out.enemy_stop_m = float(enemy.get("stop_range_m", 500.0))
+        out.enemy_move_start_s = max(0.0, float(enemy.get("approach_start_s", 0.0) or 0.0))
+        out.enemy_move_stop_s = round(
+            out.enemy_move_start_s + max(0.0, rng - out.enemy_stop_m) / approach, 3
+        )
     for i in range(n):
         off = (i - (n - 1) / 2) * gap
         out.enemies_plane.append(
@@ -584,7 +591,11 @@ def bind_scenario(raw: dict[str, Any], model: dict[str, Any], binding: Binding) 
         sc["hostiles"] = [
             {"id": f"e{i + 1}", "position_m": list(p)}
             | (
-                {"velocity_mps": list(binding.enemy_velocity)}
+                {
+                    "velocity_mps": list(binding.enemy_velocity),
+                    "move_start_s": binding.enemy_move_start_s,
+                    "move_stop_s": binding.enemy_move_stop_s,
+                }
                 if any(binding.enemy_velocity)
                 else {}
             )

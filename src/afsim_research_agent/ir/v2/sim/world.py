@@ -99,9 +99,18 @@ class Hostile:
     vy: float = 0.0
     appear_s: float = 0.0
     remove_s: float | None = None
+    # the velocity applies from move_start_s until move_stop_s (None: no end)
+    move_start_s: float = 0.0
+    move_stop_s: float | None = None
 
     def present(self, now: float) -> bool:
         return now >= self.appear_s and (self.remove_s is None or now < self.remove_s)
+
+    def moving(self, now: float) -> bool:
+        return now >= self.move_start_s and (self.move_stop_s is None or now < self.move_stop_s)
+
+    def speed_at(self, now: float) -> float:
+        return self.speed if self.moving(now) else 0.0
 
     @property
     def speed(self) -> float:
@@ -124,7 +133,7 @@ class World:
         for v in self.vehicles.values():
             v.step(dt)
         for h in self.hostiles:
-            if h.present(self.now):
+            if h.present(self.now) and h.moving(self.now):
                 h.x += h.vx * dt
                 h.y += h.vy * dt
         self.now += dt
@@ -150,7 +159,7 @@ class World:
                         "bearing_deg_true": bearing_deg(dx, dy),
                         "latitude_deg": lat,
                         "longitude_deg": lon,
-                        "speed_mps": h.speed,
+                        "speed_mps": h.speed_at(self.now),
                         "heading_deg_true": h.heading,
                     }
                 )

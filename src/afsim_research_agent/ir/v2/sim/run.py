@@ -55,6 +55,9 @@ class HostileSpec(_Strict):
     affiliation: Literal["ENEMY", "FRIENDLY", "UNKNOWN"] = "ENEMY"
     appear_s: float = 0.0
     remove_s: float | None = None
+    # the velocity applies from move_start_s until move_stop_s (None: no end)
+    move_start_s: float = 0.0
+    move_stop_s: float | None = None
 
 
 class Environment(_Strict):
@@ -263,6 +266,8 @@ def simulate(
                 vy=h.velocity_mps[1],
                 appear_s=h.appear_s,
                 remove_s=h.remove_s,
+                move_start_s=h.move_start_s,
+                move_stop_s=h.move_stop_s,
             )
         )
     host = SimHost(world, contracts)

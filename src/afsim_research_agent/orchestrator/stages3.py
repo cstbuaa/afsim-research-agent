@@ -43,6 +43,7 @@ LIMITS = {
     ("enemy", "spacing_m"): (0.0, 5_000.0),
     ("enemy", "approach_speed_mps"): (0.0, 40.0),
     ("enemy", "stop_range_m"): (0.0, 50_000.0),
+    ("enemy", "approach_start_s"): (0.0, 3600.0),
 }
 
 
@@ -139,6 +140,8 @@ def _describe(binding: Any, kit: dict[str, Any]) -> dict[str, Any]:
         "敌方起始距离_m": binding.enemy_range_m,
         "敌方开进速度_mps": speed,
         "敌方停止距离_m": binding.enemy_stop_m if speed > 0 else None,
+        "敌方开始开进_s": binding.enemy_move_start_s if speed > 0 else None,
+        "敌方停下_s": binding.enemy_move_stop_s if speed > 0 else None,
         "点": {k: list(v) for k, v in binding.points_plane.items()},
         "路线": {k: [list(p) for p in r.plane] for k, r in binding.routes.items()},
         "事件": dict(binding.events),
@@ -182,6 +185,7 @@ def scenario_set(
     enemy_spacing_m: float | None = None,
     enemy_approach_speed_mps: float | None = None,
     enemy_stop_range_m: float | None = None,
+    enemy_approach_start_s: float | None = None,
     events: dict[str, float] | None = None,
     points: dict[str, list[float]] | None = None,
     base: str | None = None,
@@ -197,6 +201,7 @@ def scenario_set(
         ("enemy", "spacing_m"): enemy_spacing_m,
         ("enemy", "approach_speed_mps"): enemy_approach_speed_mps,
         ("enemy", "stop_range_m"): enemy_stop_range_m,
+        ("enemy", "approach_start_s"): enemy_approach_start_s,
     }
     problems = []
     for (section, key), value in given.items():

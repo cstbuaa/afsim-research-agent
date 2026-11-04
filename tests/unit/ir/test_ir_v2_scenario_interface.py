@@ -260,6 +260,33 @@ def test_an_approaching_enemy_moves_in_the_2d_scenario() -> None:
     assert "velocity_mps" not in bind_scenario({"id": "s"}, model, bind(iface, {}))["hostiles"][0]
 
 
+def test_a_delayed_enemy_approach_waits_then_stops_short() -> None:
+    """approach_start_s: the enemy stands still until then, then drives in and stops at
+    stop_range_m (a tracking test: our formation holds, then the enemy advances)."""
+    from afsim_research_agent.ir.v2.scenario_interface import bind, bind_scenario, derive
+    from afsim_research_agent.ir.v2.sim.world import Hostile, World
+
+    iface = derive("单车前出约 1 km 建立观察哨")
+    kit = {
+        "enemy": {
+            "range_m": 9000.0,
+            "approach_speed_mps": 5.0,
+            "stop_range_m": 1000.0,
+            "approach_start_s": 800.0,
+            "count": 1,
+        }
+    }
+    b = bind(iface, kit)
+    assert (b.enemy_move_start_s, b.enemy_move_stop_s) == (800.0, 2400.0)
+    h = bind_scenario({"id": "s"}, {"roles": {"car": {"role": {"count": 1}}}}, b)["hostiles"][0]
+    assert (h["move_start_s"], h["move_stop_s"]) == (800.0, 2400.0)
+    w = World()
+    w.hostiles.append(Hostile("e1", 9000.0, 0.0, vx=-5.0, move_start_s=800.0, move_stop_s=2400.0))
+    for _ in range(3000):
+        w.step(1.0)
+    assert abs(w.hostiles[0].x - 1000.0) < 1e-6 and w.hostiles[0].speed_at(w.now) == 0.0
+
+
 def test_a_route_action_without_a_route_is_routed_by_who_wrote_it(contracts: Contracts) -> None:
     """Not written at all: a model error when the drafter wrote the action (repair), the
     kit's default when it sits in a tactic-set subtree (AFSIM decides) -- never a binding
