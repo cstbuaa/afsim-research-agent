@@ -39,6 +39,7 @@ export interface Replay {
   points: { id: string; x: number; y: number }[];
   sensors: Record<string, { range_m: number | null }>;
   verdicts: Verdict[];
+  note?: string; // e.g. built from the run console (recording too large)
 }
 
 export const OPEN_REPLAY_EVENT = "workbench:open-replay";

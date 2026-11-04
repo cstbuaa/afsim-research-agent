@@ -254,7 +254,8 @@ def test_state_machine_and_trees_use_native_structure(env) -> None:
     assert 'writeln("IR_ACT|", TIME_NOW, "|", PLATFORM.Name(), "|' in text
     assert '_act", false);' in searching
     run_text = next(iter(pkg.runs.values()))
-    assert "event_pipe\n   file output/$(CASE).aer\nend_event_pipe" in run_text
+    # no platform aux data in the recording: every change re-sends the whole set (r3, 11-04)
+    assert "event_pipe\n   file output/$(CASE).aer\n   disable AUX_DATA\nend_event_pipe" in run_text
     assert list(pkg.manifest["recordings"].values())[0].endswith(".aer")
     # tactic-set timeout: the child, or a guard that fails when the time is up
     assert "_timeout" in searching and '{ return Failure("timeout"); }' in text

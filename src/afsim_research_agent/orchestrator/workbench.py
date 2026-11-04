@@ -143,19 +143,28 @@ def build_replay(path: Path) -> dict[str, Any]:
             _CACHE.move_to_end(key)
             return _CACHE[key]
     if path.suffix == ".aer":
-        if path.stat().st_size > MAX_AER_BYTES:
-            raise ValueError("recording too large")
-        from afsim_research_agent.replay.build import from_aer
+        from afsim_research_agent.replay.build import from_aer, from_console
 
         console, labels, verdicts, states = _sidecars(path)
         sensor = os.environ.get("WORKBENCH_SENSOR_RANGE_M")
-        replay = from_aer(
-            path,
-            console=console,
-            labels=labels,
-            sensor_range_m=float(sensor) if sensor else None,
-            title=_title(path, "afsim"),
-        )
+        sensor_m = float(sensor) if sensor else None
+        if path.stat().st_size > MAX_AER_BYTES:
+            # too big to decode here (older runs recorded every aux-data change): the run
+            # console has the 1 Hz positions, states and actions the player needs
+            if not console:
+                raise ValueError("recording too large and no run console next to it")
+            replay = from_console(
+                console, labels=labels, sensor_range_m=sensor_m, title=_title(path, "afsim")
+            )
+            replay["note"] = "记录文件过大，回放取自运行控制台（每秒位置、状态、动作）"
+        else:
+            replay = from_aer(
+                path,
+                console=console,
+                labels=labels,
+                sensor_range_m=sensor_m,
+                title=_title(path, "afsim"),
+            )
         if not replay["states"] and states:
             replay["states"] = {
                 labels.get(k, k): [[float(t), s] for t, s in v] for k, v in states.items()

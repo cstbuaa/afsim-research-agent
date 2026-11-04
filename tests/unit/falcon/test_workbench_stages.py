@@ -83,3 +83,23 @@ def test_server_info_names_the_orchestrator_model(monkeypatch: pytest.MonkeyPatc
     info = workbench.server_info()
     assert info["orchestrator_model"] == "qwen-test-model"
     assert info["pid"] > 0 and info["started"] > 0
+
+
+def test_a_recording_too_big_to_decode_is_replayed_from_its_console(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    console = (
+        "IR_STATE|0|blue_leader_1|SEARCH\nIR_POS_ORIGIN|45|-121\n"
+        "IR_POS|0|blue_leader_1|blue|0|0|0|90\nIR_POS|1|blue_leader_1|blue|0|11.31|8|90\n"
+    )
+    out = tmp_path / "runs" / "afsim" / "run1" / "output"
+    out.mkdir(parents=True)
+    (out / "gen.aer").write_bytes(b"\x00\x00WSF_PIPE" + b"\x00" * 64)
+    (out / "run_gen_console.log").write_text(console, encoding="utf-8")
+    monkeypatch.setattr(workbench, "MAX_AER_BYTES", 10)
+    replay = workbench.build_replay(out / "gen.aer")
+    assert "控制台" in replay["note"] and replay["samples"]["blue_leader_1"]
+    (out / "run_gen_console.log").unlink()
+    (out / "gen2.aer").write_bytes(b"\x00\x00WSF_PIPE" + b"\x00" * 64)
+    with pytest.raises(ValueError, match="too large"):
+        workbench.build_replay(out / "gen2.aer")

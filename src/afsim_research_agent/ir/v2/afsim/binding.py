@@ -225,6 +225,10 @@ class RunConfig(_Strict):
     expect: RunExpect = Field(default_factory=RunExpect)
     # write an event-pipe recording (output/<run>.aer) that mystic replays
     record: bool = True
+    # include platform auxiliary data in it: every change re-sends a platform's whole aux
+    # data, so with the slices' bookkeeping the recording grows with the square of the run
+    # time (1.6 GB for 900 s, r3 11-04); states come from the console (IR_STATE) instead
+    record_aux: bool = False
     # write AFSIM's standard event log output/<run>.evt (unless the run configures its own)
     record_events: bool = True
     # sample every platform's position and speed this often (IR_POS lines; 0 turns it off)

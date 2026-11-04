@@ -6,7 +6,13 @@ import struct
 from types import SimpleNamespace
 
 from afsim_research_agent.replay.aer import Recording
-from afsim_research_agent.replay.build import FORMAT, from_aer, from_sim, labels_from_run
+from afsim_research_agent.replay.build import (
+    FORMAT,
+    from_aer,
+    from_console,
+    from_sim,
+    labels_from_run,
+)
 from afsim_research_agent.replay.geo import Local, geodetic_to_ecef
 
 SCHEMA = """Settings {
@@ -236,3 +242,35 @@ def test_replay_from_a_2d_result() -> None:
     assert r["routes"] == [{"id": "approach", "points": [[0.0, 0.0], [0.0, 350.0]]}]
     assert r["points"] == [{"id": "post", "x": 0.0, "y": 350.0}]
     assert r["verdicts"] == [{"id": "e1", "passed": True, "detail": "ok"}]
+
+
+CONSOLE = """IR_STATE|0|blue_leader_1|SEARCH
+IR_ACT|0|blue_leader_1|movement.follow_route
+IR_POS_ORIGIN|45|-121
+IR_POS|0.37|blue_leader_1|blue|0|0|1.1|90
+IR_POS|0.37|red_1|red|0|12727.9|0|0
+IR_POS|1.37|blue_leader_1|blue|0.5|11.31|8|90
+IR_POS|1.37|red_1|red|0|12727.9|0|0
+CAP_RADAR_TRACK 1 blue_leader_1 search_radar red_1
+IR_STATE|1|blue_leader_1|TRACK
+IR_FAIL|1|blue_leader_1|perception.maintain_selected_target|FAILURE:TARGET_LOST
+"""
+
+
+def test_replay_from_the_console_alone() -> None:
+    """Recordings too big to decode: the console's 1 Hz samples, states, actions and radar
+    track starts make the replay (east is recorded over cos(lat0))."""
+    r = from_console(CONSOLE, labels={"blue_leader_1": "leader #1"}, sensor_range_m=6000.0)
+    assert r["format"] == FORMAT and r["duration_s"] == 1.37
+    lead = r["samples"]["leader #1"]
+    assert lead[1][1] == 8.0 and lead[1][2] == 0.5 and lead[1][3] == 8.0
+    assert abs(r["samples"]["red_1"][0][1] - 9000.0) < 1.0
+    assert r["states"]["leader #1"] == [[0.0, "SEARCH"], [1.0, "TRACK"]]
+    assert r["actions"][1][2:] == [
+        "fail",
+        "perception.maintain_selected_target",
+        "FAILURE:TARGET_LOST",
+    ]
+    assert r["events"] == [[1.0, "detect", "leader #1", "red_1"]]
+    assert {p["id"]: p["side"] for p in r["platforms"]} == {"leader #1": "blue", "red_1": "red"}
+    assert r["sensors"] == {"leader #1": {"range_m": 6000.0}}

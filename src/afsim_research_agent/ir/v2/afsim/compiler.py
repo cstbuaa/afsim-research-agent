@@ -30,9 +30,10 @@ Conventions of the generated input (all names start with ``ir_`` / ``IR_``):
   check what the vehicles did (stopped, kept distance, moved in turn), not only what they
   called;
 - every run writes an event-pipe recording ``output/<run>.aer`` for replay in mystic
-  (``record = false`` in the run config turns it off) and, unless the run configures its own,
-  an event log ``output/<run>.evt`` with the standard platform and weapon events the judge
-  counts (``record_events = false`` turns it off);
+  (``record = false`` in the run config turns it off; platform auxiliary data only with
+  ``record_aux = true``, as every aux change re-sends the whole set) and, unless the run
+  configures its own, an event log ``output/<run>.evt`` with the standard platform and
+  weapon events the judge counts (``record_events = false`` turns it off);
 - the manifest maps each generated behavior node to its role, state and action and each
   state-machine processor to its role, so an AFSIM error can be placed in the model;
 - external events are auxiliary data ``ir_ev_<id>`` set by the run file and consumed by
@@ -1035,7 +1036,12 @@ class Compiler:
             lines += _sampler(run.sample_s)
         if run.record and "event_pipe" not in f"{run.preamble}\n{run.extra}":
             # recording for replay in mystic, next to the console and the event log
-            lines += ["event_pipe", "   file output/$(CASE).aer", "end_event_pipe"]
+            lines += [
+                "event_pipe",
+                "   file output/$(CASE).aer",
+                *([] if run.record_aux else ["   disable AUX_DATA"]),
+                "end_event_pipe",
+            ]
         if run.record_events and "event_output" not in f"{run.preamble}\n{run.extra}":
             # AFSIM's standard event log: the judge counts shots, hits and kills from it
             lines += [

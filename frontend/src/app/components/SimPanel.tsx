@@ -115,6 +115,11 @@ export function SimPanel({ onClose }: { onClose?: () => void }) {
           <div className="mb-1 truncate text-xs text-muted-foreground" title={replay.title}>
             {replay.title}
           </div>
+          {replay.note && (
+            <div className="mb-1 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+              {replay.note}
+            </div>
+          )}
           <ReplayPlayer replay={replay} />
         </div>
       ) : (

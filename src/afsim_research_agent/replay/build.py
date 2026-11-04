@@ -19,7 +19,8 @@ AFSIM positions come from the recording's entity states, dead-reckoned with thei
 between updates (as Mystic does); states come from the ``ir_state`` auxiliary data the
 compiled behaviour writes on every state entry, or from the run console (``IR_STATE``) of
 older runs; action starts and results from the console (``IR_ACT`` / ``IR_DONE`` /
-``IR_FAIL``) when it is given.
+``IR_FAIL``) when it is given. ``from_console`` builds the replay from the console alone
+(recordings too big to decode).
 """
 
 from __future__ import annotations
@@ -200,6 +201,87 @@ def from_aer(
         ],
         "points": [],
         "sensors": {pid[i]: {"range_m": sensor_range_m} for i in blue} if sensor_range_m else {},
+        "verdicts": [],
+    }
+
+
+_ORIGIN = re.compile(r"^IR_POS_ORIGIN\|([^|]+)\|([^|\r\n]+)", re.M)
+_POS = re.compile(
+    r"^IR_POS\|([^|]+)\|([^|]+)\|([^|]*)\|([^|]+)\|([^|]+)\|([^|]+)\|([^|\r\n]+)", re.M
+)
+_RADAR = re.compile(r"^CAP_RADAR_TRACK\s+(\S+)\s+(\S+)\s+\S+\s+(\S+)", re.M)
+
+
+def from_console(
+    console: str,
+    *,
+    labels: dict[str, str] | None = None,
+    sensor_range_m: float | None = None,
+    title: str = "",
+) -> dict[str, Any]:
+    """Replay from the run console alone: positions, speeds and headings sampled by the
+    compiled run (``IR_POS``, metres north / east-over-cos(lat0) of the first platform's
+    start), states (``IR_STATE``), action starts and results, radar track starts
+    (``CAP_RADAR_TRACK`` of the capability observer). For recordings too big to decode (or
+    runs without one); routes and weapon events are not in the console."""
+    labels = labels or {}
+    origin = _ORIGIN.search(console)
+    lat0 = float(origin.group(1)) if origin else 0.0
+    lon0 = float(origin.group(2)) if origin else 0.0
+    cos0 = math.cos(math.radians(lat0)) if origin else 1.0
+    samples: dict[str, list[list[float]]] = {}
+    sides: dict[str, str] = {}
+    end = 0.0
+    for t, plat, side, north, east, speed, heading in _POS.findall(console):
+        pid = labels.get(plat, plat)
+        tt = float(t)
+        end = max(end, tt)
+        sides.setdefault(pid, side.lower() or "unknown")
+        samples.setdefault(pid, []).append(
+            [
+                _r(tt),
+                _r(float(east) * cos0),
+                _r(float(north)),
+                _r(float(speed)),
+                _r(float(heading) % 360.0, 1),
+            ]
+        )
+    if not samples:
+        raise ValueError("the console has no sampled positions (IR_POS)")
+    states: dict[str, list[list[Any]]] = {}
+    for t, plat, state in _STATE.findall(console):
+        states.setdefault(labels.get(plat, plat), []).append([_r(float(t)), state])
+    actions: list[list[Any]] = []
+    for kind, t, plat, action, code in _ACT.findall(console):
+        row = [_r(float(t)), labels.get(plat, plat), _KIND[kind], action]
+        if code:
+            row.append(code.strip())
+        actions.append(row)
+    events = [
+        [_r(float(t)), "detect", labels.get(owner, owner), labels.get(target, target)]
+        for t, owner, target in _RADAR.findall(console)
+    ]
+    blue = [p for p, s in sides.items() if s == "blue"]
+    return {
+        "format": FORMAT,
+        "source": "afsim",
+        "title": title,
+        "duration_s": _r(end),
+        "step_s": 1.0,
+        "frame": {
+            "units": "m",
+            "x": "east",
+            "y": "north",
+            "origin": [lat0, lon0] if origin else None,
+        },
+        "platforms": [{"id": p, "label": p, "side": s, "icon": ""} for p, s in sides.items()],
+        "samples": samples,
+        "states": states,
+        "actions": actions,
+        "events": events,
+        "routes": [],
+        "points": [],
+        "sensors": {p: {"range_m": sensor_range_m} for p in blue} if sensor_range_m else {},
         "verdicts": [],
     }
 
