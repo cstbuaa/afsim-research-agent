@@ -5,8 +5,14 @@ per state (design §5, §7). Composite and decorator nodes map one to one to nat
 action leaves come from the backend binding (:mod:`.binding`): either a generated leaf
 around a binding script that calls the project's public interface, or the project's own
 leaf fed by a generated inputs leaf that issues a fresh request per activation. Leaves
-that are running when the state is left are cancelled in the state's ``on_exit``, and the
-resources the contract releases on exit are released there.
+that are running when the state is left are cancelled, and the resources the contract
+releases on exit are released in the state's ``on_exit``.
+
+A project leaf that is running when its state is left is handed over instead of cancelled
+right away: the next state adopts its request when it runs the same action with the same
+inputs (``ir_cont_<hash>``), so the action goes on; otherwise the next state's ``on_entry``
+cancels it. Re-issuing would restart it -- a route assignment puts the vehicle back at the
+route's start (r3, 11-04: the leader jumped 3 km back when it began tracking).
 
 Conventions of the generated input (all names start with ``ir_`` / ``IR_``):
 
@@ -136,6 +142,7 @@ class _Leaf:
     cancel: str
     exit: str = ""
     enter: str = ""
+    cont: str = ""  # handover key of a project leaf (same action and inputs)
 
 
 @dataclass
@@ -304,6 +311,10 @@ class Compiler:
             request=lit(req),
             owner=lit(owner),
         )
+        # handover keys of the role's project leaves and how to cancel a pending one
+        self.handovers = {
+            leaf.cont: leaf.cancel for st in states.values() for leaf in st.leaves if leaf.cont
+        }
         lines = [
             f"processor {proc} WSF_STATE_MACHINE",
             f"   update_interval {num(self.b.meta.update_interval_s)} sec",
@@ -358,6 +369,19 @@ class Compiler:
             if leaf.kind == "script"
             for flag in ("fail", "done")
         ]
+        # a request handed over by the previous state that this state does not continue
+        taken = {leaf.cont for leaf in st.leaves if leaf.cont}
+        for key, cancel in sorted(getattr(self, "handovers", {}).items()):
+            if key in taken:
+                continue
+            entry += [
+                f'if (PLATFORM.AuxDataString("{key}") != "")',
+                "{",
+                f'   string req = PLATFORM.AuxDataString("{key}");',
+                *indent(cancel, "   "),
+                f'   PLATFORM.SetAuxData("{key}", "");',
+                "}",
+            ]
         seen: list[str] = []
         for leaf in st.leaves:
             if leaf.enter.strip() and leaf.enter not in seen:
@@ -423,6 +447,16 @@ class Compiler:
                 lines += indent(leaf.cancel, "            ")
                 lines += [
                     f'            PLATFORM.SetAuxData("{leaf.name}_run", false);',
+                    "         }",
+                ]
+            elif leaf.cont:
+                # handed over: the next state continues it or cancels it on entry
+                lines += [
+                    f'         if (PLATFORM.AuxDataString("{leaf.name}_req") != "")',
+                    "         {",
+                    f'            PLATFORM.SetAuxData("{leaf.cont}", '
+                    f'PLATFORM.AuxDataString("{leaf.name}_req"));',
+                    f'            PLATFORM.SetAuxData("{leaf.name}_req", "");',
                     "         }",
                 ]
             else:
@@ -817,12 +851,33 @@ class Compiler:
         done = self._fmt(
             ab.done, platform="PLATFORM", action=action, params=params, leaf=n, request="req"
         )
+        cancel = self._fmt(
+            ab.cancel, platform="PLATFORM", action=action, params=params, leaf=n, request="req"
+        )
+        cont = ""
+        if cancel.strip():
+            digest = hashlib.sha256(f"{self.rid}\n{action}\n{inputs}".encode()).hexdigest()
+            cont = f"ir_cont_{digest[:12]}"
+        adopt = (
+            [
+                # the previous state ran the same action with the same inputs: go on with it
+                f'      if ((req == "") && (PLATFORM.AuxDataString("{cont}") != ""))',
+                "      {",
+                f'         req = PLATFORM.AuxDataString("{cont}");',
+                f'         PLATFORM.SetAuxData("{name}_req", req);',
+                f'         PLATFORM.SetAuxData("{cont}", "");',
+                "      }",
+            ]
+            if cont
+            else []
+        )
         self.behaviors += [
             f"advanced_behavior {name}_in",
             f"   precondition {pre} end_precondition",
             "   execute",
             *_activation(name, action),
             f'      string req = PLATFORM.AuxDataString("{name}_req");',
+            *adopt,
             '      bool fresh = (req == "");',
             f"      if (!fresh) {{ fresh = ({done.strip() or 'false'}); }}",
             "      if (fresh)",
@@ -844,16 +899,10 @@ class Compiler:
                 action,
                 "native_leaf",
                 "req",
-                self._fmt(
-                    ab.cancel,
-                    platform="PLATFORM",
-                    action=action,
-                    params=params,
-                    leaf=n,
-                    request="req",
-                ),
+                cancel,
                 self._fmt(ab.exit, platform="PLATFORM", action=action, params=params, leaf=n),
                 self._fmt(ab.enter, platform="PLATFORM", action=action, params=params, leaf=n),
+                cont,
             )
         )
         return [f"{name}_in", ab.leaf]

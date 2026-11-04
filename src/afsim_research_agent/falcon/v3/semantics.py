@@ -27,6 +27,11 @@ action uses. These checks look at the compiled spec (no model call):
 * ``ROLE_COUNT``    a state's tree needs more vehicles than its role has (its capability
   card, ``ir.v2.cards``: formation slots, standoff commands, target sharing, …): a single
   vehicle running a formation subtree waits for followers for ever;
+* ``COMMAND_ROLE``  a commanded role (a member of a formation) runs a commanding action (a
+  formation step whose resource claim covers *other* vehicles, ``scope: followers``): run
+  on a member it has no one to command and succeeds at once, and the member does not move
+  (r3, 11-04: the wings ran the leader's search-advance subtree and never moved). The
+  commanding steps belong to the leader's trees; members are moved by them;
 * ``TREE_EVENT_NEVER`` a transition waits for the tree success event of a state whose tree
   never ends (holding, tracking): it never happens;
 * ``NEXT_STATE_FIELD`` a transition condition reads a field that, in its role, only the
@@ -456,8 +461,36 @@ def completion_items(
     return out
 
 
+LEADER_NAME = re.compile(r"lead|command|hq|chief")
+
+
+def role_kinds(counts: dict[str, int]) -> dict[str, str]:
+    """Role → ``leader`` / ``member`` / ``""`` (not told apart), the way the AFSIM scenario
+    kit assigns formation roles: a role named as a leader, else the single vehicle among
+    roles with several. Roles of a model without either are not told apart."""
+    named = {r for r in counts if LEADER_NAME.search(r)}
+    if named:
+        return {r: "leader" if r in named else "member" for r in counts}
+    singles = {r for r, c in counts.items() if c == 1}
+    if len(counts) > 1 and len(singles) == 1 and any(c > 1 for c in counts.values()):
+        return {r: "leader" if r in singles else "member" for r in counts}
+    return {r: "" for r in counts}
+
+
+def commanding_actions(contracts: Any) -> set[str]:
+    """Actions whose resource claim covers other vehicles (``scope: followers``): run by a
+    commander, they move or direct its subordinates."""
+    from afsim_research_agent.ir.v2.contracts import OTHER_VEHICLES
+
+    return {
+        aid
+        for aid, a in (getattr(contracts, "actions", {}) or {}).items()
+        if any(r.get("scope") in OTHER_VEHICLES for r in getattr(a, "resources", ()) or ())
+    }
+
+
 def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any]) -> list[Problem]:
-    """ROLE_FIELD, ENTRY_TRUE and NEXT_STATE_FIELD (see the module doc)."""
+    """ROLE_FIELD, ENTRY_TRUE, NEXT_STATE_FIELD, ROLE_COUNT, COMMAND_ROLE (module doc)."""
     ENTRY_ITEMS.clear()
     FIRE_ITEMS.clear()
     out: list[Problem] = []
@@ -477,9 +510,29 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
         for r in (roles if isinstance(roles, list) else [{"id": k, **v} for k, v in roles.items()])
         if isinstance(r, dict)
     }
+    kinds = role_kinds(counts)
+    commanding = commanding_actions(contracts)
+    leaders = sorted(r for r, k in kinds.items() if k == "leader")
     for role, mission in (spec.get("missions") or {}).items():
         if not isinstance(mission, dict) or not mission.get("states"):
             continue
+        if kinds.get(role) == "member" and commanding:
+            for st in mission["states"]:
+                used = element_actions(spec, f"{role}.{st}", tactics) or set()
+                wrong = sorted(used & commanding)
+                if wrong:
+                    out.append(
+                        (
+                            f"state_trees.{role}.{st}",
+                            f"COMMAND_ROLE 角色 {role} 是被指挥的车辆，状态 {st} 的树用到 "
+                            f"{'、'.join(wrong)}：这是长车指挥本车下属车辆的动作，"
+                            "在被指挥的车上执行时没有下属可指挥，立即成功、车辆不动。"
+                            f"把指挥动作（或含它的子树）放到 {'、'.join(leaders) or '长车'} "
+                            "对应状态的树里；本角色只做感知、上报等自己的事，由长车带动，"
+                            "不要再给本角色写自己的路线或移动",
+                            "COMMAND_ROLE",
+                        )
+                    )
         # capability cards of the role's state trees: who can run them, whether they end
         cards: dict[str, Any] = {}
         for st in mission["states"]:

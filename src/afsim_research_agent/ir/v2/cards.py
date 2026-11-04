@@ -11,7 +11,10 @@ a single vehicle's "advance") and waited for a tree that never ended. A card sta
   stopping), ``conditional`` (finishes only when something outside it holds: a target is
   selected, the followers are in their slots, a condition becomes true) or ``never`` (holds,
   tracks, keeps a formation: its tree event never fires);
-* ``reason`` — why, in words a drafter can act on.
+* ``reason`` — why, in words a drafter can act on;
+* ``commander`` — the capability commands other vehicles (an action whose resource claim
+  covers the followers, or a tree containing one): the formation leader runs it and the
+  members are moved by it; run on a member it has no one to command.
 
 Cards are derived from the capability set (tree structure, ``persistent``, resource scopes,
 ``no_target_result``) and can be corrected by ``capability_cards.yaml`` next to this module
@@ -49,11 +52,46 @@ class Card:
     termination: str
     reason: str
     source: str = "derived"  # derived / override
+    commander: bool = False
 
-    def tags(self) -> str:
-        """Short labels for catalog text: ``[需≥2车][满足条件才结束]``."""
+    def tags(self, why: str = "") -> str:
+        """Short labels for catalog text: ``[需≥2车][满足条件才结束]``; ``why`` is added to
+        the termination label."""
         who = "单车可用" if self.min_vehicles <= 1 else f"需≥{self.min_vehicles}车"
-        return f"[{who}][{TERMINATION_TEXT[self.termination]}]"
+        term = TERMINATION_TEXT[self.termination] + (f"：{why}" if why else "")
+        out = f"[{who}][{term}]"
+        if self.commander:
+            out += "[长车执行，指挥僚车；僚车不要用]"
+        return out
+
+
+COMMANDING_SCOPES = ("followers", "members", "others")
+
+
+def _commanding(contracts: Any) -> set[str]:
+    return {
+        aid
+        for aid, a in contracts.actions.items()
+        if any(r.get("scope") in COMMANDING_SCOPES for r in (getattr(a, "resources", None) or ()))
+    }
+
+
+def _uses(contracts: Any, node: Any, out: set[str], seen: set[str]) -> None:
+    """Action ids a tactic-set tree runs (subtrees and tactic references expanded)."""
+    if isinstance(node, dict):
+        if node.get("type") == "action" and node.get("action"):
+            out.add(str(node["action"]))
+        for key in ("subtree", "tactic"):
+            ref = node.get(key)
+            if isinstance(ref, str) and ref not in seen and ref in contracts.tactics:
+                seen.add(ref)
+                _uses(contracts, (contracts.tactics[ref].raw or {}).get("root"), out, seen)
+        for value in node.values():
+            if isinstance(value, dict | list):
+                _uses(contracts, value, out, seen)
+    elif isinstance(node, list):
+        for value in node:
+            _uses(contracts, value, out, seen)
 
 
 def _worst(values: list[str]) -> str:
@@ -169,13 +207,18 @@ def cards(contracts: Any) -> dict[str, Card]:
     if cached is not None:
         return cached
     d = _Deriver(contracts)
+    commanding = _commanding(contracts)
     out: dict[str, Card] = {}
     for aid in contracts.actions:
         term, n, why = d.action(aid)
-        out[aid] = Card(aid, n, term, "；".join(dict.fromkeys(why)))
+        out[aid] = Card(aid, n, term, "；".join(dict.fromkeys(why)), commander=aid in commanding)
     for tid in contracts.tactics:
         term, n, why = d.entry(tid)
-        out[tid] = Card(tid, n, term, "；".join(dict.fromkeys(why)))
+        used: set[str] = set()
+        _uses(contracts, (contracts.tactics[tid].raw or {}).get("root"), used, {tid})
+        out[tid] = Card(
+            tid, n, term, "；".join(dict.fromkeys(why)), commander=bool(used & commanding)
+        )
     for cid, o in _overrides().items():
         base = out.get(cid) or Card(cid, 1, CONDITIONAL, "")
         term = str(o.get("termination", base.termination))
@@ -185,6 +228,7 @@ def cards(contracts: Any) -> dict[str, Card]:
             term if term in _ORDER else base.termination,
             str(o.get("note") or base.reason),
             "override",
+            bool(o.get("commander", base.commander)),
         )
     try:
         contracts._capability_cards = out

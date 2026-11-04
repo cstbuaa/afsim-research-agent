@@ -7,6 +7,7 @@ probes confirmed, and the evaluator is checked on recorded consoles.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -696,3 +697,58 @@ def test_inert_and_no_evidence_runs_and_switched_off_rules() -> None:
         log_text="2026-10-31 00:42:51 complete 220.001 0.066 0.078\n",
     )
     assert done.completed and done.passed
+
+
+def _goto_spec(contracts, lat_idle: float, lat_search: float) -> dict:
+    spec = mission_to_ir(contracts, "sense.watch")
+    spec["subtrees"] = [
+        {
+            "id": f"go_{i}",
+            "root": {"type": "action", "action": "nav.goto", "params": {"latitude_deg": lat}},
+        }
+        for i, lat in enumerate((lat_idle, lat_search))
+    ]
+    spec["state_trees"]["vehicle"]["IDLE"] = "go_0"
+    spec["state_trees"]["vehicle"]["SEARCHING"] = "go_1"
+    return spec
+
+
+def _state(text: str, name: str) -> str:
+    return text.split(f"   state {name}\n")[1].split("   end_state")[0]
+
+
+def test_a_running_project_leaf_is_handed_over_to_the_next_state(env) -> None:
+    """The same action with the same inputs in the next state goes on with the request it
+    was given; it is not cancelled and re-issued (a re-issued route puts the vehicle back at
+    the route's start: r3, 11-04)."""
+    contracts, *_ = env
+    text = _compile(env, _goto_spec(contracts, 30.5, 30.5)).behavior
+    keys = sorted(set(re.findall(r"ir_cont_[0-9a-f]{12}", text)))
+    assert len(keys) == 1
+    key = keys[0]
+    idle, searching, done = (_state(text, s) for s in ("IDLE", "SEARCHING", "DONE"))
+    # leaving IDLE hands the request over instead of stopping the vehicle
+    exit_idle = idle.split("on_exit")[1].split("end_on_exit")[0]
+    assert f'PLATFORM.SetAuxData("{key}", PLATFORM.AuxDataString(' in exit_idle
+    assert "Demo_Stop" not in exit_idle
+    # SEARCHING continues it (adopts the request), so its entry does not cancel it
+    assert f'PLATFORM.AuxDataString("{key}") != ""' not in searching.split("end_on_entry")[0]
+    adopt = [b for b in text.split("advanced_behavior ") if b.startswith("ir_") and "_in\n" in b]
+    assert all(f'req = PLATFORM.AuxDataString("{key}");' in b for b in adopt)
+    # the terminal state does not continue it: its entry cancels what was handed over
+    entry_done = done.split("end_on_entry")[0]
+    assert f'string req = PLATFORM.AuxDataString("{key}");' in entry_done
+    assert "Demo_Stop(PLATFORM, req);" in entry_done
+
+
+def test_a_different_request_in_the_next_state_cancels_the_old_one(env) -> None:
+    contracts, *_ = env
+    text = _compile(env, _goto_spec(contracts, 30.5, 31.0)).behavior
+    keys = sorted(set(re.findall(r"ir_cont_[0-9a-f]{12}", text)))
+    assert len(keys) == 2
+    entry_search = _state(text, "SEARCHING").split("end_on_entry")[0]
+    # the IDLE request is cancelled on entering SEARCHING, the own one is not
+    cancelled = re.findall(
+        r'string req = PLATFORM.AuxDataString\("(ir_cont_[0-9a-f]{12})"\)', entry_search
+    )
+    assert len(cancelled) == 1 and "Demo_Stop(PLATFORM, req);" in entry_search

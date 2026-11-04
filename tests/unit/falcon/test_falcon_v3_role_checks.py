@@ -104,3 +104,61 @@ def test_leader_waiting_for_a_field_only_members_write_is_stuck() -> None:
     )
     found = role_problems(spec, _contracts(), {})
     assert [(p[2], "leader" in p[1]) for p in found] == [("ROLE_FIELD", True)]
+
+
+def test_a_member_running_the_leaders_commanding_step_is_reported() -> None:
+    """A formation step that commands the followers (scope: followers) run by a member has
+    nobody to command and succeeds at once; the member does not move (r3, 11-04)."""
+    contracts = _contracts()
+    contracts.actions["formation.column_slots"] = SimpleNamespace(
+        written=set(),
+        resources=({"resource": "locomotion", "mode": "exclusive", "scope": "followers"},),
+    )
+    missions = {
+        r: {"initial_state": "ADVANCE", "states": ["ADVANCE"], "transitions": []}
+        for r in ("leader", "member")
+    }
+    spec = _spec(
+        {},
+        {
+            "leader_advance": ["movement.follow_route"],
+            "member_advance": ["movement.follow_route", "formation.column_slots"],
+        },
+        missions,
+    )
+    spec["roles"] = [{"id": "leader", "count": 1}, {"id": "member", "count": 2}]
+    found = [p for p in role_problems(spec, contracts, {}) if p[2] == "COMMAND_ROLE"]
+    assert [p[0] for p in found] == ["state_trees.member.ADVANCE"]
+    assert "formation.column_slots" in found[0][1] and "leader" in found[0][1]
+    # the same step in the leader's tree is what the capability means
+    spec["subtrees"][0]["root"]["children"].append(
+        {"type": "action", "action": "formation.column_slots"}
+    )
+    spec["subtrees"][1]["root"]["children"].pop()
+    assert not [p for p in role_problems(spec, contracts, {}) if p[2] == "COMMAND_ROLE"]
+    # inside a tactic-set subtree the member runs, too
+    tactics = {
+        "fs.search_advance": SimpleNamespace(
+            raw={
+                "root": {
+                    "type": "parallel",
+                    "children": [
+                        {"type": "action", "action": "movement.follow_route"},
+                        {"type": "action", "action": "formation.column_slots"},
+                    ],
+                }
+            }
+        )
+    }
+    spec["state_trees"]["member"]["ADVANCE"] = "fs.search_advance"
+    found = [p for p in role_problems(spec, contracts, tactics) if p[2] == "COMMAND_ROLE"]
+    assert [p[0] for p in found] == ["state_trees.member.ADVANCE"]
+
+
+def test_roles_are_told_apart_like_the_scenario_kit() -> None:
+    from afsim_research_agent.falcon.v3.semantics import role_kinds
+
+    assert role_kinds({"leader": 1, "member": 2}) == {"leader": "leader", "member": "member"}
+    assert role_kinds({"car": 1, "wing": 2}) == {"car": "leader", "wing": "member"}
+    assert role_kinds({"a": 1, "b": 1}) == {"a": "", "b": ""}
+    assert role_kinds({"platoon_commander": 2, "tank": 2})["platoon_commander"] == "leader"

@@ -345,10 +345,8 @@ def card_text(contracts: Any, cid: str, reason: bool = True) -> str:
     card = cards(contracts).get(cid)
     if card is None:
         return ""
-    tags = card.tags()
-    if reason and card.reason and card.termination != "ends":
-        tags = tags[:-1] + "：" + _short(card.reason, 60) + "]"
-    return tags
+    why = _short(card.reason, 60) if reason and card.reason and card.termination != "ends" else ""
+    return card.tags(why)
 
 
 def result_text(result: Any, persistent: Any = None) -> str:
