@@ -1,4 +1,4 @@
-# Start the workbench on this machine: the agent (langgraph dev, 127.0.0.1:2024) and the
+﻿# Start the workbench on this machine: the agent (langgraph dev, 127.0.0.1:2024) and the
 # frontend (deep-agents-ui, 127.0.0.1:3000). Copy to _local\workbench\start_workbench.ps1 and
 # fill in the local paths there (that copy stays on this machine).
 #
@@ -30,15 +30,19 @@ $env:AFSIM_MISSION = "<AFSIM bin>\mission.exe"
 $env:WORKBENCH_REPLAY_ROOTS = "<local run dirs>"
 $env:WORKBENCH_SENSOR_RANGE_M = "6000"
 
+# The servers are started through cmd.exe without -Redirect*: Start-Process then does not hand
+# this console's output handles to them, so a caller that captures this script's output (a job
+# runner, a pipe) is not held open by the running servers. Their output goes to the log files.
+function Start-Detached([string]$dir, [string]$command, [string]$log) {
+  # cmd /c drops the outer pair of quotes, keeping the quoted paths inside intact
+  Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$command > `"$log.out.log`" 2> `"$log.err.log`"`"" `
+    -WorkingDirectory $dir -WindowStyle Hidden
+}
 Push-Location $repo
-Start-Process -FilePath (Join-Path (Split-Path $py) "Scripts\langgraph.exe") `
-  -ArgumentList @("dev", "--host", "127.0.0.1", "--port", "2024", "--no-browser", "--no-reload", "--allow-blocking") `
-  -WorkingDirectory $repo -WindowStyle Hidden `
-  -RedirectStandardOutput "$logs\langgraph.out.log" -RedirectStandardError "$logs\langgraph.err.log"
+Start-Detached $repo "`"$(Join-Path (Split-Path $py) 'Scripts\langgraph.exe')`" dev --host 127.0.0.1 --port 2024 --no-browser --no-reload --allow-blocking" "$logs\langgraph"
 Push-Location frontend
 if ($Build -or -not (Test-Path ".next\BUILD_ID")) { & "$node\yarn.cmd" build }
-Start-Process -FilePath "$node\yarn.cmd" -ArgumentList @("start") -WorkingDirectory (Get-Location).Path `
-  -WindowStyle Hidden -RedirectStandardOutput "$logs\frontend.out.log" -RedirectStandardError "$logs\frontend.err.log"
+Start-Detached (Get-Location).Path "`"$node\yarn.cmd`" start" "$logs\frontend"
 Pop-Location
 Pop-Location
 "workbench: http://127.0.0.1:3000  (agent http://127.0.0.1:2024)"
