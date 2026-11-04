@@ -59,6 +59,7 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   const [layers, setLayers] = useState({ trails: true, sensors: true, routes: true, labels: true });
   const [selected, setSelected] = useState<string | null>(null);
   const drag = useRef<{ x: number; y: number; v: View } | null>(null);
+  const moved = useRef(false); // the user panned or zoomed: keep the view on resize
 
   const duration = Math.max(replay.duration_s || 0, 1);
   const platforms = replay.platforms;
@@ -79,12 +80,13 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
     setT(0);
     setPlaying(false);
     setSelected(null);
+    moved.current = false;
   }, [replay]);
 
+  // fit the whole scene to the canvas: on a new replay, and on resize until the user moves
   useEffect(() => {
-    fit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [replay, size.w > 0]);
+    if (!moved.current) fit();
+  }, [fit]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -307,6 +309,7 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   const onWheel = (e: React.WheelEvent) => {
     if (!view) return;
     const k = e.deltaY < 0 ? 1.2 : 1 / 1.2;
+    moved.current = true;
     setView({ ...view, scale: Math.min(50, Math.max(0.005, view.scale * k)) });
   };
   const onDown = (e: React.MouseEvent) => {
@@ -315,6 +318,7 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   const onMove = (e: React.MouseEvent) => {
     const d = drag.current;
     if (!d) return;
+    moved.current = true;
     setView({
       ...d.v,
       cx: d.v.cx - (e.clientX - d.x) / d.v.scale,
@@ -419,7 +423,15 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
             </option>
           ))}
         </select>
-        <Button size="sm" variant="outline" onClick={fit} title="适应窗口">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            moved.current = false;
+            fit();
+          }}
+          title="适应窗口"
+        >
           <Maximize2 className="h-4 w-4" />
         </Button>
         {(

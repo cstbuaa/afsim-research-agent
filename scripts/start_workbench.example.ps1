@@ -32,7 +32,7 @@ $env:WORKBENCH_SENSOR_RANGE_M = "6000"
 
 Push-Location $repo
 Start-Process -FilePath (Join-Path (Split-Path $py) "Scripts\langgraph.exe") `
-  -ArgumentList @("dev", "--host", "127.0.0.1", "--port", "2024", "--no-browser", "--allow-blocking") `
+  -ArgumentList @("dev", "--host", "127.0.0.1", "--port", "2024", "--no-browser", "--no-reload", "--allow-blocking") `
   -WorkingDirectory $repo -WindowStyle Hidden `
   -RedirectStandardOutput "$logs\langgraph.out.log" -RedirectStandardError "$logs\langgraph.err.log"
 Push-Location frontend
