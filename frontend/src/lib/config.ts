@@ -6,11 +6,29 @@ export interface StandaloneConfig {
 
 const CONFIG_KEY = "deep-agent-config";
 
-// the local LangGraph server (`langgraph dev`) and the graph in langgraph.json
+// the local LangGraph server (`langgraph dev`, 127.0.0.1:2024) through this server's
+// /langgraph proxy (same origin: no cross-origin request), and the graph in langgraph.json
+const DIRECT = /^https?:\/\/(127\.0\.0\.1|localhost):2024\/?$/;
+
+function proxied(): string {
+  return typeof window === "undefined"
+    ? "/langgraph"
+    : `${window.location.origin}/langgraph`;
+}
+
 export const DEFAULT_CONFIG: StandaloneConfig = {
-  deploymentUrl: "http://127.0.0.1:2024",
+  deploymentUrl: "/langgraph",
   assistantId: "afsim_research",
 };
+
+function withDefaults(config: StandaloneConfig): StandaloneConfig {
+  // a saved direct address of the local server goes through the proxy instead
+  const url = config.deploymentUrl || "";
+  return {
+    ...config,
+    deploymentUrl: !url || DIRECT.test(url) || url === "/langgraph" ? proxied() : url,
+  };
+}
 
 export function getConfig(): StandaloneConfig | null {
   if (typeof window === "undefined") return null;
@@ -19,14 +37,14 @@ export function getConfig(): StandaloneConfig | null {
   try {
     stored = localStorage.getItem(CONFIG_KEY);
   } catch {
-    return DEFAULT_CONFIG;
+    return withDefaults(DEFAULT_CONFIG);
   }
-  if (!stored) return DEFAULT_CONFIG;
+  if (!stored) return withDefaults(DEFAULT_CONFIG);
 
   try {
-    return JSON.parse(stored);
+    return withDefaults(JSON.parse(stored));
   } catch {
-    return DEFAULT_CONFIG;
+    return withDefaults(DEFAULT_CONFIG);
   }
 }
 

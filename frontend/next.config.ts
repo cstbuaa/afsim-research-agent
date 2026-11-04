@@ -1,9 +1,16 @@
 import type { NextConfig } from "next";
 
-// /workbench/* (replays) is served by the local LangGraph server next to the agent
+// The local LangGraph server (127.0.0.1:2024) is reached through this server, same
+// origin: /langgraph/* is the agent API (streamed), /workbench/* the replays.
 const nextConfig: NextConfig = {
+  // no compression: it would buffer the agent's event stream (SSE)
+  compress: false,
   async rewrites() {
     return [
+      {
+        source: "/langgraph/:path*",
+        destination: "http://127.0.0.1:2024/:path*",
+      },
       {
         source: "/workbench/:path*",
         destination: "http://127.0.0.1:2024/workbench/:path*",
