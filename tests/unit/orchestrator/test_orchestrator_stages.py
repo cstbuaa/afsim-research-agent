@@ -299,3 +299,39 @@ def test_crow_research_builds_the_profile_outside_the_running_loop(
     result = asyncio.run(st.crow_research(ws, "需求", settings=object()))
     assert seen["profile"] == "profile"
     assert result.status == "blocked"
+
+
+def test_old_and_new_tools_refuse_each_others_packages(ws: Workspace) -> None:
+    """A v3 package (IR 2.0) given to an old-flow tool is refused with the tools to use,
+    instead of the old tool's validation error that read as a broken package (r3, 11-04)."""
+    from afsim_research_agent.orchestrator import stages3
+
+    v3 = ws.root / "runs" / "m" / "models" / "pkg_v3"
+    v3.mkdir(parents=True)
+    (v3 / "behavior_spec.yaml").write_text('schema_version: "2.0"\n', encoding="utf-8")
+    v2 = ws.root / "runs" / "m" / "models" / "pkg_v2"
+    v2.mkdir(parents=True)
+    (v2 / "behavior_spec.yaml").write_text('schema_version: "1.0"\n', encoding="utf-8")
+    assert st.package_format(v3) == "v3" and st.package_format(v2) == "v2"
+    assert st.package_format(ws.root / "runs") is None
+    for tool in (st.falcon_check, st.ir_build, st.simulate):
+        res = tool(ws, "/runs/m/models/pkg_v3")
+        res = asyncio.run(res) if asyncio.iscoroutine(res) else res
+        assert res.status == "blocked"
+        assert "v3 模型包" in res.summary and "simulate2d" in res.summary
+        assert "没有损坏" in res.summary
+    res = stages3.scenario_show(ws, "/runs/m/models/pkg_v2")
+    res = asyncio.run(res) if asyncio.iscoroutine(res) else res
+    assert res.status == "blocked" and "旧流程" in res.summary
+
+
+def test_the_agent_gets_the_v3_toolset_by_default() -> None:
+    from afsim_research_agent.orchestrator.tools import LEGACY_TOOLS, toolset_names
+
+    v3 = toolset_names("v3")
+    assert {"falcon_draft3", "scenario_set", "simulate2d", "afsim_run", "ask_human"} <= v3
+    assert not v3 & LEGACY_TOOLS
+    assert {"falcon_check", "falcon_fix", "falcon_compile", "simulate"} <= toolset_names("all")
+    assert set(approval_tools(v3)) == {"select_tactic", "scenario_set", "afsim_run"}
+    with pytest.raises(ValueError):
+        toolset_names("v4")

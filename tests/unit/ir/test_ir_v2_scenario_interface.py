@@ -11,12 +11,14 @@ from afsim_research_agent.falcon.v3.compiler import compile_sheet
 from afsim_research_agent.ir.v2 import Contracts, normalize
 from afsim_research_agent.ir.v2.afsim.scenario import generate
 from afsim_research_agent.ir.v2.scenario_interface import (
+    ROUTING,
     ScenarioInterface,
     bind,
     binding_for,
     check_binding,
     derive,
     interface_of,
+    interface_param_issues,
     interface_parameters,
 )
 from afsim_research_agent.ir.v2.sim import simulate
@@ -151,7 +153,11 @@ def test_a_written_route_name_is_reported_and_repaired(contracts: Contracts) -> 
     )
     assert any(code == "SCN_LITERAL" for _p, _m, code in semantics.scenario_literals(out.spec))
     model = normalize(out.spec, contracts).model
-    assert any("follow_route" in p for p in check_binding(model, binding_for(model)))
+    issues = interface_param_issues(model)
+    assert [(i.kind, i.literal, ROUTING[i.route]) for i in issues] == [
+        ("not_interface", True, "model")
+    ]
+    assert check_binding(model, binding_for(model)) == []  # the model's, not the scenario's
     blocks = [
         Block("pytree", "car", 'def GO():\n    movement.follow_route(route_name="east_road")\n', 1)
     ]
@@ -252,3 +258,46 @@ def test_an_approaching_enemy_moves_in_the_2d_scenario() -> None:
     sc = bind_scenario({"id": "s"}, model, b)
     assert sc["hostiles"][0]["velocity_mps"] == [-10.0, -0.0]
     assert "velocity_mps" not in bind_scenario({"id": "s"}, model, bind(iface, {}))["hostiles"][0]
+
+
+def test_a_route_action_without_a_route_is_routed_by_who_wrote_it(contracts: Contracts) -> None:
+    """Not written at all: a model error when the drafter wrote the action (repair), the
+    kit's default when it sits in a tactic-set subtree (AFSIM decides) -- never a binding
+    problem that stops the model from running (r3, 11-04: members never moved)."""
+    iface = derive(R1).model_dump()
+    out = compile_sheet(_sheet(""), contracts, model_id="op", scenario_interface=iface)
+    res = normalize(out.spec, contracts)
+    assert res.model is not None, [d.render() for d in res.diagnostics]
+    issues = interface_param_issues(res.model)
+    assert [(i.kind, i.role, i.state, i.origin) for i in issues] == [
+        ("missing", "car", "GO", "model")
+    ]
+    assert ROUTING[issues[0].route] == "model" and "route=<接口名>" in issues[0].message()
+    assert check_binding(res.model, binding_for(res.model)) == []
+    model = res.model
+    leaf = model["roles"]["car"]["states"]["GO"]["tree"]
+    # the same action as part of a tactic-set subtree
+    stack = [leaf]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, dict):
+            if node.get("action") == "movement.follow_route":
+                node["origin"] = "formation_standoff.formation_search_advance"
+            stack.extend(v for v in node.values() if isinstance(v, dict | list))
+        elif isinstance(node, list):
+            stack.extend(node)
+    sub = interface_param_issues(model)
+    assert ROUTING[sub[0].route] == "kit_default" and "AFSIM" in sub[0].message()
+
+
+def test_the_binding_reports_only_what_the_scenario_lacks(contracts: Contracts) -> None:
+    iface = derive(R1).model_dump()
+    spec = compile_sheet(
+        _sheet("route=approach"), contracts, model_id="op", scenario_interface=iface
+    ).spec
+    model = normalize(spec, contracts).model
+    assert interface_param_issues(model) == []
+    bound = binding_for(model)
+    bound.parameters.pop("rt_approach")
+    problems = check_binding(model, bound)
+    assert len(problems) == 1 and "rt_approach" in problems[0]

@@ -36,3 +36,43 @@ def test_offline_check_without_package(tmp_path) -> None:
     root = tmp_path / "data"
     (root / "runs").mkdir(parents=True)
     assert _check(Workspace(root.resolve()), None) == 0
+
+
+def test_default_agent_sees_v3_tools_and_writes_only_notes(tmp_path) -> None:
+    """The served agent: no old-flow tools, and the file tools cannot change stage products
+    (a hand-edited model package bypassed every check, r3 11-04); notes can be written."""
+    from langchain_core.messages import HumanMessage
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from afsim_research_agent.orchestrator.graph import build_agent
+    from afsim_research_agent.orchestrator.testing import ScriptedChatModel, call
+    from afsim_research_agent.orchestrator.tools import LEGACY_TOOLS
+
+    root = tmp_path / "data"
+    pkg = root / "runs" / "m" / "models" / "p"
+    pkg.mkdir(parents=True)
+    (pkg / "tactic_sheet.md").write_text("原稿\n", encoding="utf-8")
+    ws = Workspace(root.resolve())
+    model = ScriptedChatModel(
+        turns=[
+            [
+                call(
+                    "edit_file",
+                    {
+                        "file_path": "/runs/m/models/p/tactic_sheet.md",
+                        "old_string": "原稿",
+                        "new_string": "手改",
+                    },
+                    "c1",
+                ),
+                call("write_file", {"file_path": "/runs/notes/n.md", "content": "笔记"}, "c2"),
+            ],
+            "完成。",
+        ]
+    )
+    agent = build_agent(model, workspace=ws, checkpointer=InMemorySaver(), interrupt=False)
+    agent.invoke({"messages": [HumanMessage("试")]}, {"configurable": {"thread_id": "t-perm"}})
+    assert not set(model.seen_tools) & LEGACY_TOOLS
+    assert {"falcon_draft3", "simulate2d", "afsim_run"} <= set(model.seen_tools)
+    assert (pkg / "tactic_sheet.md").read_text(encoding="utf-8") == "原稿\n"
+    assert (root / "runs" / "notes" / "n.md").read_text(encoding="utf-8").strip() == "笔记"

@@ -186,6 +186,9 @@ class Check:
     l3: list[dict[str, Any]] = field(default_factory=list)
     # what the scenario binding cannot give the model (not the drafter's to repair)
     binding: list[str] = field(default_factory=list)
+    # route / point parameters left to the platform kit's defaults (actions inside tactic-set
+    # subtrees): not a binding problem, the 2D simulation cannot judge them, AFSIM decides
+    kit_defaults: list[str] = field(default_factory=list)
 
     @property
     def l1_ok(self) -> bool:
@@ -362,9 +365,23 @@ class Drafter:
         if model is not None:
             self._align_roles(model)
         if model is not None and self.iface is not None:
-            from afsim_research_agent.ir.v2.scenario_interface import check_binding
+            from afsim_research_agent.ir.v2.scenario_interface import (
+                ROUTING,
+                check_binding,
+                interface_param_issues,
+            )
 
             out.binding = check_binding(model, self.binding(model))
+            for issue in interface_param_issues(model):
+                if issue.literal:
+                    continue  # a written literal: SCN_LITERAL above, with its autofix
+                if ROUTING[issue.route] == "model":
+                    # the drafter wrote it: a model error, sent to the repair loop
+                    block, line = compiled.locate(f"state_trees.{issue.role}.{issue.state}")
+                    code = "SCN_MISSING" if issue.kind == "missing" else "SCN_NOT_INTERFACE"
+                    out.problems.append(SheetProblem(block, line, issue.message(), code=code))
+                else:
+                    out.kit_defaults.append(issue.message())
         if verify and out.l1_ok and model is not None:
             spec = compiled.spec or {}
             out.l2 = [
@@ -1144,6 +1161,9 @@ def _review(request: V3Request, drafter: Drafter, check: Check, status: str) -> 
         if check.binding:
             lines += ["", "绑定问题（模型无误，想定提供不了；不交给起草修复）："]
             lines += [f"- {b}" for b in check.binding]
+        if check.kit_defaults:
+            lines += ["", "由装备包默认值提供的参数（二维判定不了，看 AFSIM 结果）："]
+            lines += [f"- {b}" for b in check.kit_defaults]
     cover = coverage(drafter, check, drafter.afsim_history)
     if cover:
         lines += ["", "## 战术条款的验证", ""]
@@ -1299,6 +1319,8 @@ def write_package(
             bound = drafter.binding(check.model)
             doc["binding"] = bound.model_dump(mode="json")
             doc["binding_problems"] = check.binding
+            if check.kit_defaults:
+                doc["kit_defaults"] = check.kit_defaults
         (staging / "scenario_interface.yaml").write_text(
             yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8"
         )
@@ -1322,6 +1344,7 @@ def write_package(
         "diagnostics": [d.model_dump(mode="json") for d in check.diagnostics],
         "problems": [p.render() for p in check.problems],
         "binding_problems": check.binding,
+        "kit_defaults": check.kit_defaults,
         "l2": check.l2,
         "l3": [
             {k: v for k, v in s.items() if k != "render"} | {"summary": s["render"]}

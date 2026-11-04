@@ -31,7 +31,7 @@ from typing import Any
 import yaml
 
 from afsim_research_agent.orchestrator.results import StageResult
-from afsim_research_agent.orchestrator.stages import _package, guarded
+from afsim_research_agent.orchestrator.stages import _package_dir, guarded
 from afsim_research_agent.orchestrator.workspace import Workspace, WorkspaceError
 from afsim_research_agent.progress import report
 
@@ -95,10 +95,16 @@ class Loaded:
         from afsim_research_agent.ir.v2.contracts import Contracts
         from afsim_research_agent.ir.v2.normalize import normalize
         from afsim_research_agent.ir.v2.scenario_interface import ScenarioInterface
+        from afsim_research_agent.orchestrator.stages import package_format
 
         spec_file = pkg / "behavior_spec.yaml"
         if not spec_file.is_file():
             raise WorkspaceError("模型包里没有 behavior_spec.yaml（v3 模型包）")
+        if package_format(pkg) == "v2":
+            raise WorkspaceError(
+                "这是旧流程（v2，IR 1.0）的模型包：v3 工具不能处理；"
+                "用户要求旧流程时才用 falcon_check / simulate"
+            )
         self.spec = yaml.safe_load(spec_file.read_text(encoding="utf-8")) or {}
         self.contracts = Contracts.load()
         res = normalize(self.spec, self.contracts)
@@ -146,7 +152,7 @@ def scenario_show(ws: Workspace, package: str, *, scenario: str | None = None) -
     metres from the own start), enemy, run length, event times."""
     from afsim_research_agent.ir.v2.scenario_interface import summary
 
-    pkg = _package(ws, package)
+    pkg = _package_dir(ws, package)
     loaded = Loaded(pkg)
     kit = merge(base_kit(), _overrides(ws, scenario))
     binding = loaded.binding(kit)
@@ -181,7 +187,7 @@ def scenario_set(
     base: str | None = None,
 ) -> StageResult:
     """Write a new scenario overrides file for a package (the package is not changed)."""
-    pkg = _package(ws, package)
+    pkg = _package_dir(ws, package)
     loaded = Loaded(pkg)
     overrides: dict[str, Any] = copy.deepcopy(_overrides(ws, base))
     given = {
@@ -249,7 +255,7 @@ def simulate2d(
     from afsim_research_agent.ir.v2.sim import simulate
     from afsim_research_agent.replay.build import from_sim
 
-    pkg = _package(ws, package)
+    pkg = _package_dir(ws, package)
     loaded = Loaded(pkg)
     kit = merge(base_kit(), _overrides(ws, scenario))
     binding = loaded.binding(kit)
@@ -327,7 +333,7 @@ def afsim_run(
             "本地没有配置 AFSIM（FALCON_AFSIM_BINDING / FALCON_AFSIM_KIT）",
         )
     binding_path, mission = paths
-    pkg = _package(ws, package)
+    pkg = _package_dir(ws, package)
     loaded = Loaded(pkg)
     kit = merge(base_kit(), _overrides(ws, scenario))
     extra: list[dict[str, Any]] = []

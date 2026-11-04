@@ -419,38 +419,125 @@ def _leaves(node: Any, out: list[dict[str, Any]]) -> None:
             _leaves(value, out)
 
 
-def check_binding(model: dict[str, Any], binding: Binding) -> list[str]:
-    """What the scenario cannot give the model (a normalized model): an unbound scenario
-    parameter, or an action whose route or point does not come from the interface. Each
-    item names where to fix it."""
-    out: list[str] = []
+# Who fixes an interface-parameter finding (routing; see ``interface_param_issues``):
+#   unbound parameter (the kit has no value for a scenario parameter) -> scenario / kit:
+#       ``check_binding``; the model is not run until the binding gives it
+#   not_interface (a name or literal that is no interface route / point) -> model: repair
+#   missing, written by the drafter                                       -> model: repair
+#   missing, inside a tactic-set subtree -> the platform kit's default; AFSIM decides
+#       (the 2D simulation cannot judge it), the AFSIM loop is not skipped
+ROUTING = {
+    "unbound": "scenario",
+    "not_interface": "model",
+    "missing:model": "model",
+    "missing:subtree": "kit_default",
+}
+
+
+class ParamIssue(BaseModel):
+    """A route / point action whose route / point parameter is absent or does not come from
+    the scenario interface."""
+
+    kind: Literal["missing", "not_interface"]
+    role: str
+    state: str
+    action: str
+    param: str
+    need: str  # route | point
+    origin: str  # "model" (written by the drafter) or the tactic-set subtree it came from
+    value: str | None = None  # what was written instead (not_interface)
+    literal: bool = False  # a written value, not a parameter (also SCN_LITERAL in the sheet)
+
+    @property
+    def route(self) -> str:
+        """``ROUTING`` key: who fixes it."""
+        if self.kind == "not_interface":
+            return "not_interface"
+        return "missing:model" if self.origin == "model" else "missing:subtree"
+
+    def message(self) -> str:
+        kind = "路线" if self.need == "route" else "位置"
+        where = f"{self.role}.{self.state}"
+        if self.kind == "not_interface":
+            return (
+                f"{where} 中的 {self.action} 的 {self.param} 是 {self.value!r}，不是想定接口提供的"
+                f"{kind}：想定不会布设它，改用 {self.need}=<接口名>"
+            )
+        if self.origin == "model":
+            return (
+                f"{where} 中的 {self.action} 没有写{kind}参数，车辆不知道去哪："
+                f"写成 {self.need}=<接口名>（见想定接口）"
+            )
+        return (
+            f"{where}：子树 {self.origin} 中的 {self.action} 没有{kind}参数，由平台装备包的"
+            "默认值提供（二维仿真判定不了，以 AFSIM 运行为准；该角色若不应沿路线行进，"
+            "换用适合该角色的子树）"
+        )
+
+
+def interface_param_issues(model: dict[str, Any]) -> list[ParamIssue]:
+    """Route / point actions (``REQUIRES``) whose parameter is absent or is not an interface
+    route / point, per role and state (``ROUTING`` says who fixes each)."""
     tags = scenario_tags(model)
-    for name, tag in tags.items():
+    out: list[ParamIssue] = []
+    seen: set[tuple[str, ...]] = set()
+    for rid, role in (model.get("roles") or {}).items():
+        for sname, state in (role.get("states") or {}).items():
+            leaves: list[dict[str, Any]] = []
+            _leaves(state, leaves)
+            for leaf in leaves:
+                action = str(leaf.get("action"))
+                origin = str(leaf.get("origin") or "model")
+                params = leaf.get("params") or {}
+                for need in REQUIRES.get(action, ()):
+                    absent = [p for p in _PARAM_OF[need] if params.get(p) is None]
+                    issue = None
+                    if absent:
+                        issue = ParamIssue(
+                            kind="missing",
+                            role=rid,
+                            state=str(sname),
+                            action=action,
+                            param=absent[0],
+                            need=need,
+                            origin=origin,
+                        )
+                    else:
+                        for pname in _PARAM_OF[need]:
+                            value = params[pname]
+                            ref = value.get("parameter_ref") if isinstance(value, dict) else None
+                            if ref not in tags:
+                                issue = ParamIssue(
+                                    kind="not_interface",
+                                    role=rid,
+                                    state=str(sname),
+                                    action=action,
+                                    param=pname,
+                                    need=need,
+                                    origin=origin,
+                                    value=str(ref or value),
+                                    literal=ref is None,
+                                )
+                                break
+                    if issue is None:
+                        continue
+                    key = (issue.kind, rid, str(sname), action, need, origin)
+                    if key not in seen:
+                        seen.add(key)
+                        out.append(issue)
+    return out
+
+
+def check_binding(model: dict[str, Any], binding: Binding) -> list[str]:
+    """What the scenario cannot give the model (a normalized model): a scenario parameter the
+    binding has no value for. Route / point actions that name no interface route / point, or
+    none at all, are the model's (or the kit's) business: ``interface_param_issues``."""
+    out: list[str] = []
+    for name, tag in scenario_tags(model).items():
         if name not in binding.parameters:
             out.append(
                 f"想定参数 {name}（{tag}）在想定绑定中没有取值：在想定设置的 [binding] 中给出"
             )
-    leaves: list[dict[str, Any]] = []
-    for role in (model.get("roles") or {}).values():
-        _leaves(role.get("states"), leaves)
-    seen: set[tuple[str, str]] = set()
-    for leaf in leaves:
-        action = str(leaf.get("action"))
-        for need in REQUIRES.get(action, ()):
-            for pname in _PARAM_OF[need]:
-                value = (leaf.get("params") or {}).get(pname)
-                ref = value.get("parameter_ref") if isinstance(value, dict) else None
-                key = (action, pname)
-                if key in seen:
-                    continue
-                if ref not in tags:
-                    seen.add(key)
-                    shown = ref or value
-                    out.append(
-                        f"{action} 的 {pname} 是 {shown!r}，不是想定接口提供的"
-                        f"{'路线' if need == 'route' else '位置'}：想定不会布设它，"
-                        f"改用 {need}=<接口名>"
-                    )
     return out
 
 

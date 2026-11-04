@@ -94,10 +94,46 @@ def generation_model_name() -> str:
     return os.getenv("FALCON_CHAT_MODEL") or Settings.from_environment().chat_model
 
 
-def _package(ws: Workspace, package: str) -> Path:
+V3_TOOLS = (
+    "scenario_show / scenario_set / simulate2d / afsim_run（修改模型用 falcon_draft3 重新起草）"
+)
+
+
+def package_format(path: Path) -> str | None:
+    """``"v3"`` for an IR 2.0 package (Falcon v3), ``"v2"`` for an IR 1.0 package, ``None``
+    when the directory has no readable ``behavior_spec.yaml``."""
+    spec = path / "behavior_spec.yaml"
+    if not spec.is_file():
+        return None
+    try:
+        data = yaml.safe_load(spec.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError):
+        return None
+    version = str(data.get("schema_version", "")) if isinstance(data, dict) else ""
+    if version.startswith("2"):
+        return "v3"
+    if version.startswith("1"):
+        return "v2"
+    return None
+
+
+def _package_dir(ws: Workspace, package: str) -> Path:
+    """An existing model package directory in the workspace (any format)."""
     path = ws.existing(package, kind="模型包目录")
     if not path.is_dir():
         raise WorkspaceError(f"不是目录：{ws.show(path)}")
+    return path
+
+
+def _package(ws: Workspace, package: str) -> Path:
+    """A v2 (IR 1.0) model package for the old-flow tools; a v3 package is refused with the
+    tools that handle it (the old tools cannot read IR 2.0 and their errors mislead)."""
+    path = _package_dir(ws, package)
+    if package_format(path) == "v3":
+        raise WorkspaceError(
+            f"{ws.show(path)} 是 v3 模型包（IR 2.0），旧流程工具不能处理它。"
+            f"v3 模型包用 {V3_TOOLS}；模型包本身没有损坏"
+        )
     return path
 
 

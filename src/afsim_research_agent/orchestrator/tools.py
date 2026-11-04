@@ -423,8 +423,44 @@ ASK_HUMAN_DESCRIPTION = (
 )
 
 
-def approval_tools() -> list[str]:
-    return [s.name for s in TOOL_SPECS if s.needs_approval]
+# the old (v2, IR 1.0) flow and its extensions: not given to the agent by default. They
+# cannot read v3 packages (IR 2.0), and offering both made the agent try them on v3 packages
+# and misread their errors as a broken package.
+LEGACY_TOOLS = frozenset(
+    {
+        "falcon_draft",
+        "falcon_check",
+        "falcon_compile",
+        "falcon_fix",
+        "falcon_properties",
+        "defer_tests",
+        "confirmation_status",
+        "apply_confirmations",
+        "ir_build",
+        "simulate",
+        "capability_gaps",
+        "plan_format",
+        "compile_plan",
+        "platform_export",
+        "draft_capability_plugin",
+    }
+)
+TOOLSETS = ("v3", "all")
+
+
+def toolset_names(toolset: str = "v3") -> set[str]:
+    """Tool names of a toolset: ``v3`` (the current flow, default) or ``all`` (with the old
+    flow, for v2 packages and the offline check). ``ask_human`` is in both."""
+    if toolset not in TOOLSETS:
+        raise ValueError(f"unknown toolset {toolset!r}; one of {TOOLSETS}")
+    names = {s.name for s in TOOL_SPECS} | {"ask_human"}
+    return names if toolset == "all" else names - LEGACY_TOOLS
+
+
+def approval_tools(include: set[str] | None = None) -> list[str]:
+    return [
+        s.name for s in TOOL_SPECS if s.needs_approval and (include is None or s.name in include)
+    ]
 
 
 # ============================================================================ building

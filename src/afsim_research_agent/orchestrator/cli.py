@@ -133,7 +133,7 @@ def _check(ws: Workspace, package: str | None) -> int:
     ]
     model = ScriptedChatModel(turns=turns)
     try:
-        agent = build_agent(model, workspace=ws, checkpointer=InMemorySaver())
+        agent = build_agent(model, workspace=ws, checkpointer=InMemorySaver(), toolset="all")
         record("create_deep_agent 组装", True)
     except Exception as exc:  # noqa: BLE001
         record("create_deep_agent 组装", False, f"{type(exc).__name__}: {exc}")
