@@ -158,8 +158,14 @@ async def crow_research(
     profile = None
     if pipeline is None:  # tests inject a pipeline and skip the model-backed profile
         report("任务画像：理解需求中的兵力、环境和约束")
-        profile = prepare_mission_profile(
-            requirement, settings=settings, output_dir=out, interactive=False
+        # the profiler runs its own event loop (asyncio.run), which cannot start inside this
+        # coroutine's loop: run it in a worker thread
+        profile = await asyncio.to_thread(
+            prepare_mission_profile,
+            requirement,
+            settings=settings,
+            output_dir=out,
+            interactive=False,
         )
     (md, js), result = await run_research_with_result(
         requirement,

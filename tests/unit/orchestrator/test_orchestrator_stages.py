@@ -277,3 +277,25 @@ def test_repair_loop_cannot_defer_tests(ws: Workspace) -> None:
     message = fixer.patch("verification", f"- id: {tid}\n", f"- id: {tid}\n    deferred: true\n")
     assert "deferred" in message and "拒绝" in message
     assert fixer.block("verification") == block
+
+
+def test_crow_research_builds_the_profile_outside_the_running_loop(
+    ws: Workspace, monkeypatch
+) -> None:
+    """The profiler calls asyncio.run; inside the stage's coroutine that needs a worker thread."""
+    from afsim_research_agent.crow import cli
+
+    seen: dict[str, object] = {}
+
+    def profile(requirement, *, settings, output_dir, interactive):
+        return asyncio.run(asyncio.sleep(0, result="profile"))
+
+    async def research(requirement, *, mission_profile, **kwargs):
+        seen["profile"] = mission_profile
+        raise RuntimeError("stop after the profile")
+
+    monkeypatch.setattr(cli, "prepare_mission_profile", profile)
+    monkeypatch.setattr(cli, "run_research_with_result", research)
+    result = asyncio.run(st.crow_research(ws, "需求", settings=object()))
+    assert seen["profile"] == "profile"
+    assert result.status == "blocked"
