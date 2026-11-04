@@ -15,6 +15,8 @@ $env:Path = "$node;$(Split-Path $py);$(Join-Path (Split-Path $py) 'Scripts');$en
 $env:YARN_CACHE_FOLDER = "<cache dir>\yarn-cache"
 $env:npm_config_cache = "<cache dir>\npm-cache"
 $env:NEXT_TELEMETRY_DISABLED = "1"
+# Python reads its files as UTF-8 (langgraph_api fails under a GBK locale otherwise)
+$env:PYTHONUTF8 = "1"
 # no traces of runs leave this machine
 $env:LANGSMITH_TRACING = "false"
 $env:LANGCHAIN_TRACING_V2 = "false"
