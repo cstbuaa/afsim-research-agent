@@ -76,3 +76,10 @@ def test_2d_runs_write_replays_the_workbench_serves(ws: Workspace) -> None:
 def test_afsim_run_needs_the_local_configuration(ws: Workspace) -> None:
     res = st3.afsim_run(ws, PKG)
     assert res.status == "not_configured"
+
+
+def test_server_info_names_the_orchestrator_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ORCHESTRATOR_MODEL", "qwen-test-model")
+    info = workbench.server_info()
+    assert info["orchestrator_model"] == "qwen-test-model"
+    assert info["pid"] > 0 and info["started"] > 0

@@ -6,7 +6,9 @@ Routes (local browser only; the frontend proxies ``/workbench/*`` to this server
 - ``GET /workbench/replays`` — recordings and 2D replays under the replay roots, newest
   first: ``[{id, source, title, size, mtime}]``;
 - ``GET /workbench/replay?id=<id>`` — one replay as ``replay/1`` JSON
-  (:mod:`afsim_research_agent.replay.build`).
+  (:mod:`afsim_research_agent.replay.build`);
+- ``GET /workbench/info`` — the orchestrator's model name, this server's process id and start
+  time (which server process answers, and with which model).
 
 Replay roots: ``<data>/runs`` and the directories in ``WORKBENCH_REPLAY_ROOTS`` (``;``
 separated; e.g. local lab runs). An id is ``<root index>:<path relative to that root>``; a
@@ -23,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any
@@ -183,8 +186,26 @@ async def _get(request: Request) -> JSONResponse:
     return JSONResponse(replay)
 
 
+_STARTED = time.time()
+
+
+def server_info() -> dict[str, Any]:
+    from afsim_research_agent.orchestrator.graph import orchestrator_model_name
+
+    return {
+        "orchestrator_model": orchestrator_model_name(),
+        "pid": os.getpid(),
+        "started": _STARTED,
+    }
+
+
+async def _info(request: Request) -> JSONResponse:
+    return JSONResponse(server_info())
+
+
 app = Starlette(
     routes=[
+        Route("/workbench/info", _info, methods=["GET"]),
         Route("/workbench/replays", _list, methods=["GET"]),
         Route("/workbench/replay", _get, methods=["GET"]),
     ]
