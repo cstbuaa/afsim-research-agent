@@ -157,3 +157,13 @@ def test_no_shot_is_expected_when_only_an_unsent_order_leads_to_firing() -> None
     kit = {**KIT, "events": {**KIT["events"], "fire_order": 30}}
     run = generate(model, kit, _contracts())
     assert [(x.kind, x.by) for x in run.expect.events] == [("WEAPON_FIRED", "member")]
+
+
+def test_an_approaching_enemy_gets_a_route_towards_the_own_start() -> None:
+    kit = {**KIT, "enemy": {**KIT["enemy"], "range_m": 7000.0, "approach_speed_mps": 10.0}}
+    run = generate(_model(), kit, _contracts())
+    red = [line for line in run.extra.splitlines() if line.startswith("platform red_1")][0]
+    assert "heading 270 deg route position" in red and "speed 10 m/s" in red
+    assert red.count("position ") == 2 and red.endswith("end_platform") and "end_route" in red
+    still = generate(_model(), KIT, _contracts())
+    assert "route" not in [x for x in still.extra.splitlines() if "red_1" in x][0]

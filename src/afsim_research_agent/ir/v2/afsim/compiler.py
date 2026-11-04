@@ -338,6 +338,8 @@ class Compiler:
         mission = role["mission"]
         entry = [
             'PLATFORM.SetAuxData("ir_entered_s", TIME_NOW);',
+            # the state name in the recording (.aer): replays show it without the console
+            f'PLATFORM.SetAuxData("ir_state", "{s}");',
             'PLATFORM.SetAuxData("ir_hops", PLATFORM.AuxDataInt("ir_hops") + 1);',
             *[f'PLATFORM.SetAuxData("{g}", false);' for g in st.guards],
             *(

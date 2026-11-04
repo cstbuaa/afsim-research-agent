@@ -20,6 +20,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from afsim_research_agent.orchestrator import stages as st
+from afsim_research_agent.orchestrator import stages3 as st3
 from afsim_research_agent.orchestrator.extensions import ExtensionRegistry
 from afsim_research_agent.orchestrator.workspace import Workspace
 
@@ -135,6 +136,41 @@ class SimulateArgs(PackageArgs):
     scenario: str | None = Field(None, description="只跑某个想定 id")
 
 
+class ScenarioArgs(PackageArgs):
+    scenario: str | None = Field(
+        None, description="scenario_set 写出的想定文件（工作区路径）；缺省用基准想定"
+    )
+
+
+class ScenarioSetArgs(PackageArgs):
+    name: str = Field("", description="想定名（字母数字下划线），如 far7k；缺省按时间命名")
+    end_time_s: float | None = Field(None, description="运行时长，秒")
+    enemy_count: int | None = Field(None, description="敌方车辆数")
+    enemy_range_m: float | None = Field(None, description="敌方起始距离（沿出发朝向），米")
+    enemy_spacing_m: float | None = Field(None, description="敌方横向间距，米")
+    enemy_approach_speed_mps: float | None = Field(
+        None, description="敌方向我方开进的速度，米/秒；0 为静止"
+    )
+    enemy_stop_range_m: float | None = Field(None, description="敌方开进到距我方多远停下，米")
+    events: dict[str, float] = Field(
+        default_factory=dict, description="模型事件的发出时间，秒；负数为结束前多少秒"
+    )
+    points: dict[str, list[float]] = Field(
+        default_factory=dict, description="想定接口点的位置 [东, 北]，米，相对我方出发点"
+    )
+    base: str | None = Field(None, description="在这个已有想定文件的基础上修改")
+
+
+class Simulate2dArgs(ScenarioArgs):
+    only: str | None = Field(None, description="只跑某个想定 id（scenario_baseline 为基准想定）")
+
+
+class AfsimRunArgs(ScenarioArgs):
+    acceptance: str | None = Field(
+        None, description="独立验收标准文件（obligations 列表，工作区路径），可选"
+    )
+
+
 class AskHumanArgs(BaseModel):
     question: str = Field(description="要用户决定的问题，写清背景和影响")
     options: list[str] = Field(
@@ -175,7 +211,7 @@ class ToolSpec:
     stage: Callable[..., Any]
     args: type[BaseModel]
     description: str
-    group: str  # crow | falcon | ir | human | extension | meta
+    group: str  # crow | falcon | scenario | ir | human | extension | meta
     uses_model: bool = False
     needs_approval: bool = False  # paused by HumanInTheLoopMiddleware before running
 
@@ -220,6 +256,38 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         "（可选在循环中运行 AFSIM）。优先使用这个工具。",
         "falcon",
         uses_model=True,
+    ),
+    ToolSpec(
+        "scenario_show",
+        st3.scenario_show,
+        ScenarioArgs,
+        "查看模型包所在的想定：运行时长、敌方数量/起始距离/开进速度、接口点与路线、事件时间。",
+        "scenario",
+    ),
+    ToolSpec(
+        "scenario_set",
+        st3.scenario_set,
+        ScenarioSetArgs,
+        "按用户要求写一个新的想定文件（改敌方距离与速度、运行时长、事件时间、点的位置），"
+        "不改模型包。调用前会暂停等用户批准。",
+        "scenario",
+        needs_approval=True,
+    ),
+    ToolSpec(
+        "simulate2d",
+        st3.simulate2d,
+        Simulate2dArgs,
+        "二维仿真：运行 v3 模型包的验证想定和一次基准想定，生成回放（工作台仿真面板可看）。",
+        "scenario",
+    ),
+    ToolSpec(
+        "afsim_run",
+        st3.afsim_run,
+        AfsimRunArgs,
+        "在 AFSIM 中运行一次 v3 模型包（不修改模型），判定需求约束和可选的独立验收标准，"
+        "生成回放。耗时约 1–5 分钟。调用前会暂停等用户批准。",
+        "scenario",
+        needs_approval=True,
     ),
     ToolSpec(
         "falcon_draft",
@@ -294,7 +362,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         "simulate",
         st.simulate,
         SimulateArgs,
-        "在二维仿真中运行模型包的想定，返回每个想定通过与否和未通过的期望。",
+        "旧版（v2 模型包）二维想定；v3 模型包用 simulate2d。",
         "ir",
     ),
     ToolSpec(

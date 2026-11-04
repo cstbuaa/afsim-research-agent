@@ -239,3 +239,16 @@ def test_a_move_to_the_start_compiles_to_a_stop(contracts: Contracts) -> None:
     out = compile_sheet(sheet, contracts, model_id="op", scenario_interface=derive(R2).model_dump())
     leaf = out.spec["subtrees"][0]["root"]["children"][0]
     assert leaf["action"] == "movement.stop" and not leaf.get("params")
+
+
+def test_an_approaching_enemy_moves_in_the_2d_scenario() -> None:
+    from afsim_research_agent.ir.v2.scenario_interface import bind, bind_scenario, derive
+
+    iface = derive("单车前出约 1 km 建立观察哨")
+    kit = {"enemy": {"range_m": 7000.0, "approach_speed_mps": 10.0, "count": 1}}
+    b = bind(iface, kit)
+    assert b.enemy_velocity == (-10.0, -0.0) and b.enemy_stop_m == 500.0
+    model = {"roles": {"car": {"role": {"count": 1}}}}
+    sc = bind_scenario({"id": "s"}, model, b)
+    assert sc["hostiles"][0]["velocity_mps"] == [-10.0, -0.0]
+    assert "velocity_mps" not in bind_scenario({"id": "s"}, model, bind(iface, {}))["hostiles"][0]

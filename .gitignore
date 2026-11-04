@@ -30,3 +30,7 @@ Thumbs.db
 # the capability set is exported from the lab project and stays on this machine
 datasets/platform_capabilities/*
 !datasets/platform_capabilities/README.md
+
+# frontend (deep-agents-ui)
+frontend/node_modules/
+frontend/.next/

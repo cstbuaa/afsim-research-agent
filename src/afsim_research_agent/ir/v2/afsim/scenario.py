@@ -44,6 +44,9 @@ types, auxiliary-data keys and observer files); this module only fills it in::
     count = 2
     range_m = 650.0
     spacing_m = 200.0
+    approach_speed_mps = 0.0         # > 0: the enemy drives towards the own start ...
+    stop_range_m = 500.0             # ... and stops this far from it (the platform template
+                                     # must contain "position {lat} {lon}")
     platform = "platform {name} <type> side red position {lat} {lon} ... end_platform"
     [events]
     cancelled = -20                  # seconds; negative: before the end of the run
@@ -336,7 +339,20 @@ def generate(
         lat, lon = _pos(*_offset(lat0, lon0, north, east))
         name = f"red_{i + 1}"
         enemy_names.append(name)
-        enemies.append(_fill(enemy.get("platform", ""), {"name": name, "lat": lat, "lon": lon}))
+        text = _fill(enemy.get("platform", ""), {"name": name, "lat": lat, "lon": lon})
+        speed = float(enemy.get("approach_speed_mps", 0.0) or 0.0)
+        if speed > 0 and f"position {lat} {lon}" in text:
+            # drives towards the own start along the heading, stops stop_range_m short
+            stop = float(enemy.get("stop_range_m", 500.0))
+            north2 = stop * math.cos(ahead) + side_off * math.cos(across)
+            east2 = stop * math.sin(ahead) + side_off * math.sin(across)
+            lat2, lon2 = _pos(*_offset(lat0, lon0, north2, east2))
+            text = text.replace(
+                f"position {lat} {lon}",
+                f"heading {(heading + 180.0) % 360.0:g} deg route position {lat} {lon} speed "
+                f"{speed:g} m/s position {lat2} {lon2} speed {speed:g} m/s end_route",
+            )
+        enemies.append(text)
 
     end_s = float(meta.get("end_time_s", 80))
     events = []

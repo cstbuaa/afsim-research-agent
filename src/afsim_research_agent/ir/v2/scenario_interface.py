@@ -220,6 +220,10 @@ class Binding(_Strict):
     events: dict[str, float | None] = Field(default_factory=dict)  # id → time (None: never)
     parameters: dict[str, Any] = Field(default_factory=dict)  # model parameter → value
     enemies_plane: list[tuple[float, float]] = Field(default_factory=list)
+    # enemy approach (kit ``[enemy] approach_speed_mps``): velocity east / north (m/s), and
+    # the distance from the origin where the approach ends (AFSIM route end)
+    enemy_velocity: tuple[float, float] = (0.0, 0.0)
+    enemy_stop_m: float | None = None
     defaults: list[str] = Field(default_factory=list)  # values initialised by default
 
     def route_named(self, name: str) -> BoundRoute | None:
@@ -335,6 +339,11 @@ def bind(
     gap = float(enemy.get("spacing_m", 200.0))
     n = int(enemy.get("count", 2))
     across = h + math.pi / 2
+    approach = float(enemy.get("approach_speed_mps", 0.0) or 0.0)
+    if approach > 0:
+        # the enemy drives towards the own start, along the heading
+        out.enemy_velocity = (round(-approach * math.sin(h), 3), round(-approach * math.cos(h), 3))
+        out.enemy_stop_m = float(enemy.get("stop_range_m", 500.0))
     for i in range(n):
         off = (i - (n - 1) / 2) * gap
         out.enemies_plane.append(
@@ -486,7 +495,13 @@ def bind_scenario(raw: dict[str, Any], model: dict[str, Any], binding: Binding) 
     sc["vehicles"] = vehicles
     if not sc.get("hostiles"):
         sc["hostiles"] = [
-            {"id": f"e{i + 1}", "position_m": list(p)} for i, p in enumerate(binding.enemies_plane)
+            {"id": f"e{i + 1}", "position_m": list(p)}
+            | (
+                {"velocity_mps": list(binding.enemy_velocity)}
+                if any(binding.enemy_velocity)
+                else {}
+            )
+            for i, p in enumerate(binding.enemies_plane)
         ]
     return sc
 
