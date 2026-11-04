@@ -301,3 +301,30 @@ def test_the_binding_reports_only_what_the_scenario_lacks(contracts: Contracts) 
     bound.parameters.pop("rt_approach")
     problems = check_binding(model, bound)
     assert len(problems) == 1 and "rt_approach" in problems[0]
+
+
+def test_the_kits_routes_follow_the_scenarios_ahead_point(contracts: Contracts) -> None:
+    """A scenario that moves "ahead" moves the kit's own routes and endpoints with it (the
+    formation search route stayed at the kit's 350 m in a 9 km scenario, r3 11-04)."""
+    iface = derive(R1).model_dump()
+    spec = compile_sheet(
+        _sheet("route=approach"), contracts, model_id="op", scenario_interface=iface
+    ).spec
+    model = normalize(spec, contracts).model
+    kit = {
+        "meta": {"origin": [45.0, -121.0], "heading_deg": 90.0, "ahead_m": 350.0, "end_time_s": 80},
+        "enemy": {
+            "range_m": 9000.0,
+            "platform": "platform {name} T side red position {lat} {lon} end_platform",
+        },
+        "binding": {"points": {"ahead": [12000.0, 0.0]}},
+        "slices": {
+            "movement": {
+                "preamble": "route kit_route position {ahead_lat} {ahead_lon} end_route",
+                "aux": "double far = {ahead_lon_deg}",
+            }
+        },
+    }
+    run = generate(model, kit, contracts)
+    far = float(run.platforms[0].body.split("double far = ")[1].split()[0])
+    assert far == pytest.approx(-121.0 + 12000.0 / (111_320.0 * 0.70710678), abs=1e-3)

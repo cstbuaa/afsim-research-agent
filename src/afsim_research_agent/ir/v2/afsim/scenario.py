@@ -251,6 +251,11 @@ def generate(
     rng = float(enemy.get("range_m", 650.0))
     ahead_m = float(meta.get("ahead_m", rng / 2))
     a_lat, a_lon = _offset(lat0, lon0, ahead_m * math.cos(ahead), ahead_m * math.sin(ahead))
+    if "ahead" in bound.points_geo:
+        # the scenario's own "ahead" point (a scenario may move it): the kit's routes and
+        # endpoints ({ahead_lat} ...) go there too, not to the kit's default distance (r3,
+        # 11-04: the formation search route stayed 350 m long in a 9 km scenario)
+        a_lat, a_lon = (float(v) for v in bound.points_geo["ahead"])
     common = {
         "origin_lat": _pos(lat0, lon0)[0],
         "origin_lon": _pos(lat0, lon0)[1],
