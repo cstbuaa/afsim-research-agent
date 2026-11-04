@@ -42,6 +42,36 @@ export interface Replay {
 }
 
 export const OPEN_REPLAY_EVENT = "workbench:open-replay";
+export const PROGRESS_EVENT = "workbench:progress";
+
+// one progress line of a running tool (orchestrator/tools.py _progress)
+export interface ProgressEvent {
+  type: "workbench_progress";
+  tool: string;
+  kind: "start" | "progress" | "heartbeat" | "end";
+  t: number; // seconds since the tool started
+  text: string;
+}
+
+export const TOOL_LABELS: Record<string, string> = {
+  overview: "了解流程",
+  crow_research: "检索资料（Crow）",
+  crow_propose: "提出候选战术（Crow）",
+  select_tactic: "记录选定的战术",
+  falcon_draft3: "起草行为模型（Falcon v3）",
+  scenario_show: "查看想定",
+  scenario_set: "修改想定",
+  simulate2d: "二维仿真",
+  afsim_run: "AFSIM 运行",
+  ask_human: "向你提问",
+  write_todos: "制定计划",
+  read_file: "读取文件",
+  ls: "查看目录",
+};
+
+export function toolLabel(name: string): string {
+  return TOOL_LABELS[name] ? `${TOOL_LABELS[name]} · ${name}` : name;
+}
 
 export async function listReplays(): Promise<ReplayEntry[]> {
   const res = await fetch("/workbench/replays", { cache: "no-store" });

@@ -11,7 +11,32 @@ import {
   StopCircle,
   MonitorPlay,
 } from "lucide-react";
-import { openReplay, replayPaths } from "@/lib/workbench";
+import {
+  PROGRESS_EVENT,
+  ProgressEvent,
+  openReplay,
+  replayPaths,
+  toolLabel,
+} from "@/lib/workbench";
+
+// the latest progress lines of a running tool (custom stream events)
+function useToolProgress(name: string, active: boolean): string[] {
+  const [lines, setLines] = useState<string[]>([]);
+  React.useEffect(() => {
+    if (!active) return;
+    const handler = (ev: Event) => {
+      const e = (ev as CustomEvent).detail as ProgressEvent;
+      if (!e || e.tool !== name) return;
+      if (e.kind === "start") setLines([]);
+      else if (e.kind === "heartbeat")
+        setLines((prev) => [...prev.filter((l) => !l.startsWith("仍在运行")), e.text].slice(-6));
+      else setLines((prev) => [...prev.filter((l) => !l.startsWith("仍在运行")), e.text].slice(-6));
+    };
+    window.addEventListener(PROGRESS_EVENT, handler);
+    return () => window.removeEventListener(PROGRESS_EVENT, handler);
+  }, [name, active]);
+  return lines;
+}
 import { Button } from "@/components/ui/button";
 import { ToolCall, ActionRequest, ReviewConfig } from "@/app/types/types";
 import { cn } from "@/lib/utils";
@@ -103,6 +128,7 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
     }, []);
 
     const hasContent = result || Object.keys(args).length > 0;
+    const live = useToolProgress(name, status === "pending");
     const replays = useMemo(
       () => replayPaths(typeof result === "string" ? result : JSON.stringify(result ?? "")),
       [result]
@@ -128,7 +154,7 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
             <div className="flex items-center gap-2">
               {statusIcon}
               <span className="text-[15px] font-medium tracking-[-0.6px] text-foreground">
-                {name}
+                {toolLabel(name)}
               </span>
             </div>
             {hasContent &&
@@ -146,6 +172,15 @@ export const ToolCallBox = React.memo<ToolCallBoxProps>(
           </div>
         </Button>
 
+        {status === "pending" && live.length > 0 && (
+          <div className="space-y-0.5 px-8 pb-2 font-mono text-[11px] leading-5 text-muted-foreground">
+            {live.map((l, i) => (
+              <div key={i} className={i === live.length - 1 ? "text-foreground" : ""}>
+                {l}
+              </div>
+            ))}
+          </div>
+        )}
         {replays.length > 0 && (
           <div className="flex flex-wrap gap-2 px-2 pb-2">
             {replays.slice(0, 6).map((path) => (

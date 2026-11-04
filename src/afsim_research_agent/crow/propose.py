@@ -38,6 +38,7 @@ from afsim_research_agent.crow.proposal_report import write_proposal
 from afsim_research_agent.falcon.evidence import normalize_evidence, write_package
 from afsim_research_agent.falcon.llm import DashScopeModel, FalconModel, ModelRunner
 from afsim_research_agent.falcon.models import EvidencePackage
+from afsim_research_agent.progress import report
 
 
 @dataclass
@@ -45,6 +46,12 @@ class ProposalRun:
     result: ProposalResult
     package: EvidencePackage
     paths: dict[str, Path]
+
+
+def _say(text: str) -> None:
+    """A step of the proposal run: on the console and in the workbench."""
+    print(text)
+    report(text.rstrip("…"))
 
 
 def load_crow_result(run_dir: Path) -> CrowResearchResult:
@@ -126,7 +133,7 @@ async def run_proposal(
     if package_path.is_file():
         package = EvidencePackage.model_validate_json(package_path.read_text(encoding="utf-8"))
     else:
-        print("正在规范化证据（F1）……")
+        _say("正在规范化证据（F1）……")
         package = await normalize_evidence(crow, requirement, runner)
         package_path = run_dir / "evidence_package.json"
         write_package(package, package_path)
@@ -152,7 +159,7 @@ async def run_proposal(
         ),
         retriever=retriever,
     )
-    print("正在提出候选战术……")
+    _say("正在提出候选战术……")
     result = await proposer.propose(
         requirement,
         package,
@@ -163,7 +170,7 @@ async def run_proposal(
     annotator = None
     cap_runner = runner
     if catalog is not None:
-        print("正在标注候选战术所需的平台能力（C4b）……")
+        _say("正在标注候选战术所需的平台能力（C4b）……")
         cap_runner = (
             ModelRunner(DashScopeModel(settings.crow_capability_model))
             if settings.crow_capability_model and model is None
@@ -175,7 +182,7 @@ async def run_proposal(
     if redteam and result.candidates:
         from afsim_research_agent.crow.redteam import run_redteam, write_c5
 
-        print("正在进行红方审查与回应（C5）……")
+        _say("正在进行红方审查与回应（C5）……")
         red_name = settings.crow_redteam_model
         proposer_name = settings.crow_proposer_model or settings.chat_model
         red_runner = ModelRunner(red_model or DashScopeModel(red_name))

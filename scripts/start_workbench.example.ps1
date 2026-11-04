@@ -21,7 +21,7 @@ $env:PYTHONUTF8 = "1"
 $env:LANGSMITH_TRACING = "false"
 $env:LANGCHAIN_TRACING_V2 = "false"
 # the orchestrator's model (generation and repair keep FALCON_CHAT_MODEL / the default)
-$env:ORCHESTRATOR_MODEL = "qwen3-max"
+$env:ORCHESTRATOR_MODEL = "qwen3.8-max"
 # AFSIM for afsim_run / falcon_draft3 afsim=true (paths stay on the server side)
 $env:FALCON_AFSIM_BINDING = "<binding .toml>"
 $env:FALCON_AFSIM_KIT = "<scenario kit .toml>"

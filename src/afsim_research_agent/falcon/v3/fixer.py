@@ -51,6 +51,7 @@ from afsim_research_agent.falcon.sheet.blocks import Block
 from afsim_research_agent.falcon.v3 import catalog as K
 from afsim_research_agent.falcon.v3 import triage
 from afsim_research_agent.ir.v2.sim import simulate
+from afsim_research_agent.progress import report
 
 RESULT_LIMIT = 5000
 MAX_READS = 4  # consecutive show calls without an edit before show is refused
@@ -968,6 +969,7 @@ async def fix_sheet(
             continue
         a = action.args
         reason = str(a.get("reason") or action.thought)[:300]
+        report(f"修复循环第 {step}/{max_steps} 步：{action.action}")
         if action.action in ("edit", "revert", "diagnose", "classify"):
             fixer.reads = 0
         finish_refused = False

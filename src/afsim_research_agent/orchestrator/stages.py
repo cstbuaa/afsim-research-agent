@@ -27,6 +27,7 @@ import yaml
 from afsim_research_agent.orchestrator.extensions import ExtensionRegistry, get_registry
 from afsim_research_agent.orchestrator.results import StageResult
 from afsim_research_agent.orchestrator.workspace import Workspace, WorkspaceError
+from afsim_research_agent.progress import report
 
 SHEET_FILE = "tactic_sheet.md"
 DECISIONS_FILE = "decisions.yaml"
@@ -154,6 +155,7 @@ async def crow_research(
     out.mkdir(parents=True)
     profile = None
     if pipeline is None:  # tests inject a pipeline and skip the model-backed profile
+        report("任务画像：理解需求中的兵力、环境和约束")
         profile = prepare_mission_profile(
             requirement, settings=settings, output_dir=out, interactive=False
         )

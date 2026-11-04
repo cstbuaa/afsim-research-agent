@@ -41,6 +41,8 @@ from afsim_research_agent.literature.models import (
     SourceCollectionRequest,
 )
 from afsim_research_agent.literature.paperqa_backend import PaperQABackend, PaperQACorpus
+from afsim_research_agent.progress import report as progress
+from afsim_research_agent.progress import stage_label
 
 
 class ResearchPlanner(Protocol):
@@ -90,9 +92,7 @@ class CrowResearchPipeline:
         self._settings = app_settings or Settings.from_environment()
         self._planner = planner or TacticalResearchPlanner(app_settings=self._settings)
         self._collector_factory = collector_factory or self._default_collector
-        self._literature_backend = literature_backend or PaperQABackend(
-            app_settings=self._settings
-        )
+        self._literature_backend = literature_backend or PaperQABackend(app_settings=self._settings)
         self._thresholds = readiness_thresholds or ReadinessThresholds()
 
     def _default_collector(self, output_dir: Path) -> Collector:
@@ -141,6 +141,7 @@ class CrowResearchPipeline:
         )
 
         started = time.perf_counter()
+        progress("研究规划：分解研究问题、生成检索词")
         if mission_profile is None:
             plan = await self._planner.plan(requirement)
         else:
@@ -162,7 +163,12 @@ class CrowResearchPipeline:
             max_total_sources=budget,
         )
         started = time.perf_counter()
+        progress(
+            f"检索资料：{len(request.search_queries) + len(request.scholarly_queries)} 组检索词，"
+            f"最多采用 {budget} 个来源"
+        )
         documents = await _in_thread(collector.collect, request)
+        progress(f"检索完成，得到 {len(documents)} 份资料")
         manifest.timings.append(_timing("collect_round_1", started))
 
         corpus: PaperQACorpus | None = None
@@ -173,7 +179,8 @@ class CrowResearchPipeline:
             manifest.timings.append(_timing("embed_round_1", started))
             if not corpus.is_empty:
                 started = time.perf_counter()
-                for question in plan.research_questions:
+                for k, question in enumerate(plan.research_questions, start=1):
+                    progress(f"整理证据 {k}/{len(plan.research_questions)}：{question[:60]}")
                     reports[question] = await self._literature_backend.query_corpus(
                         question, corpus
                     )
@@ -205,6 +212,7 @@ class CrowResearchPipeline:
             ):
                 break
             plan.followup_rounds.append(followup)
+            progress(f"补充检索第 {round_number} 轮：{len(weak)} 个研究问题证据不足")
             new_documents = await _in_thread(
                 collector.collect,
                 SourceCollectionRequest(
@@ -276,4 +284,6 @@ async def _in_thread(function: Callable[..., T], *args: object) -> T:
 
 
 def _timing(stage: str, started: float) -> StageTiming:
-    return StageTiming(stage=stage, seconds=round(time.perf_counter() - started, 2))
+    timing = StageTiming(stage=stage, seconds=round(time.perf_counter() - started, 2))
+    progress(f"完成：{stage_label(stage)}（{timing.seconds:.0f} s）")
+    return timing

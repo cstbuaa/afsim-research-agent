@@ -56,6 +56,7 @@ from afsim_research_agent.ir.v2.obligations import check as check_obligations
 from afsim_research_agent.ir.v2.obligations import render as render_obligations
 from afsim_research_agent.ir.v2.scenario_interface import scenario_tags
 from afsim_research_agent.ir.v2.sim import run_l2, simulate
+from afsim_research_agent.progress import report
 
 FALCON_V3_VERSION = "falcon-3.0.0"
 SHEET_FILE = "tactic_sheet.md"
@@ -1468,7 +1469,9 @@ async def _draft(
 ) -> tuple[Check, list[Any]]:
     request = drafter.r
     if structure is None:
+        report("起草：结构稿（角色、状态、参数）")
         structure = await drafter.structure_stage()
+    report("起草：控制稿（状态图、条件、行为树）")
     control = drafter.autofix(await drafter.control_stage(structure))
     budget = request.fix_steps
     fixes: list[Any] = []
@@ -1476,6 +1479,7 @@ async def _draft(
         fixes.append(await fix_sheet(drafter, run, max(1, budget // 2), l1_only=True))
         budget -= fixes[-1].steps
         control = drafter.autofix(drafter.check())
+    report(f"检查 L1：{'通过' if control.l1_ok else '未通过，进入修复'}")
     check = await drafter.verification_stage(control) if control.l1_ok else control
     if not check.verified and budget > 0:
         fixes.append(await fix_sheet(drafter, run, budget))
@@ -1746,6 +1750,7 @@ async def _afsim_rounds(
     async def probe(model: dict[str, Any]) -> tuple[bool, str, bool]:
         """One AFSIM run of the current sheet: (passed, feedback, infrastructure failure)."""
         index = len(history.rounds)
+        report(f"AFSIM 第 {index + 1} 次运行：编译并运行……")
         out = staging / "afsim" / f"round_{index}"
         obligations = [o.model_dump(exclude_none=True) for o in drafter.obligations]
         results, runs, error = await asyncio.to_thread(
@@ -1775,6 +1780,7 @@ async def _afsim_rounds(
             AfsimRound(index, passed, text, local, out, judged, [f.to_dict() for f in findings])
         )
         drafter.notes.append(f"AFSIM 第 {index + 1} 次运行：{'通过' if passed else '未通过'}")
+        report(f"AFSIM 第 {index + 1} 次运行：{'通过' if passed else '未通过'}")
         drafter.afsim_note = AfsimNote(sheet_hash(drafter.sheet), text, passed, findings)
         drafter.afsim_verdicts[drafter.afsim_note.sheet_hash] = drafter.afsim_note
         infra = any(getattr(r, "infrastructure", False) for r in results or [])

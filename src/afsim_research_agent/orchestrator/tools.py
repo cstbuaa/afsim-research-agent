@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextlib
 import inspect
+import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -484,13 +487,65 @@ def _sync_runner(spec, workspace, registry, factory, stage_kwargs):
     return run
 
 
+HEARTBEAT_S = 15.0
+
+
+@contextlib.asynccontextmanager
+async def _progress(tool: str):
+    """While a tool runs: its progress lines (``afsim_research_agent.progress``) and a
+    heartbeat go to the browser as LangGraph custom stream events (local only; not part
+    of the conversation the model sees)."""
+    from afsim_research_agent import progress
+
+    try:
+        from langgraph.config import get_stream_writer
+
+        writer = get_stream_writer()
+    except Exception:  # noqa: BLE001 - outside a graph run (tests, scripts)
+        writer = None
+    if writer is None:
+        yield
+        return
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    started = time.perf_counter()
+
+    def emit(text: str, kind: str = "progress") -> None:
+        payload = {
+            "type": "workbench_progress",
+            "tool": tool,
+            "kind": kind,
+            "t": round(time.perf_counter() - started, 1),
+            "text": text,
+        }
+        if threading.get_ident() == loop_thread:
+            writer(payload)
+        else:  # a stage working in a thread (L3, AFSIM, retrieval)
+            loop.call_soon_threadsafe(writer, payload)
+
+    async def heartbeat() -> None:
+        while True:
+            await asyncio.sleep(HEARTBEAT_S)
+            emit(f"仍在运行（已 {time.perf_counter() - started:.0f} s）", "heartbeat")
+
+    emit("开始", "start")
+    beat = asyncio.create_task(heartbeat())
+    try:
+        with progress.sink(emit):
+            yield
+    finally:
+        beat.cancel()
+        emit(f"结束（用时 {time.perf_counter() - started:.0f} s）", "end")
+
+
 def _async_runner(spec, workspace, registry, factory, stage_kwargs):
     async def run(**args: Any) -> str:
         kwargs = _call_kwargs(spec, workspace, registry, factory, stage_kwargs, args)
-        if asyncio.iscoroutinefunction(spec.stage):
-            out = await spec.stage(workspace, **kwargs)
-        else:  # deterministic stages may be slow (L3): keep the event loop free
-            out = await asyncio.to_thread(spec.stage, workspace, **kwargs)
+        async with _progress(spec.name):
+            if asyncio.iscoroutinefunction(spec.stage):
+                out = await spec.stage(workspace, **kwargs)
+            else:  # deterministic stages may be slow (L3): keep the event loop free
+                out = await asyncio.to_thread(spec.stage, workspace, **kwargs)
         return out.render()
 
     run.__name__ = spec.name

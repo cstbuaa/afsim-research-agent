@@ -12,6 +12,7 @@ import type { UseStreamThread } from "@langchain/langgraph-sdk/react";
 import type { TodoItem } from "@/app/types/types";
 import { useClient } from "@/providers/ClientProvider";
 import { useQueryState } from "nuqs";
+import { PROGRESS_EVENT } from "@/lib/workbench";
 
 export type StateType = {
   messages: Message[];
@@ -50,6 +51,13 @@ export function useChat({
     onFinish: onHistoryRevalidate,
     onError: onHistoryRevalidate,
     onCreated: onHistoryRevalidate,
+    // progress lines of long tools (crow_research, falcon_draft3, afsim_run …): custom
+    // stream events from the server, shown live in the chat panel
+    onCustomEvent: (data: unknown) => {
+      if (data && typeof data === "object" && (data as any).type === "workbench_progress") {
+        window.dispatchEvent(new CustomEvent(PROGRESS_EVENT, { detail: data }));
+      }
+    },
     experimental_thread: thread,
   });
 
@@ -154,6 +162,7 @@ export function useChat({
     setFiles,
     messages: stream.messages,
     isLoading: stream.isLoading,
+    error: stream.error,
     isThreadLoading: stream.isThreadLoading,
     interrupt: stream.interrupt,
     getMessagesMetadata: stream.getMessagesMetadata,

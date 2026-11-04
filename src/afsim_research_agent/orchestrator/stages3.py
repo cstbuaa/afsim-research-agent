@@ -33,6 +33,7 @@ import yaml
 from afsim_research_agent.orchestrator.results import StageResult
 from afsim_research_agent.orchestrator.stages import _package, guarded
 from afsim_research_agent.orchestrator.workspace import Workspace, WorkspaceError
+from afsim_research_agent.progress import report
 
 # scenario overrides: the kit keys a user may change, with sane limits
 LIMITS = {
@@ -263,6 +264,7 @@ def simulate2d(
     rows, replays = [], {}
     for raw in raws:
         sid = str(raw.get("id") or "scenario")
+        report(f"二维仿真：{sid}")
         res = simulate(loaded.model, loaded.contracts, raw, binding)
         replay = from_sim(res, binding, title=f"二维 · {pkg.name} / {sid}")
         target = out_dir / f"{sid}.replay.json"
@@ -339,6 +341,7 @@ def afsim_run(
     if out.exists():
         return StageResult("afsim_run", "blocked", "输出目录已存在，稍后再试")
     out.parent.mkdir(parents=True, exist_ok=True)
+    report("AFSIM：生成想定并编译模型")
     run = generate(loaded.model, kit, loaded.contracts)
     try:
         compiler = Compiler(loaded.model, loaded.contracts, Binding.load(binding_path))
@@ -346,7 +349,9 @@ def afsim_run(
         compiler.write(package_obj, out)
     except CompileError:
         return StageResult("afsim_run", "failed", "AFSIM 编译失败（细节只在本地记录）")
+    report(f"AFSIM：运行中（仿真 {run.end_time_s:g} s）")
     results = run_package(out, mission, timeout_s)
+    report("AFSIM：运行结束，判定结果")
     passed = bool(results) and all(r.passed for r in results)
     missions = {rid: role.get("mission") for rid, role in (loaded.model.get("roles") or {}).items()}
     findings = (

@@ -309,6 +309,11 @@ class ModelRunner:
         self.records: list[CallRecord] = []
 
     def _record(self, stage: str, prompt: str, started: float, ok: bool, **extra: Any) -> None:
+        from afsim_research_agent.progress import report
+
+        report(
+            f"模型调用 {stage}：{'完成' if ok else '失败'}（{time.perf_counter() - started:.0f} s）"
+        )
         self.records.append(
             CallRecord(
                 stage=stage,

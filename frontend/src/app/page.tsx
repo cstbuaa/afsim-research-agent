@@ -17,6 +17,7 @@ import { ThreadList } from "@/app/components/ThreadList";
 import { ChatProvider } from "@/providers/ChatProvider";
 import { ChatInterface } from "@/app/components/ChatInterface";
 import { SimPanel } from "@/app/components/SimPanel";
+import { RunActivity } from "@/app/components/RunActivity";
 import { OPEN_REPLAY_EVENT } from "@/lib/workbench";
 
 interface HomePageInnerProps {
@@ -211,7 +212,12 @@ function HomePageInner({
                 activeAssistant={assistant}
                 onHistoryRevalidate={() => mutateThreads?.()}
               >
-                <ChatInterface assistant={assistant} />
+                <div className="flex h-full min-h-0 flex-col">
+                  <RunActivity />
+                  <div className="relative flex min-h-0 flex-1 flex-col">
+                    <ChatInterface assistant={assistant} />
+                  </div>
+                </div>
               </ChatProvider>
             </ResizablePanel>
             {sim && (
