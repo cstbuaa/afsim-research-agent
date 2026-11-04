@@ -209,3 +209,32 @@ def test_a_single_vehicle_cannot_run_a_formation_subtree_or_wait_for_a_tree_that
     assert codes.count("ROLE_COUNT") == 1 and codes.count("TREE_EVENT_NEVER") == 1
     assert next(p for p, _m, code in problems if code == "ROLE_COUNT") == "state_trees.car.GO"
     assert not S.finite_state(spec, "car", "GO", c, c.tactics)
+
+
+def test_a_formation_leader_of_one_vehicle_may_run_the_formation_subtree() -> None:
+    """The leader is one vehicle but commands the members: ROLE_COUNT counts the model's
+    vehicles, so it does not contradict COMMAND_ROLE (r3, 11-04)."""
+    from afsim_research_agent.ir.v2.contracts import Contracts
+
+    c = Contracts.load()
+    spec = {
+        "roles": [{"id": "leader", "count": 1}, {"id": "member", "count": 2}],
+        "subtrees": [
+            {"id": "look", "root": {"type": "tactic", "tactic": "perception.search_for_target"}}
+        ],
+        "state_trees": {
+            "leader": {"GO": "formation_standoff.formation_search_advance"},
+            "member": {"GO": "look"},
+        },
+        "conditions": [],
+        "events": [],
+        "missions": {
+            r: {"initial_state": "GO", "states": ["GO"], "terminal": [], "transitions": []}
+            for r in ("leader", "member")
+        },
+    }
+    codes = [code for _p, _m, code in S.role_problems(spec, c, c.tactics)]
+    assert "ROLE_COUNT" not in codes and "COMMAND_ROLE" not in codes
+    spec["state_trees"]["member"]["GO"] = "formation_standoff.formation_search_advance"
+    codes = [code for _p, _m, code in S.role_problems(spec, c, c.tactics)]
+    assert codes.count("COMMAND_ROLE") == 1 and "ROLE_COUNT" not in codes

@@ -24,7 +24,7 @@ action uses. These checks look at the compiled spec (no model call):
 * ``FIRE_BY_TIME``  a transition into a state that fires weapons can be taken by time alone
   (a timer event, or a condition that holds with every field still at its initial value
   once enough time has passed): the vehicle fires without a command or a target condition;
-* ``ROLE_COUNT``    a state's tree needs more vehicles than its role has (its capability
+* ``ROLE_COUNT``    a state's tree needs more vehicles than the model has (its capability
   card, ``ir.v2.cards``: formation slots, standoff commands, target sharing, …): a single
   vehicle running a formation subtree waits for followers for ever;
 * ``COMMAND_ROLE``  a commanded role (a member of a formation) runs a commanding action (a
@@ -540,7 +540,10 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
             if card is None:
                 continue
             cards[st] = card
-            count = counts.get(role, 1)
+            # the vehicles the tree can command or wait for: the whole model's (a formation
+            # leader is one vehicle but commands the members; r3 11-04: counting only the
+            # role's own vehicles contradicted COMMAND_ROLE and the repair loop went round)
+            count = sum(counts.values()) if counts else 1
             if card.min_vehicles > count:
                 from afsim_research_agent.ir.v2.cards import cards as all_cards
 
@@ -554,7 +557,7 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
                 out.append(
                     (
                         f"state_trees.{role}.{st}",
-                        f"ROLE_COUNT 角色 {role} 只有 {count} 辆车，状态 {st} 的树要求至少 "
+                        f"ROLE_COUNT 模型只有 {count} 辆车，角色 {role} 状态 {st} 的树要求至少 "
                         f"{card.min_vehicles} 辆（用到 {what}，要指挥或等待其他车辆）：它会一直"
                         "等其他车辆，单车用不了。单车改用机动、感知等单车能力"
                         "（如前出用 movement.follow_route，到达用它的树完成事件）",
