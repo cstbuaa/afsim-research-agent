@@ -119,9 +119,11 @@ def overview(ws: Workspace, registry: ExtensionRegistry | None = None) -> StageR
     return StageResult(
         "overview",
         "ok",
-        "流程：需求 → crow_research → crow_propose（含红队）→ select_tactic（人工）→ falcon_draft → "
-        "falcon_check / falcon_fix → confirmation_status / apply_confirmations（人工）→ ir_build → "
-        "simulate → platform_export（AFSIM，扩展）",
+        "流程（v3）：需求 → crow_research → crow_propose（含红队）→ select_tactic（人工）→ "
+        "falcon_draft3（战术稿 → IR 2.0 → L1/L2/L3 检查与修复，可带 AFSIM 循环）→ "
+        "scenario_show / scenario_set（改想定，需批准）→ simulate2d（二维回放）→ "
+        "afsim_run（AFSIM 运行与独立验收，需批准）。旧流程（falcon_draft / falcon_check / "
+        "falcon_fix / simulate）只在用户要求时使用",
         data={
             "extensions": registry.status(),
             "generation_model": generation_model_name(),
