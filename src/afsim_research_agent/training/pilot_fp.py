@@ -24,7 +24,7 @@ from typing import Any
 import yaml
 
 SKELETONS = ("K1", "K2", "K3", "K4", "K5", "K6")
-ROUTE = "search_route"
+ROUTE = "approach"  # the scenario interface's advance route (post → ahead)
 
 
 @dataclass
@@ -160,7 +160,7 @@ def leader_machine(s: Spec) -> Machine:
     trees["SEARCH_ADVANCE"] = (
         '    with parallel("all"):\n'
         "        with repeat(until_done=True):\n"
-        f"            movement.follow_route(route_name={ROUTE})\n"
+        f"            movement.follow_route(route={ROUTE})\n"
         f"        {col}\n"
         '        tactic("perception.search_for_target")'
     )
@@ -454,7 +454,6 @@ def l3_scenarios(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[
     """Scenarios that drive every module (design §4.2), with feasible timings (§4.4)."""
     lead = "leader" if s.formation else "observer"
     mac = rl[lead][1]
-    route_len = 9000.0
     enemy_x = float(SENSOR_M - 1500) if s.formation else 2500.0
     t_start = 10.0 if s.wait_start else 0.0
     # contact: the enemy is inside the sensor range from the start (or as soon as the
@@ -462,7 +461,6 @@ def l3_scenarios(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[
     env = {
         "duration_s": 300,
         "step_s": 1,
-        "routes": {ROUTE: [[0, 0], [route_len, 0]]} if s.formation else {},
     }
     vehicles: dict[str, Any] = {}
     if s.formation:
@@ -500,7 +498,8 @@ def l3_scenarios(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[
     out.append(
         scen(
             "main_cancel",
-            [enemy],
+            # the enemy shows up after a minute: the column advances first
+            [dict(enemy, appear_s=t_start + 60.0)],
             [{"at_s": 200, "event": "cancelled"}],
             [],
             track + ["SHUTDOWN", "COMPLETE"],
@@ -607,6 +606,17 @@ def obligations(s: Spec) -> list[dict[str, Any]]:
         },
     ]
     if s.formation:
+        # the column must really advance before contact (judged on positions: in 2D only the
+        # leader moves, the followers' slots are not simulated vehicles)
+        out.append(
+            {
+                "id": "leader_advances",
+                "kind": "advances",
+                "description": "长车沿前出路线实际前出",
+                "roles": ["leader"],
+                "min_m": 150.0,
+            }
+        )
         out.append(
             {
                 "id": "stop_before_sensor_off",
@@ -651,13 +661,6 @@ def sheet(s: Spec) -> tuple[str, dict[str, Any]]:
         "events": events(s),
     }
     params = parameters(s)
-    if s.formation:
-        params[ROUTE] = {
-            "value": ROUTE,
-            "type": "string",
-            "basis": "user_specified",
-            "rationale": "想定给出的搜索路线名",
-        }
     if params:
         model["parameters"] = params
     ver = {"tests": l2_tests(s, rl), "scenarios": l3_scenarios(s, rl)}
@@ -683,9 +686,8 @@ def sheet(s: Spec) -> tuple[str, dict[str, Any]]:
         "roles": {
             r: {"capability_class": "ground_vehicle", "count": n} for r, (n, _, _) in rl.items()
         },
-        "scenario_parameters": {ROUTE: {"type": "string", "description": "想定给出的搜索路线名"}}
-        if s.formation
-        else {},
+        # the interface a requirement with an advance implies: post, ahead, route approach
+        "scenario_interface": _interface(s),
         "scenario_events": {
             k: v["description"] for k, v in events(s).items() if v.get("source") == "external"
         },
@@ -693,6 +695,13 @@ def sheet(s: Spec) -> tuple[str, dict[str, Any]]:
         "extract_obligations": False,
     }
     return "\n\n".join(parts) + "\n", request
+
+
+def _interface(s: Spec) -> dict[str, Any]:
+    from afsim_research_agent.ir.v2.scenario_interface import derive
+
+    text = "沿路线搜索前进" if s.formation else "原地观察警戒"
+    return derive(text).model_dump(mode="json")
 
 
 def build(s: Spec, out_dir: Path) -> dict[str, Any]:
