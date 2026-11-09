@@ -29,6 +29,7 @@ def test_sampling_is_reproducible_and_states_the_module_numbers() -> None:
     a, b = sample("K4", 7), sample("K4", 7)
     assert a == b and a.model_id == b.model_id
     assert a.withdraw == "keep" and "desired_range_m" in a.stated
+    assert all(sample("K4", i).desired_range_m >= 800 for i in range(1, 31))
     k5 = sample("K5", 2)
     assert "search_limit_s" in k5.stated and k5.search_limit_s
 

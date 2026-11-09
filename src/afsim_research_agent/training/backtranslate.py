@@ -55,7 +55,10 @@ def facts(s: Spec) -> list[str]:
         rng = f"约 {_n(s.desired_range_m)} 米的距离" if "desired_range_m" in st else "安全距离"
         out.append(f"横队到位后，长车与敌车保持{rng}，持续监视跟踪；僚车用本车雷达各自跟踪")
         if s.withdraw == "keep":
-            out.append("跟踪中敌车向我逼近时，长车带领编队后撤，始终不让敌车进入这个距离以内")
+            out.append(
+                "跟踪中敌车向我逼近时（敌车推进比我车后撤慢），长车带领编队后撤，"
+                "始终不让敌车进入这个距离以内"
+            )
         elif s.withdraw == "stop":
             out.append(
                 f"跟踪中敌车逼近到 {_n(s.withdraw_threshold_m)} 米以内，"

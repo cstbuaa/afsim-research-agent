@@ -112,7 +112,10 @@ def sample(skeleton: str, seed: int) -> Spec:
     s.stated = sorted(stated)
     # values: drawn when stated, else the defaults of the Spec
     if "desired_range_m" in stated:
-        s.desired_range_m = float(r.randrange(3, 31) * 100)
+        # backing off holds the range in AFSIM only from about 800 m out (closer, the
+        # leader stops backing early; handoff 2026-11-09 §4.1)
+        low = 8 if s.withdraw == "keep" else 3
+        s.desired_range_m = float(r.randrange(low, 31) * 100)
     if "reacquire_timeout_s" in stated:
         s.reacquire_timeout_s = float(r.choice([10, 15, 20, 30, 45, 60]))
     if "wing_offset_m" in stated:
