@@ -30,3 +30,17 @@ def test_sampling_is_reproducible_and_states_the_module_numbers() -> None:
     assert "withdraw_threshold_m" in a.stated
     k5 = sample("K5", 2)
     assert "search_limit_s" in k5.stated and k5.search_limit_s
+
+
+def test_requirement_facts_state_exactly_the_stated_numbers() -> None:
+    from afsim_research_agent.training.backtranslate import check, facts, numbers
+
+    s = sample("K4", 4)
+    text = "；".join(facts(s))
+    assert not check(s, text), check(s, text)
+    for key in ("wing_offset_m", "column_spacing_m"):
+        if key not in s.stated:
+            assert f"{getattr(s, key):g} 米" not in text or key == "column_spacing_m"
+    assert check(s, "三车搜索前进。") and any("缺少数值" in p for p in check(s, "三车搜索前进。"))
+    assert any("标识符" in p for p in check(s, "进入 STANDOFF_TRACK 状态"))
+    assert numbers(sample("K5", 2))["search_limit_s"]

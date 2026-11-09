@@ -62,17 +62,13 @@ class Spec:
 
 # ---------------------------------------------------------------------------- sampling
 def sample(skeleton: str, seed: int) -> Spec:
-    """Draw modules and parameters for a skeleton (ranges reviewed in design §2–§3)."""
+    """Draw modules and parameters for a skeleton (ranges reviewed in design §2–§3).
+
+    A parameter the requirement will state gets a drawn value; every other one keeps the
+    capability default, so the requirement text alone determines the model (no hidden
+    numbers a drafter could not know)."""
     r = random.Random(f"{skeleton}:{seed}")
     s = Spec(skeleton=skeleton, seed=seed)
-    s.desired_range_m = float(r.randrange(3, 31) * 100)
-    s.range_tolerance_m = float(
-        min(r.randrange(3, 11) * 10, int(s.desired_range_m * 0.1) // 10 * 10 or 30)
-    )
-    s.reacquire_timeout_s = float(r.randrange(2, 13) * 5)
-    s.wing_offset_m = float(r.randrange(4, 11) * 10)
-    s.column_spacing_m = float(r.randrange(4, 11) * 10)
-    s.ready_tolerance_m = float(r.randrange(2, 7) * 5)
     if skeleton == "K1":
         s.lost_hold = False
     elif skeleton == "K2":
@@ -87,38 +83,49 @@ def sample(skeleton: str, seed: int) -> Spec:
         s.lost_hold = r.random() < 0.5
         s.on_timeout = r.choice(["resume", "shutdown"])
     elif skeleton == "K5":
-        s.search_limit_s = float(r.randrange(4, 31) * 30)
         s.lost_hold = r.random() < 0.5
         s.on_timeout = r.choice(["resume", "shutdown"])
     elif skeleton == "K6":
         s.lost_hold = True
         s.on_timeout = "resume"
-        s.wait_start = r.random() < 0.5
+    s.wait_start = r.random() < (0.5 if skeleton == "K6" else 0.3)
+    # which numbers the requirement states: the module's own number always, the standoff
+    # range usually, the rest now and then
+    stated: list[str] = []
+    if s.formation and r.random() < 0.8:
+        stated.append("desired_range_m")
+    if s.lost_hold:  # a timeout the text leaves open has no default to fall back on
+        stated.append("reacquire_timeout_s")
+    if s.withdraw:
+        stated.append("withdraw_threshold_m")
+    if s.withdraw == "back":
+        stated.append("withdraw_back_m")
+    if skeleton == "K5":
+        stated.append("search_limit_s")
+    if s.formation:
+        for extra in ("wing_offset_m", "column_spacing_m"):
+            if r.random() < 0.25:
+                stated.append(extra)
+    s.stated = sorted(stated)
+    # values: drawn when stated, else the defaults of the Spec
+    if "desired_range_m" in stated:
+        s.desired_range_m = float(r.randrange(3, 31) * 100)
+    if "reacquire_timeout_s" in stated:
+        s.reacquire_timeout_s = float(r.choice([10, 15, 20, 30, 45, 60]))
+    if "wing_offset_m" in stated:
+        s.wing_offset_m = float(r.randrange(4, 11) * 10)
+    if "column_spacing_m" in stated:
+        s.column_spacing_m = float(r.randrange(4, 11) * 10)
+    if skeleton == "K5":
+        s.search_limit_s = float(r.randrange(4, 31) * 30)
     if s.withdraw:
         thr = s.desired_range_m * r.choice([0.5, 0.6, 0.7, 0.8])
         thr = max(200.0, round(thr / 100) * 100)
         s.withdraw_threshold_m = min(thr, s.desired_range_m - s.range_tolerance_m - 100)
+        if s.withdraw_threshold_m < 150:
+            s.withdraw_threshold_m = 150.0
         if s.withdraw == "back":
             s.withdraw_back_m = s.desired_range_m + float(r.randrange(5, 21) * 100)
-    if skeleton in ("K1", "K2", "K3", "K4", "K5") and r.random() < 0.3:
-        s.wait_start = True
-    pool = ["desired_range_m"] if s.formation else []
-    if s.lost_hold:
-        pool.append("reacquire_timeout_s")
-    if s.withdraw:
-        pool.append("withdraw_threshold_m")
-    if s.withdraw == "back":
-        pool.append("withdraw_back_m")
-    if s.search_limit_s:
-        pool.append("search_limit_s")
-    if s.formation:
-        pool += ["wing_offset_m", "column_spacing_m"]
-    k = min(len(pool), r.randint(1, 3))
-    s.stated = sorted(r.sample(pool, k)) if pool else []
-    # must-state: the module's own number (a withdrawal without its threshold is not a requirement)
-    for must in ("withdraw_threshold_m", "search_limit_s", "withdraw_back_m"):
-        if must in pool and must not in s.stated:
-            s.stated.append(must)
     return s
 
 
