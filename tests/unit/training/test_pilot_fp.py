@@ -2,6 +2,7 @@
 offline checks (L1, L2 tests, 2D scenarios), and the members never claim locomotion."""
 
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -44,3 +45,19 @@ def test_requirement_facts_state_exactly_the_stated_numbers() -> None:
     assert check(s, "三车搜索前进。") and any("缺少数值" in p for p in check(s, "三车搜索前进。"))
     assert any("标识符" in p for p in check(s, "进入 STANDOFF_TRACK 状态"))
     assert numbers(sample("K5", 2))["search_limit_s"]
+
+
+def test_check_accepts_synonyms_and_chinese_numerals():
+    from afsim_research_agent.training.backtranslate import check
+
+    s = sample("K6", 2)
+    s = replace(s, wait_start=True, reacquire_timeout_s=10.0, stated=["reacquire_timeout_s"])
+    assert check(s, "初始待机，十秒内重新发现就继续跟踪") == []
+    assert any("缺少数值" in p for p in check(s, "初始待机，很快重新发现就继续跟踪"))
+
+
+def test_check_flags_added_fire():
+    from afsim_research_agent.training.backtranslate import check
+
+    s = replace(sample("K1", 1), stated=[])
+    assert any("加入了" in p for p in check(s, "发现敌车后长车停止间射击准备"))

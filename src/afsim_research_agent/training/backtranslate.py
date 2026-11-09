@@ -121,7 +121,10 @@ def prompt(s: Spec) -> str:
 
 要求：
 - 每一版都完整覆盖全部事实，不增加事实里没有的行为、数值或条件；
-- 事实里出现的数字必须原样保留，带单位（米、秒、分钟）；没有给数字的地方不要自己编数字；
+- 事实里出现的数字必须原样保留，用阿拉伯数字，带单位（米、秒、分钟）；
+- 没有给数字的地方不要自己编数字；
+- 不要照抄事实的句子，换成自己的说法和语序；
+- 不要加入事实里没有的动作，特别是射击、开火、攻击、火力准备、呼叫支援、掩护等；
 - 用作战语言，不要出现任何英文、变量名、状态名、动作名或代码；
 - 可以口语化、可以换说法，例如“上级撤收命令”可写成“收到撤收命令”“上级叫停”；
 - 每版 60–200 字。
@@ -131,10 +134,35 @@ def prompt(s: Spec) -> str:
 
 _IDENT = re.compile(r"[A-Za-z_]{3,}")
 
+# words the pilot behaviour never does; a text with one of them added a fact
+FORBIDDEN = ("射击", "开火", "攻击", "打击", "火力", "炮", "支援", "掩护", "梯次")
+
+# accepted wording for the required elements
+SYNONYMS = {
+    "撤": ("撤", "后退", "脱离"),
+    "待命": ("待命", "待机", "待令", "听令", "命令"),
+    "集结": ("集结", "集合", "编成纵队", "成纵队就位"),
+}
+
+
+_CN = "零一二三四五六七八九十"
+
+
+def _cn(n: int) -> str | None:
+    """Chinese numeral for 1–99 (十, 十五, 二十, 四十五)."""
+    if not 0 < n < 100:
+        return None
+    tens, ones = divmod(n, 10)
+    head = ("" if tens == 1 else _CN[tens]) + "十" if tens else ""
+    return head + (_CN[ones] if ones else "")
+
 
 def _has_number(text: str, value: float) -> bool:
     v = f"{value:g}"
     variants = {v}
+    if value == int(value) and _cn(int(value)):
+        variants.add(f"{_cn(int(value))}秒")
+        variants.add(f"{_cn(int(value))}分钟")
     if value >= 1000 and value % 100 == 0:
         variants.add(f"{value / 1000:g}千米")
         variants.add(f"{value / 1000:g} 千米")
@@ -154,16 +182,49 @@ def check(s: Spec, text: str) -> list[str]:
     if leak:
         probs.append(f"含英文或标识符 {leak[:5]}")
     for word, needed in (
-        ("撤", s.withdraw is not None),
+        ("撤", s.withdraw == "back"),
         ("待命", s.wait_start),
         ("集结", s.assemble),
     ):
-        if needed and word not in text and not (word == "待命" and "命令" in text):
+        if needed and not any(w in text for w in SYNONYMS[word]):
             probs.append(f"缺少要素“{word}”")
+    added = [w for w in FORBIDDEN if w in text]
+    if added:
+        probs.append(f"加入了事实中没有的行为 {added}")
     return probs
 
 
-async def write(s: Spec, model: Any) -> dict[str, Any]:
+class Fidelity(BaseModel):
+    missing: list[str] = Field(description="需求文字没有表达出来的事实（原样抄写事实条目）")
+    extra: list[str] = Field(description="需求文字里有、但事实中没有的行为、条件或数值")
+    wrong: list[str] = Field(description="需求文字与事实矛盾的地方")
+
+
+def judge_prompt(s: Spec, text: str) -> str:
+    fs = "\n".join(f"- {f}" for f in facts(s))
+    return f"""逐条核对下面的需求文字是否忠实表达了事实。只看行为、条件、顺序和数值，\
+不看文风；同义说法算表达了（如“待机”=“待命”，“闭雷达”=“关闭雷达”）。
+
+事实：
+{fs}
+
+需求文字：
+{text}
+
+按 JSON 输出：{{"missing": [...], "extra": [...], "wrong": [...]}}，没有就给空列表。"""
+
+
+async def judge(s: Spec, text: str, model: Any) -> list[str]:
+    """A second model call: facts the text leaves out, adds or contradicts."""
+    res = await model.generate("training:fidelity", judge_prompt(s, text), Fidelity)
+    data = res.model_dump() if hasattr(res, "model_dump") else dict(res)
+    out = []
+    for key, label in (("missing", "遗漏"), ("extra", "多出"), ("wrong", "矛盾")):
+        out += [f"{label}：{x}" for x in data.get(key) or [] if str(x).strip()]
+    return out
+
+
+async def write(s: Spec, model: Any, check_fidelity: bool = True) -> dict[str, Any]:
     """Ask the model for the four styles and check each; returns texts and problems."""
     res = await model.generate("training:requirements", prompt(s), Requirements)
     data = res.model_dump() if hasattr(res, "model_dump") else dict(res)
@@ -171,4 +232,6 @@ async def write(s: Spec, model: Any) -> dict[str, Any]:
     for style in STYLES:
         text = str(data.get(style) or "").strip()
         out[style] = {"text": text, "problems": check(s, text) if text else ["空"]}
+        if check_fidelity and text and not out[style]["problems"]:
+            out[style]["fidelity"] = await judge(s, text, model)
     return out
