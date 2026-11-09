@@ -195,15 +195,16 @@ def check(s: Spec, text: str) -> list[str]:
 
 
 class Fidelity(BaseModel):
-    missing: list[str] = Field(description="需求文字没有表达出来的事实（原样抄写事实条目）")
-    extra: list[str] = Field(description="需求文字里有、但事实中没有的行为、条件或数值")
-    wrong: list[str] = Field(description="需求文字与事实矛盾的地方")
+    missing: list[int] = Field(description="需求文字完全没有表达的事实编号；表达了就不列")
+    extra: list[str] = Field(description="事实中没有的新动作、新条件或新数值，每条 30 字以内")
+    wrong: list[str] = Field(
+        description="与事实相反的说法（数值不同、顺序颠倒、条件相反），每条 30 字以内"
+    )
 
 
 def judge_prompt(s: Spec, text: str) -> str:
-    fs = "\n".join(f"- {f}" for f in facts(s))
-    return f"""逐条核对下面的需求文字是否忠实表达了事实。只看行为、条件、顺序和数值，\
-不看文风；同义说法算表达了（如“待机”=“待命”，“闭雷达”=“关闭雷达”）。
+    fs = "\n".join(f"{i}. {f}" for i, f in enumerate(facts(s), 1))
+    return f"""核对需求文字是否表达了下列事实。只输出结论，不要写推理过程。
 
 事实：
 {fs}
@@ -211,16 +212,30 @@ def judge_prompt(s: Spec, text: str) -> str:
 需求文字：
 {text}
 
-按 JSON 输出：{{"missing": [...], "extra": [...], "wrong": [...]}}，没有就给空列表。"""
+判定规则：
+- 换了说法、合并成一句、调换了叙述顺序都算表达了；
+  例如“目标丢失或收到撤收命令都先停车再关雷达”同时表达了这两条事实；
+- 同义：待机=待命，闭雷达=关闭雷达，锁定/监视=跟踪，撤收令=撤收命令，脱离接触、撤离、收尾=结束任务；
+- missing 只列整条事实的主要行为或条件完全找不到的编号；只缺修饰词（如“面向敌车”“持续”）不算；
+- extra 只列事实中没有的新动作、新条件或新数值；说法更具体不算；
+- wrong 只列与事实相反的地方；
+- 没有就给空列表。
+
+按 JSON 输出：{{"missing": [编号...], "extra": [...], "wrong": [...]}}"""
 
 
 async def judge(s: Spec, text: str, model: Any) -> list[str]:
     """A second model call: facts the text leaves out, adds or contradicts."""
     res = await model.generate("training:fidelity", judge_prompt(s, text), Fidelity)
     data = res.model_dump() if hasattr(res, "model_dump") else dict(res)
-    out = []
-    for key, label in (("missing", "遗漏"), ("extra", "多出"), ("wrong", "矛盾")):
-        out += [f"{label}：{x}" for x in data.get(key) or [] if str(x).strip()]
+    fs = facts(s)
+    out = [
+        f"遗漏：{fs[i - 1]}"
+        for i in sorted({int(i) for i in data.get("missing") or []})
+        if 0 < i <= len(fs)
+    ]
+    for key, label in (("extra", "多出"), ("wrong", "矛盾")):
+        out += [f"{label}：{str(x)[:80]}" for x in data.get(key) or [] if str(x).strip()]
     return out
 
 
