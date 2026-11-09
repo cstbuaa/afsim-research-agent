@@ -34,6 +34,7 @@ POINT_PREFIX, ROUTE_PREFIX = "pt_", "rt_"
 DEFAULT_ORIGIN = (45.0, -121.0)
 DEFAULT_HEADING_DEG = 90.0
 DEFAULT_ENEMY_RANGE_M = 650.0
+DEFAULT_SENSOR_RANGE_M = 6000.0  # the lab radar's maximum range (AFSIM)
 DEFAULT_ROUTE_SPEED_MPS = 8.0
 DEFAULT_ARRIVAL_TOLERANCE_M = 20.0  # loose first; tighten later
 DEFAULT_END_S = 80.0
@@ -227,6 +228,9 @@ class Binding(_Strict):
     # when the approach starts and ends (s); before the start the enemy stands still
     enemy_move_start_s: float = 0.0
     enemy_move_stop_s: float | None = None
+    # search sensor range of our vehicles in the 2D simulation (kit ``[platform]
+    # sensor_range_m``); AFSIM's lab radar reaches about 6 km
+    sensor_range_m: float = DEFAULT_SENSOR_RANGE_M
     defaults: list[str] = Field(default_factory=list)  # values initialised by default
 
     def route_named(self, name: str) -> BoundRoute | None:
@@ -301,6 +305,9 @@ def bind(
         return d * math.sin(h), d * math.cos(h)  # east, north
 
     out = Binding(origin=origin, heading_deg=heading, enemy_range_m=rng, end_s=end_s)  # type: ignore[arg-type]
+    out.sensor_range_m = float(
+        (kit.get("platform") or {}).get("sensor_range_m", DEFAULT_SENSOR_RANGE_M)
+    )
     given_points = bkit.get("points") or {}
     for pid, p in interface.points.items():
         if pid in given_points:
@@ -580,6 +587,7 @@ def bind_scenario(raw: dict[str, Any], model: dict[str, Any], binding: Binding) 
                         ],
                         "heading_deg": binding.heading_deg,
                         "max_speed_mps": 10.0,
+                        "sensor": {"range_m": binding.sensor_range_m},
                     }
                 )
                 k += 1

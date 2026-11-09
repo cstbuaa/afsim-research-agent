@@ -355,3 +355,17 @@ def test_the_kits_routes_follow_the_scenarios_ahead_point(contracts: Contracts) 
     run = generate(model, kit, contracts)
     far = float(run.platforms[0].body.split("double far = ")[1].split()[0])
     assert far == pytest.approx(-121.0 + 12000.0 / (111_320.0 * 0.70710678), abs=1e-3)
+
+
+def test_the_2d_sensor_range_follows_the_kit_and_defaults_to_the_lab_radar() -> None:
+    """The 2D search sensor reaches as far as the lab radar in AFSIM (about 6 km) unless the
+    kit says otherwise, so scenario timings agree between the two."""
+    from afsim_research_agent.ir.v2.scenario_interface import bind, bind_scenario, derive
+
+    iface = derive("单车前出约 1 km 建立观察哨")
+    model = {"roles": {"car": {"role": {"count": 1}}}}
+    sc = bind_scenario({"id": "s"}, model, bind(iface, {}))
+    assert sc["vehicles"]["car"][0]["sensor"]["range_m"] == 6000.0
+    kit = {"platform": {"sensor_range_m": 4500}}
+    sc = bind_scenario({"id": "s"}, model, bind(iface, kit))
+    assert sc["vehicles"]["car"][0]["sensor"]["range_m"] == 4500.0
