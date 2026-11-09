@@ -36,7 +36,10 @@ class Spec:
     assemble: bool = False  # K3: form the column first
     lost_hold: bool = False  # hold and try to reacquire when the target is lost
     on_timeout: str = "resume"  # after the reacquire timeout: resume | shutdown
-    withdraw: str | None = None  # None | "stop" (stop and shut down) | "back" (back off to X)
+    # None | "keep" (back off while the enemy closes, holding the standoff range; the
+    # standoff step does it) | "stop" / "back" (a threshold trigger: unused since the
+    # standoff step keeps the range above any threshold below its band in AFSIM)
+    withdraw: str | None = None
     search_limit_s: float | None = None  # K5: give up the search after this long
     wait_start: bool = False  # wait for a start order first
     # parameters (design §3)
@@ -79,7 +82,7 @@ def sample(skeleton: str, seed: int) -> Spec:
         s.lost_hold = r.random() < 0.5
         s.on_timeout = r.choice(["resume", "shutdown"])
     elif skeleton == "K4":
-        s.withdraw = r.choice(["stop", "back"])
+        s.withdraw = "keep"
         s.lost_hold = r.random() < 0.5
         s.on_timeout = r.choice(["resume", "shutdown"])
     elif skeleton == "K5":
@@ -92,11 +95,11 @@ def sample(skeleton: str, seed: int) -> Spec:
     # which numbers the requirement states: the module's own number always, the standoff
     # range usually, the rest now and then
     stated: list[str] = []
-    if s.formation and r.random() < 0.8:
+    if s.formation and (s.withdraw == "keep" or r.random() < 0.8):
         stated.append("desired_range_m")
     if s.lost_hold:  # a timeout the text leaves open has no default to fall back on
         stated.append("reacquire_timeout_s")
-    if s.withdraw:
+    if s.withdraw in ("stop", "back"):
         stated.append("withdraw_threshold_m")
     if s.withdraw == "back":
         stated.append("withdraw_back_m")
@@ -118,7 +121,7 @@ def sample(skeleton: str, seed: int) -> Spec:
         s.column_spacing_m = float(r.randrange(4, 11) * 10)
     if skeleton == "K5":
         s.search_limit_s = float(r.randrange(4, 31) * 30)
-    if s.withdraw:
+    if s.withdraw in ("stop", "back"):
         thr = s.desired_range_m * r.choice([0.5, 0.6, 0.7, 0.8])
         thr = max(200.0, round(thr / 100) * 100)
         s.withdraw_threshold_m = min(thr, s.desired_range_m - s.range_tolerance_m - 100)
@@ -314,7 +317,7 @@ def conditions(s: Spec) -> dict[str, str]:
             f"formation.geometry.left_slot_error_m <= {m} * m and "
             f"formation.geometry.right_slot_error_m <= {m} * m"
         )
-    if s.withdraw:
+    if s.withdraw in ("stop", "back"):
         c["too_close"] = (
             "perception.selected_target.valid and perception.selected_target.range_m > 0 * m "
             "and perception.selected_target.range_m < withdraw_threshold_m"
@@ -344,7 +347,7 @@ def events(s: Spec) -> dict[str, dict[str, Any]]:
 
 def parameters(s: Spec) -> dict[str, dict[str, Any]]:
     p: dict[str, dict[str, Any]] = {}
-    if s.withdraw:
+    if s.withdraw in ("stop", "back"):
         p["withdraw_threshold_m"] = {
             "value": f"{_fmt(s.withdraw_threshold_m or 0)} m",
             "basis": "user_specified" if "withdraw_threshold_m" in s.stated else "default",
@@ -418,7 +421,7 @@ def l2_tests(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[str,
                 bb.setdefault("perception.selected_target.valid", False)
             if c == "target_detected" and a in ("STANDOFF_TRACK", "TRACK"):
                 continue
-            if c == "target_lost" and s.withdraw:
+            if c == "target_lost" and s.withdraw in ("stop", "back"):
                 bb.setdefault("perception.selected_target.range_m", 0.0)
             given["blackboard"] = bb
             given["events"] = evs
@@ -566,8 +569,32 @@ def l3_scenarios(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[
         out.append(
             scen("lost_end", [gone], [], [], track + ["SHUTDOWN", "COMPLETE"], "目标丢失后结束任务")
         )
-    # withdrawal: the enemy advances after we track it
-    if s.withdraw:
+    # the enemy advances into the band after we track it; in AFSIM the standoff step backs
+    # off and keep_off holds. The 2D model does not move a standoff leader (tool gap E5), so
+    # in 2D the enemy stops at the band's lower edge plus a margin and the tracking holds
+    if s.withdraw == "keep":
+        speed = 6.0
+        start = 120.0
+        stop_x = s.desired_range_m - s.range_tolerance_m + 150
+        travel = max(0.0, (enemy_x - stop_x) / speed)
+        adv = dict(
+            enemy,
+            velocity_mps=[-speed, 0],
+            move_start_s=start,
+            move_stop_s=round(start + travel, 1),
+        )
+        out.append(
+            scen(
+                "enemy_advances",
+                [adv],
+                [{"at_s": int(start + travel + 120), "event": "cancelled"}],
+                [],
+                track + ["SHUTDOWN", "COMPLETE"],
+                "跟踪中敌方推进，长车后撤保持距离，随后上级取消",
+                duration=int(start + travel + 300),
+            )
+        )
+    if s.withdraw in ("stop", "back"):
         thr = s.withdraw_threshold_m or 0
         speed = 6.0
         start = 120.0

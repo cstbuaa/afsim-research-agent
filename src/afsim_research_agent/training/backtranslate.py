@@ -54,7 +54,9 @@ def facts(s: Spec) -> list[str]:
         out.append(f"发现敌车后长车停车，僚车向两侧展开成面向敌车的横队{wing}")
         rng = f"约 {_n(s.desired_range_m)} 米的距离" if "desired_range_m" in st else "安全距离"
         out.append(f"横队到位后，长车与敌车保持{rng}，持续监视跟踪；僚车用本车雷达各自跟踪")
-        if s.withdraw == "stop":
+        if s.withdraw == "keep":
+            out.append("跟踪中敌车向我逼近时，长车带领编队后撤，始终不让敌车进入这个距离以内")
+        elif s.withdraw == "stop":
             out.append(
                 f"跟踪中敌车逼近到 {_n(s.withdraw_threshold_m)} 米以内，"
                 "立即停车、关闭雷达，结束任务"
@@ -182,7 +184,7 @@ def check(s: Spec, text: str) -> list[str]:
     if leak:
         probs.append(f"含英文或标识符 {leak[:5]}")
     for word, needed in (
-        ("撤", s.withdraw == "back"),
+        ("撤", s.withdraw in ("keep", "back")),
         ("待命", s.wait_start),
         ("集结", s.assemble),
     ):
