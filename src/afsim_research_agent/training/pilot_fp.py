@@ -1,0 +1,731 @@
+"""Pilot generator, formation + perception (design
+``design/training-data-pilot-formation-perception.md``).
+
+A model is built from a skeleton (K1–K6) and optional modules, with parameters drawn from
+the reviewed ranges, out of the capability set's subtrees and steps. Each model comes with
+L2 tests, 2D scenarios that drive every transition, and requirement obligations; the sheet is
+then compiled and checked offline (``falcon.v3.draft.compile_package``). Only models that
+pass every check are kept.
+
+Roles: the formation skeletons have a leader (1, runs the formation steps that command the
+followers) and members (2, their own perception only: their positions are commanded by the
+leader's formation steps, so their trees never claim locomotion). K6 has one observer.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import random
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+SKELETONS = ("K1", "K2", "K3", "K4", "K5", "K6")
+ROUTE = "search_route"
+
+
+@dataclass
+class Spec:
+    """One generated model: skeleton, modules and parameter values."""
+
+    skeleton: str
+    seed: int
+    assemble: bool = False  # K3: form the column first
+    lost_hold: bool = False  # hold and try to reacquire when the target is lost
+    on_timeout: str = "resume"  # after the reacquire timeout: resume | shutdown
+    withdraw: str | None = None  # None | "stop" (stop and shut down) | "back" (back off to X)
+    search_limit_s: float | None = None  # K5: give up the search after this long
+    wait_start: bool = False  # wait for a start order first
+    # parameters (design §3)
+    desired_range_m: float = 500.0
+    range_tolerance_m: float = 50.0
+    withdraw_threshold_m: float | None = None
+    withdraw_back_m: float | None = None
+    reacquire_timeout_s: float = 30.0
+    wing_offset_m: float = 60.0
+    column_spacing_m: float = 60.0
+    ready_tolerance_m: float = 20.0
+    stated: list[str] = field(default_factory=list)  # parameters the requirement will state
+
+    @property
+    def model_id(self) -> str:
+        h = hashlib.sha1(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()[:8]
+        return f"fp_{self.skeleton.lower()}_{h}"
+
+    @property
+    def formation(self) -> bool:
+        return self.skeleton != "K6"
+
+
+# ---------------------------------------------------------------------------- sampling
+def sample(skeleton: str, seed: int) -> Spec:
+    """Draw modules and parameters for a skeleton (ranges reviewed in design §2–§3)."""
+    r = random.Random(f"{skeleton}:{seed}")
+    s = Spec(skeleton=skeleton, seed=seed)
+    s.desired_range_m = float(r.randrange(3, 31) * 100)
+    s.range_tolerance_m = float(
+        min(r.randrange(3, 11) * 10, int(s.desired_range_m * 0.1) // 10 * 10 or 30)
+    )
+    s.reacquire_timeout_s = float(r.randrange(2, 13) * 5)
+    s.wing_offset_m = float(r.randrange(4, 11) * 10)
+    s.column_spacing_m = float(r.randrange(4, 11) * 10)
+    s.ready_tolerance_m = float(r.randrange(2, 7) * 5)
+    if skeleton == "K1":
+        s.lost_hold = False
+    elif skeleton == "K2":
+        s.lost_hold = True
+        s.on_timeout = r.choice(["resume", "shutdown"])
+    elif skeleton == "K3":
+        s.assemble = True
+        s.lost_hold = r.random() < 0.5
+        s.on_timeout = r.choice(["resume", "shutdown"])
+    elif skeleton == "K4":
+        s.withdraw = r.choice(["stop", "back"])
+        s.lost_hold = r.random() < 0.5
+        s.on_timeout = r.choice(["resume", "shutdown"])
+    elif skeleton == "K5":
+        s.search_limit_s = float(r.randrange(4, 31) * 30)
+        s.lost_hold = r.random() < 0.5
+        s.on_timeout = r.choice(["resume", "shutdown"])
+    elif skeleton == "K6":
+        s.lost_hold = True
+        s.on_timeout = "resume"
+        s.wait_start = r.random() < 0.5
+    if s.withdraw:
+        thr = s.desired_range_m * r.choice([0.5, 0.6, 0.7, 0.8])
+        thr = max(200.0, round(thr / 100) * 100)
+        s.withdraw_threshold_m = min(thr, s.desired_range_m - s.range_tolerance_m - 100)
+        if s.withdraw == "back":
+            s.withdraw_back_m = s.desired_range_m + float(r.randrange(5, 21) * 100)
+    if skeleton in ("K1", "K2", "K3", "K4", "K5") and r.random() < 0.3:
+        s.wait_start = True
+    pool = ["desired_range_m"] if s.formation else []
+    if s.lost_hold:
+        pool.append("reacquire_timeout_s")
+    if s.withdraw:
+        pool.append("withdraw_threshold_m")
+    if s.withdraw == "back":
+        pool.append("withdraw_back_m")
+    if s.search_limit_s:
+        pool.append("search_limit_s")
+    if s.formation:
+        pool += ["wing_offset_m", "column_spacing_m"]
+    k = min(len(pool), r.randint(1, 3))
+    s.stated = sorted(r.sample(pool, k)) if pool else []
+    # must-state: the module's own number (a withdrawal without its threshold is not a requirement)
+    for must in ("withdraw_threshold_m", "search_limit_s", "withdraw_back_m"):
+        if must in pool and must not in s.stated:
+            s.stated.append(must)
+    return s
+
+
+# ---------------------------------------------------------------------------- the model
+@dataclass
+class Machine:
+    states: list[str]
+    initial: str
+    transitions: list[tuple[str, str, str]]  # (from, to, condition or event)
+    trees: dict[str, str]  # state -> python body (indented 4)
+
+
+def _fmt(x: float) -> str:
+    return f"{x:g}"
+
+
+def leader_machine(s: Spec) -> Machine:
+    m = s.ready_tolerance_m
+    col = (
+        f"formation.column_slots(spacing_m={_fmt(s.column_spacing_m)}, ready_tolerance_m={_fmt(m)})"
+    )
+    trees: dict[str, str] = {}
+    T: list[tuple[str, str, str]] = []
+    states: list[str] = []
+    if s.wait_start:
+        states.append("WAIT_START")
+        trees["WAIT_START"] = "    movement.stop()"
+    if s.assemble:
+        states.append("ASSEMBLE")
+        trees["ASSEMBLE"] = f"    {col}"
+    states += ["SEARCH_ADVANCE", "CONTACT_DEPLOY", "STANDOFF_TRACK"]
+    trees["SEARCH_ADVANCE"] = (
+        '    with parallel("all"):\n'
+        "        with repeat(until_done=True):\n"
+        f"            movement.follow_route(route_name={ROUTE})\n"
+        f"        {col}\n"
+        '        tactic("perception.search_for_target")'
+    )
+    trees["CONTACT_DEPLOY"] = (
+        '    tactic("formation_standoff.formation_contact_deploy", '
+        f"wing_offset_m={_fmt(s.wing_offset_m)}, ready_tolerance_m={_fmt(m)})"
+    )
+    trees["STANDOFF_TRACK"] = (
+        '    tactic("formation_standoff.formation_standoff_track", '
+        f"desired_range_m={_fmt(s.desired_range_m)}, "
+        f"range_tolerance_m={_fmt(s.range_tolerance_m)}, "
+        f"wing_offset_m={_fmt(s.wing_offset_m)}, ready_tolerance_m={_fmt(m)})"
+    )
+    if s.lost_hold:
+        states.append("TARGET_LOST_HOLD")
+        trees["TARGET_LOST_HOLD"] = '    tactic("formation_standoff.formation_target_lost_hold")'
+        if s.on_timeout == "resume":
+            states.append("RESUME_SEARCH")
+            trees["RESUME_SEARCH"] = (
+                '    tactic("formation_standoff.formation_resume_search", '
+                f"column_spacing_m={_fmt(s.column_spacing_m)}, ready_tolerance_m={_fmt(m)})"
+            )
+    if s.withdraw == "back":
+        states.append("WITHDRAW")
+        trees["WITHDRAW"] = (
+            '    tactic("formation_standoff.formation_standoff_track", '
+            f"desired_range_m={_fmt(s.withdraw_back_m or 0)}, "
+            f"range_tolerance_m={_fmt(s.range_tolerance_m)}, "
+            f"wing_offset_m={_fmt(s.wing_offset_m)}, ready_tolerance_m={_fmt(m)})"
+        )
+    states += ["SHUTDOWN", "COMPLETE"]
+    trees["SHUTDOWN"] = '    tactic("formation_standoff.formation_safe_shutdown")'
+
+    if s.wait_start:
+        T.append(("WAIT_START", "ASSEMBLE" if s.assemble else "SEARCH_ADVANCE", "start_order"))
+    if s.assemble:
+        T.append(("ASSEMBLE", "SEARCH_ADVANCE", "column_ready"))
+    T.append(("SEARCH_ADVANCE", "CONTACT_DEPLOY", "target_detected"))
+    if s.search_limit_s:
+        T.append(("SEARCH_ADVANCE", "SHUTDOWN", "search_time_up"))
+    T.append(("CONTACT_DEPLOY", "STANDOFF_TRACK", "line_ready"))
+    if s.withdraw == "stop":
+        T.append(("STANDOFF_TRACK", "SHUTDOWN", "too_close"))
+    elif s.withdraw == "back":
+        T.append(("STANDOFF_TRACK", "WITHDRAW", "too_close"))
+        T.append(("WITHDRAW", "SHUTDOWN", "target_lost"))
+    if s.lost_hold:
+        T.append(("STANDOFF_TRACK", "TARGET_LOST_HOLD", "target_lost"))
+        T.append(("TARGET_LOST_HOLD", "STANDOFF_TRACK", "target_detected"))
+        if s.on_timeout == "resume":
+            T.append(("TARGET_LOST_HOLD", "RESUME_SEARCH", "reacquire_time_up"))
+            T.append(("RESUME_SEARCH", "SEARCH_ADVANCE", "column_ready"))
+            T.append(("RESUME_SEARCH", "CONTACT_DEPLOY", "target_detected"))
+        else:
+            T.append(("TARGET_LOST_HOLD", "SHUTDOWN", "reacquire_time_up"))
+    else:
+        T.append(("STANDOFF_TRACK", "SHUTDOWN", "target_lost"))
+    T.append(("SHUTDOWN", "COMPLETE", "shutdown_done"))
+    return Machine(states, states[0], T, trees)
+
+
+def member_machine(s: Spec) -> Machine:
+    """Members: their own perception only; their positions are commanded by the leader."""
+    states = (["WAIT_START"] if s.wait_start else []) + ["SEARCH", "TRACK"]
+    trees = {
+        "SEARCH": '    tactic("perception.search_for_target")',
+        "TRACK": '    tactic("perception.track_selected_target")',
+    }
+    if s.wait_start:
+        trees["WAIT_START"] = '    tactic("perception.safe_sensor_shutdown")'
+    T: list[tuple[str, str, str]] = []
+    if s.wait_start:
+        T.append(("WAIT_START", "SEARCH", "start_order"))
+    T.append(("SEARCH", "TRACK", "target_detected"))
+    if s.lost_hold or s.skeleton == "K6":
+        states.append("REACQUIRE")
+        trees["REACQUIRE"] = '    tactic("perception.reacquire_target")'
+        T.append(("TRACK", "REACQUIRE", "target_lost"))
+        T.append(("REACQUIRE", "TRACK", "target_detected"))
+        if s.on_timeout == "resume":
+            T.append(("REACQUIRE", "SEARCH", "reacquire_time_up"))
+        else:
+            T.append(("REACQUIRE", "SHUTDOWN", "reacquire_time_up"))
+    else:
+        T.append(("TRACK", "SHUTDOWN", "target_lost"))
+    if s.withdraw == "stop":
+        T.append(("TRACK", "SHUTDOWN", "too_close"))
+    if s.search_limit_s:
+        T.append(("SEARCH", "SHUTDOWN", "search_time_up"))
+    states += ["SHUTDOWN", "COMPLETE"]
+    trees["SHUTDOWN"] = '    tactic("perception.safe_sensor_shutdown")'
+    T.append(("SHUTDOWN", "COMPLETE", "shutdown_done"))
+    return Machine(states, states[0], T, trees)
+
+
+def observer_machine(s: Spec) -> Machine:
+    """K6: one vehicle holding an observation post."""
+    states = (["WAIT_START"] if s.wait_start else []) + ["SEARCH", "TRACK", "REACQUIRE"]
+    trees = {
+        "SEARCH": (
+            '    with parallel("all"):\n'
+            "        movement.stop()\n"
+            '        tactic("perception.search_for_target")'
+        ),
+        "TRACK": '    tactic("perception.track_selected_target")',
+        "REACQUIRE": '    tactic("perception.reacquire_target")',
+    }
+    T: list[tuple[str, str, str]] = []
+    if s.wait_start:
+        trees["WAIT_START"] = "    movement.stop()"
+        T.append(("WAIT_START", "SEARCH", "start_order"))
+    T += [
+        ("SEARCH", "TRACK", "target_detected"),
+        ("TRACK", "REACQUIRE", "target_lost"),
+        ("REACQUIRE", "TRACK", "target_detected"),
+        ("REACQUIRE", "SEARCH", "reacquire_time_up"),
+    ]
+    states += ["SHUTDOWN", "COMPLETE"]
+    trees["SHUTDOWN"] = (
+        "    with sequence():\n"
+        "        movement.stop()\n"
+        '        tactic("perception.safe_sensor_shutdown")'
+    )
+    T.append(("SHUTDOWN", "COMPLETE", "shutdown_done"))
+    return Machine(states, states[0], T, trees)
+
+
+def roles(s: Spec) -> dict[str, tuple[int, Machine, str]]:
+    if not s.formation:
+        return {"observer": (1, observer_machine(s), "观察车")}
+    return {
+        "leader": (1, leader_machine(s), "长车；执行编队指挥动作，指挥两辆僚车"),
+        "member": (2, member_machine(s), "僚车；只负责本车搜索与跟踪，站位由长车指挥"),
+    }
+
+
+TERMINAL = ("COMPLETE",)
+
+
+def conditions(s: Spec) -> dict[str, str]:
+    m = _fmt(s.ready_tolerance_m)
+    c = {
+        "target_detected": "perception.selected_target.valid",
+        # the field starts false: wait for the track tree to have run (it declares a loss
+        # only after 2.5 s without updates)
+        "target_lost": "not perception.selected_target.valid and time_in_state() >= 3 * s",
+    }
+    if s.formation:
+        c["column_ready"] = f"formation.geometry.column_slot_error_m <= {m} * m"
+        c["line_ready"] = (
+            f"formation.geometry.left_slot_error_m <= {m} * m and "
+            f"formation.geometry.right_slot_error_m <= {m} * m"
+        )
+    if s.withdraw:
+        c["too_close"] = (
+            "perception.selected_target.valid and perception.selected_target.range_m > 0 * m "
+            "and perception.selected_target.range_m < withdraw_threshold_m"
+        )
+    return c
+
+
+def events(s: Spec) -> dict[str, dict[str, Any]]:
+    e: dict[str, dict[str, Any]] = {
+        "cancelled": {"source": "external", "description": "上级取消任务"},
+        "shutdown_done": {"source": "tree", "result": "success", "description": "收尾完成"},
+    }
+    if s.wait_start:
+        e["start_order"] = {"source": "external", "description": "上级下达开始命令"}
+    if s.lost_hold or s.skeleton == "K6":
+        e["reacquire_time_up"] = {
+            "after": f"{_fmt(s.reacquire_timeout_s)} s",
+            "description": "失联后重新获取时限到",
+        }
+    if s.search_limit_s:
+        e["search_time_up"] = {
+            "after": f"{_fmt(s.search_limit_s)} s",
+            "description": "限时搜索到时",
+        }
+    return e
+
+
+def parameters(s: Spec) -> dict[str, dict[str, Any]]:
+    p: dict[str, dict[str, Any]] = {}
+    if s.withdraw:
+        p["withdraw_threshold_m"] = {
+            "value": f"{_fmt(s.withdraw_threshold_m or 0)} m",
+            "basis": "user_specified" if "withdraw_threshold_m" in s.stated else "default",
+            "rationale": "距敌小于该距离即撤离",
+        }
+    return p
+
+
+def _mermaid(role: str, mac: Machine) -> str:
+    lines = ["stateDiagram-v2", f"  [*] --> {mac.initial}"]
+    for a, b, c in mac.transitions:
+        lines.append(f"  {a} --> {b} : {c}")
+    lines.append("  * --> SHUTDOWN : cancelled")
+    lines.append("  COMPLETE --> [*]")
+    return f"```mermaid {role}\n" + "\n".join(lines) + "\n```"
+
+
+def _python(role: str, mac: Machine) -> str:
+    body = []
+    for st in mac.states:
+        if st in TERMINAL:
+            continue
+        body.append(f"def {st}():\n{mac.trees[st]}\n")
+    return f"```python {role}\n" + "\n".join(body).rstrip() + "\n```"
+
+
+# ---------------------------------------------------------------------------- checks
+BB_TRUE = {
+    "target_detected": {"perception.selected_target.valid": True},
+    "target_lost": {"perception.selected_target.valid": False},
+    "column_ready": {"formation.geometry.column_slot_error_m": 1.0},
+    "line_ready": {
+        "formation.geometry.left_slot_error_m": 1.0,
+        "formation.geometry.right_slot_error_m": 1.0,
+    },
+}
+
+
+def l2_tests(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[str, Any]]:
+    ev = events(s)
+    out = []
+    for role, (_, mac, _) in rl.items():
+        for i, (a, b, c) in enumerate(mac.transitions):
+            given: dict[str, Any] = {"role": role, "state": a, "time_in_state_s": 1}
+            bb: dict[str, Any] = {}
+            evs: list[str] = []
+            if c in BB_TRUE:
+                bb.update(BB_TRUE[c])
+                if c == "target_lost":
+                    given["time_in_state_s"] = 5
+            elif c == "too_close":
+                bb.update(
+                    {
+                        "perception.selected_target.valid": True,
+                        "perception.selected_target.range_m": max(
+                            1.0, (s.withdraw_threshold_m or 0) - 50
+                        ),
+                    }
+                )
+            elif c in ev and ev[c].get("source") == "tree":
+                given["tree_status"] = "success"
+            elif c in ev and ev[c].get("source") == "external":
+                evs.append(c)
+            elif c in ev and "after" in ev[c]:
+                given["time_in_state_s"] = float(ev[c]["after"].split()[0]) + 1
+                evs.append(c)
+            # keep competing exits quiet: a valid target while waiting for a timer, etc.
+            if c in ("reacquire_time_up",):
+                bb.setdefault("perception.selected_target.valid", False)
+            if c == "search_time_up":
+                bb.setdefault("perception.selected_target.valid", False)
+            if c == "target_detected" and a in ("STANDOFF_TRACK", "TRACK"):
+                continue
+            if c == "target_lost" and s.withdraw:
+                bb.setdefault("perception.selected_target.range_m", 0.0)
+            given["blackboard"] = bb
+            given["events"] = evs
+            out.append(
+                {
+                    "id": f"t_{role}_{i:02d}_{a.lower()}_{b.lower()}",
+                    "given": given,
+                    "expect": {"next_state": b},
+                }
+            )
+        first = mac.states[0]
+        out.append(
+            {
+                "id": f"t_{role}_cancel",
+                "given": {
+                    "role": role,
+                    "state": first,
+                    "time_in_state_s": 1,
+                    "blackboard": {},
+                    "events": ["cancelled"],
+                },
+                "expect": {"next_state": "SHUTDOWN"},
+            }
+        )
+    return out
+
+
+SENSOR_M = 6000.0  # the 2D sensor reaches as far as the lab radar
+SPEED = 8.0  # route speed (m/s)
+
+
+def l3_scenarios(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[str, Any]]:
+    """Scenarios that drive every module (design §4.2), with feasible timings (§4.4)."""
+    lead = "leader" if s.formation else "observer"
+    mac = rl[lead][1]
+    route_len = 9000.0
+    enemy_x = float(SENSOR_M - 1500) if s.formation else 2500.0
+    t_start = 10.0 if s.wait_start else 0.0
+    # contact: the enemy is inside the sensor range from the start (or as soon as the
+    # search begins); time for the column, contact and line ≈ 60 s
+    env = {
+        "duration_s": 300,
+        "step_s": 1,
+        "routes": {ROUTE: [[0, 0], [route_len, 0]]} if s.formation else {},
+    }
+    vehicles: dict[str, Any] = {}
+    if s.formation:
+        vehicles["leader"] = [{"position_m": [0, 0], "heading_deg": 90, "max_speed_mps": 10}]
+        vehicles["member"] = [
+            {"position_m": [-60, 0], "heading_deg": 90, "max_speed_mps": 10},
+            {"position_m": [-120, 0], "heading_deg": 90, "max_speed_mps": 10},
+        ]
+    else:
+        vehicles["observer"] = [{"position_m": [0, 0], "heading_deg": 90, "max_speed_mps": 10}]
+    start_ev = [{"at_s": t_start, "event": "start_order"}] if s.wait_start else []
+    head = [st for st in mac.states if st in ("WAIT_START", "ASSEMBLE")]
+    track = (
+        ["SEARCH_ADVANCE", "CONTACT_DEPLOY", "STANDOFF_TRACK"]
+        if s.formation
+        else ["SEARCH", "TRACK"]
+    )
+    out: list[dict[str, Any]] = []
+
+    def scen(sid: str, hostiles, evs, faults, path, desc, duration=300):
+        e = dict(env, duration_s=duration)
+        return {
+            "id": sid,
+            "description": desc,
+            "environment": e,
+            "vehicles": vehicles,
+            "hostiles": hostiles,
+            "events": start_ev + evs,
+            "faults": faults,
+            "expect": [{"id": f"{sid}_path", "role": lead, "visits_in_order": head + path}],
+        }
+
+    enemy = {"id": "e1", "position_m": [enemy_x, 0], "velocity_mps": [0, 0], "appear_s": 0}
+    # main path: contact, track, cancel
+    out.append(
+        scen(
+            "main_cancel",
+            [enemy],
+            [{"at_s": 200, "event": "cancelled"}],
+            [],
+            track + ["SHUTDOWN", "COMPLETE"],
+            "发现目标、跟踪，随后上级取消",
+        )
+    )
+    # no enemy: never leaves the search (or gives up after the limit)
+    if s.search_limit_s:
+        dur = int(s.search_limit_s + t_start + 120)
+        first = "SEARCH_ADVANCE" if s.formation else "SEARCH"
+        out.append(
+            scen(
+                "search_time_up",
+                # an enemy far behind, outside the sensor range all along (an empty list
+                # would get the binding's default enemy)
+                [
+                    {
+                        "id": "far",
+                        "position_m": [-20000.0, 0.0],
+                        "velocity_mps": [0, 0],
+                        "appear_s": 0,
+                    }
+                ],
+                [],
+                [],
+                [first, "SHUTDOWN", "COMPLETE"],
+                "无敌情，限时搜索到时后收队",
+                duration=dur,
+            )
+        )
+    # target lost
+    lost_at = 150.0
+    gone = dict(enemy, remove_s=lost_at)
+    if s.lost_hold or not s.formation:
+        hold = "TARGET_LOST_HOLD" if s.formation else "REACQUIRE"
+        back = dict(enemy, id="e2", appear_s=lost_at + max(5.0, s.reacquire_timeout_s / 3))
+        out.append(
+            scen(
+                "lost_reacquired",
+                [gone, back],
+                [],
+                [],
+                track + [hold, track[-1]],
+                "目标丢失后在时限内重新出现",
+            )
+        )
+        after = (
+            ["RESUME_SEARCH" if s.formation else "SEARCH"]
+            if s.on_timeout == "resume" or not s.formation
+            else ["SHUTDOWN", "COMPLETE"]
+        )
+        out.append(
+            scen(
+                "lost_timeout",
+                [gone],
+                [],
+                [],
+                track + [hold] + after,
+                "目标丢失后超时仍未重新获取",
+                duration=int(lost_at + s.reacquire_timeout_s + 120),
+            )
+        )
+    elif s.formation:
+        out.append(
+            scen("lost_end", [gone], [], [], track + ["SHUTDOWN", "COMPLETE"], "目标丢失后结束任务")
+        )
+    # withdrawal: the enemy advances after we track it
+    if s.withdraw:
+        thr = s.withdraw_threshold_m or 0
+        speed = 6.0
+        start = 120.0
+        stop_x = thr - 200 if s.withdraw == "stop" else thr - 100
+        travel = (enemy_x - stop_x) / speed
+        adv = dict(
+            enemy,
+            velocity_mps=[-speed, 0],
+            move_start_s=start,
+            move_stop_s=round(start + travel, 1),
+        )
+        path = track + (["SHUTDOWN", "COMPLETE"] if s.withdraw == "stop" else ["WITHDRAW"])
+        out.append(
+            scen(
+                "enemy_advances",
+                [adv],
+                [],
+                [],
+                path,
+                "跟踪中敌方推进到撤离阈值以内",
+                duration=int(start + travel + 200),
+            )
+        )
+    return out
+
+
+def obligations(s: Spec) -> list[dict[str, Any]]:
+    out = [
+        {
+            "id": "cancel_shutdown",
+            "kind": "response",
+            "description": "收到上级取消后 30 s 内关闭搜索",
+            "on_event": "cancelled",
+            "action": "perception.stop_search",
+            "within_s": 30.0,
+        },
+    ]
+    if s.formation:
+        out.append(
+            {
+                "id": "stop_before_sensor_off",
+                "kind": "precedes",
+                "description": "先停车，再关闭搜索",
+                "first": "movement.stop",
+                "then": "perception.stop_search",
+                "roles": ["leader"],
+            }
+        )
+        # stop-and-shut-down promises no distance; backing off may dip below the threshold
+        # for a moment when it triggers; holding the band keeps its lower edge
+        if s.withdraw != "stop":
+            floor = (
+                (s.withdraw_threshold_m or 0) * 0.7
+                if s.withdraw == "back"
+                else (s.desired_range_m - s.range_tolerance_m) * 0.9
+            )
+            out.append(
+                {
+                    "id": "keep_off",
+                    "kind": "keeps_distance",
+                    "description": "长车与敌保持距离，不进入保持距离带下沿（撤离时为撤离阈值）以内",
+                    "roles": ["leader"],
+                    "min_m": float(round(floor)),
+                }
+            )
+    return out
+
+
+def sheet(s: Spec) -> tuple[str, dict[str, Any]]:
+    rl = roles(s)
+    model = {
+        "model": {"display_name": f"试点模型 {s.model_id}", "intent": "生成的编队/感知战术模型"},
+        "slices": ["formation_standoff", "perception", "movement"]
+        if s.formation
+        else ["perception", "movement"],
+        "roles": {
+            r: {"capability_class": "ground_vehicle", "count": n, "description": d}
+            for r, (n, _, d) in rl.items()
+        },
+        "events": events(s),
+    }
+    params = parameters(s)
+    if s.formation:
+        params[ROUTE] = {
+            "value": ROUTE,
+            "type": "string",
+            "basis": "user_specified",
+            "rationale": "想定给出的搜索路线名",
+        }
+    if params:
+        model["parameters"] = params
+    ver = {"tests": l2_tests(s, rl), "scenarios": l3_scenarios(s, rl)}
+    parts = [
+        f"# 战术稿：{s.model_id}",
+        "```yaml model\n" + yaml.safe_dump(model, allow_unicode=True, sort_keys=False) + "```",
+    ]
+    for r, (_, mac, _) in rl.items():
+        parts.append(_mermaid(r, mac))
+    parts.append(
+        "```python conditions\n"
+        + "\n".join(f"{k} = {v}" for k, v in conditions(s).items())
+        + "\n```"
+    )
+    for r, (_, mac, _) in rl.items():
+        parts.append(_python(r, mac))
+    parts.append(
+        "```yaml verification\n" + yaml.safe_dump(ver, allow_unicode=True, sort_keys=False) + "```"
+    )
+    request = {
+        "requirement": "（逆向配文前的占位）",
+        "model_id": s.model_id,
+        "roles": {
+            r: {"capability_class": "ground_vehicle", "count": n} for r, (n, _, _) in rl.items()
+        },
+        "scenario_parameters": {ROUTE: {"type": "string", "description": "想定给出的搜索路线名"}}
+        if s.formation
+        else {},
+        "scenario_events": {
+            k: v["description"] for k, v in events(s).items() if v.get("source") == "external"
+        },
+        "obligations": obligations(s),
+        "extract_obligations": False,
+    }
+    return "\n\n".join(parts) + "\n", request
+
+
+def build(s: Spec, out_dir: Path) -> dict[str, Any]:
+    """Write the sheet and request, compile and check offline; returns the result row."""
+    from afsim_research_agent.falcon.v3.draft import compile_package
+
+    work = out_dir / s.model_id
+    work.mkdir(parents=True, exist_ok=True)
+    text, req = sheet(s)
+    (work / "tactic_sheet.md").write_text(text, encoding="utf-8")
+    (work / "falcon_request.yaml").write_text(
+        yaml.safe_dump(req, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )
+    (work / "gen.json").write_text(
+        json.dumps(asdict(s), ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    pkg = work / "pkg"
+    if pkg.exists():
+        import shutil
+
+        shutil.rmtree(pkg)
+    res = compile_package(work / "tactic_sheet.md", work / "falcon_request.yaml", pkg)
+    c = res.check
+    row = {
+        "id": s.model_id,
+        "skeleton": s.skeleton,
+        "status": res.status,
+        "l1": c.l1_ok,
+        "problems": [f"{p.code} {p.message}"[:240] for p in c.problems][:8]
+        if hasattr(c.problems[0] if c.problems else None, "code")
+        else [str(p)[:240] for p in c.problems][:8],
+        "l2": [sum(1 for t in c.l2 if t["passed"]), len(c.l2)],
+        "l3": [[x["id"], x["passed"], (x.get("detail") or x.get("message") or "")] for x in c.l3],
+        "l2_fail": [
+            [t["id"], t.get("detail") or t.get("message") or t.get("actual")]
+            for t in c.l2
+            if not t["passed"]
+        ][:6],
+    }
+    (work / "result.json").write_text(
+        json.dumps(row, ensure_ascii=False, indent=1, default=str), encoding="utf-8"
+    )
+    return row
