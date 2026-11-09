@@ -39,6 +39,10 @@ MOVE_ACTIONS = frozenset(
         "hierarchical_formation.move_to_formation_slot",
     }
 )
+# actions after which a stopped vehicle may move again on purpose (end STOP_DRIFT's window):
+# the movement actions, and the standoff step that drives the leader to its range band
+# (it may hold still, so it is not a movement action for NO_MOTION)
+RESUME_ACTIONS = MOVE_ACTIONS | frozenset({"formation.command_standoff"})
 
 
 @dataclass
@@ -311,7 +315,7 @@ def motion_issues(
         for i, (t0, a) in enumerate(mine):
             if a != "movement.stop":
                 continue
-            later = [t for t, b in mine[i + 1 :] if b in MOVE_ACTIONS]
+            later = [t for t, b in mine[i + 1 :] if b in RESUME_ACTIONS]
             until = min(later) if later else math.inf
             ref = tracks.at(p, t0 + STOP_SETTLE_S)
             if ref is None:

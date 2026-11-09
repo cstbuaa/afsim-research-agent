@@ -76,6 +76,9 @@ def test_a_vehicle_that_keeps_moving_after_its_stop_is_reported() -> None:
     tracks = E.parse(_console(rows))
     issues = E.motion_issues(tracks, {"b1": "bounding"}, [(10.0, "b1", "movement.stop")])
     assert [i["kind"] for i in issues] == ["STOP_DRIFT"] and issues[0]["drift_m"] > 50
+    # the standoff step drives a stopped leader on purpose (approach / back off): no drift
+    acts = [(10.0, "b1", "movement.stop"), (12.0, "b1", "formation.command_standoff")]
+    assert not E.motion_issues(tracks, {"b1": "leader"}, acts)
     # a route that does not move the vehicle
     still = E.parse(_console([(t, "b1", "blue", 0, 0, 0.0) for t in range(0, 30)]))
     issues = E.motion_issues(still, {"b1": "bounding"}, [(2.0, "b1", "movement.follow_route")])
