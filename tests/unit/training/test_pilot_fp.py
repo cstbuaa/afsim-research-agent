@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+import yaml
 
 from afsim_research_agent.training.pilot_fp import SKELETONS, build, sample, sheet
 
@@ -99,3 +100,33 @@ def test_injected_errors_are_caught_and_fixed():
         assert last["action"] == "edit" and last["args"]["changes"]
         if x.stage == "behaviour":
             assert _json.loads(x.steps[0]["target"])["action"] == "diagnose"
+
+
+def test_score_accepts_the_gold_answers():
+    import json as _json
+
+    from afsim_research_agent.training.backtranslate import facts
+    from afsim_research_agent.training.inject import injections, make
+    from afsim_research_agent.training.render import render
+    from afsim_research_agent.training.score import score_repair, score_sheet
+
+    s = sample("K2", 1)
+    text, request = sheet(s)
+    req = "；".join(facts(s))
+    pair = {"tactic_sheet": text, "falcon_request": yaml.safe_dump(request), "requirement": req}
+    for x in render(text, request, req, facts(s)):
+        res = score_sheet(x.task, pair, x.target)
+        assert res["parsed"] and res["verified"], (x.task, res)
+    assert not score_sheet("control", pair, "```python conditions\nx = 1\n```")["verified"]
+    injs = injections(text)
+    k = next(i for i, inj in enumerate(injs) if inj.rule == "E5")
+    smp = make(text, request, req, facts(s), injs[k])
+    rows = [
+        {"id": f"x-{k:02d}-E5-s{j}", "target": st["target"], "meta": {"stage": smp.stage}}
+        for j, st in enumerate(smp.steps)
+    ]
+    first = score_repair(rows[0], pair, None, rows[0]["target"])
+    assert first["accepted"] and first["action"] == "diagnose"
+    second = score_repair(rows[1], pair, _json.loads(rows[0]["target"]), rows[1]["target"])
+    assert second["solved"]
+    assert not score_repair(rows[1], pair, _json.loads(rows[0]["target"]), "不知道")["parsed"]
