@@ -36,10 +36,10 @@ unzip pilot_fp_v1.zip && cd pilot_fp_v1 && bash verify.sh      # 每个文件都
 source ~/venv-train/bin/activate
 cd <仓库>/scripts/train
 B=~/afsim-train/data/pilot_fp_v1
-python prepare.py --bundle $B --task repair       --max-length 8192  --out ~/afsim-train/sft/repair
-python prepare.py --bundle $B --task structure    --max-length 12288 --out ~/afsim-train/sft/structure
-python prepare.py --bundle $B --task control      --max-length 24576 --out ~/afsim-train/sft/control
-python prepare.py --bundle $B --task verification --max-length 12288 --out ~/afsim-train/sft/verification
+python prepare.py --bundle $B --task repair       --max-length 4096  --out ~/afsim-train/sft/repair
+python prepare.py --bundle $B --task structure    --max-length 6144  --out ~/afsim-train/sft/structure
+python prepare.py --bundle $B --task control      --max-length 14336 --out ~/afsim-train/sft/control
+python prepare.py --bundle $B --task verification --max-length 6144  --out ~/afsim-train/sft/verification
 ```
 
 - 用 Qwen3 的对话格式、关闭思考（`enable_thinking=False`），与 vLLM 给 Falcon 提供服务时一致。

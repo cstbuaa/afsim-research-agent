@@ -3,7 +3,7 @@ model: /data/caoshutong/models/Qwen3-8B
 data_dir: /data/caoshutong/projects/afsim_train/sft/verification
 output_dir: /data/caoshutong/projects/afsim_train/runs/verification-qwen3-8b-v1
 load_in_4bit: true
-max_length: 12288
+max_length: 6144
 lora_r: 32
 lora_alpha: 64
 lora_dropout: 0.05
