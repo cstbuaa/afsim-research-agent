@@ -1,7 +1,7 @@
 # T: repair — Qwen3-8B QLoRA (4-bit base, bf16 LoRA), loss on the completion only
-model: Qwen/Qwen3-8B
-data_dir: ~/afsim-train/sft/repair
-output_dir: ~/afsim-train/runs/repair-qwen3-8b-v1
+model: /data/caoshutong/models/Qwen3-8B
+data_dir: /data/caoshutong/projects/afsim_train/sft/repair
+output_dir: /data/caoshutong/projects/afsim_train/runs/repair-qwen3-8b-v1
 load_in_4bit: true
 max_length: 8192
 lora_r: 32
