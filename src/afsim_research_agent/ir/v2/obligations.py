@@ -387,13 +387,29 @@ def _one(ob, platform, starts, events, step_s, end_s) -> Verdict:
         tt = _first(starts, ob.then)
         if tt is None:
             return Verdict(ob.id, True, f"{platform}: {ob.then} 没有执行", judged=False)
-        tf = _first(starts, ob.first)
-        ok = tf is not None and tf <= tt + step_s
+        before = [t for t in starts.get(ob.first or "", []) if t <= tt + step_s]
+        tf = max(before) if before else None
+        ok = tf is not None
+        moved: list[tuple[float, str]] = []
+        if ok and ob.first == "movement.stop":
+            # "stop, then switch the sensor off": the vehicle must still be stopped. A stop
+            # earlier in the run (on contact) followed by motion (the standoff manoeuvre)
+            # does not satisfy it (S5 injection E7, 11-10)
+            from afsim_research_agent.ir.v2.effects import RESUME_ACTIONS
+
+            moved = sorted(
+                (t, a)
+                for a in RESUME_ACTIONS
+                for t in starts.get(a, [])
+                if tf is not None and tf + step_s < t <= tt
+            )
+            ok = not moved
         return Verdict(
             ob.id,
             ok,
             f"{platform}: {ob.then} 在 {tt:g} s 开始，"
-            + (f"{ob.first} 在 {tf:g} s" if tf is not None else f"此前 {ob.first} 没有执行"),
+            + (f"{ob.first} 在 {tf:g} s" if tf is not None else f"此前 {ob.first} 没有执行")
+            + (f"，但之后 {moved[0][1]} 在 {moved[0][0]:g} s 又开始移动" if moved else ""),
         )
     # response
     raised = [t for t, e in events if e == ob.on_event]

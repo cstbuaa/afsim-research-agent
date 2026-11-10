@@ -489,6 +489,17 @@ def commanding_actions(contracts: Any) -> set[str]:
     }
 
 
+def leader_actions(contracts: Any) -> set[str]:
+    """Commanding actions plus those that claim the leader's own locomotion (``scope:
+    leader``, the standoff command): a member running one fights the leader's slot commands
+    for its own locomotion (S5 injection E3, 11-10)."""
+    return commanding_actions(contracts) | {
+        aid
+        for aid, a in (getattr(contracts, "actions", {}) or {}).items()
+        if any(r.get("scope") == "leader" for r in getattr(a, "resources", ()) or ())
+    }
+
+
 def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any]) -> list[Problem]:
     """ROLE_FIELD, ENTRY_TRUE, NEXT_STATE_FIELD, ROLE_COUNT, COMMAND_ROLE (module doc)."""
     ENTRY_ITEMS.clear()
@@ -511,7 +522,7 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
         if isinstance(r, dict)
     }
     kinds = role_kinds(counts)
-    commanding = commanding_actions(contracts)
+    commanding = leader_actions(contracts)
     leaders = sorted(r for r, k in kinds.items() if k == "leader")
     for role, mission in (spec.get("missions") or {}).items():
         if not isinstance(mission, dict) or not mission.get("states"):
@@ -525,8 +536,9 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
                         (
                             f"state_trees.{role}.{st}",
                             f"COMMAND_ROLE 角色 {role} 是被指挥的车辆，状态 {st} 的树用到 "
-                            f"{'、'.join(wrong)}：这是长车指挥本车下属车辆的动作，"
-                            "在被指挥的车上执行时没有下属可指挥，立即成功、车辆不动。"
+                            f"{'、'.join(wrong)}：这是长车专用的编队指挥动作"
+                            "（指挥下属车辆，或按目标距离调整长车自身），在被指挥的车上执行时"
+                            "没有下属可指挥，或与长车对本车的站位指挥争用行驶。"
                             f"把指挥动作（或含它的子树）放到 {'、'.join(leaders) or '长车'} "
                             "对应状态的树里；本角色只做感知、上报等自己的事，由长车带动，"
                             "不要再给本角色写自己的路线或移动",

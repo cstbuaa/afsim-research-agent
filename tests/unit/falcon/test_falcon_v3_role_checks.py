@@ -162,3 +162,29 @@ def test_roles_are_told_apart_like_the_scenario_kit() -> None:
     assert role_kinds({"car": 1, "wing": 2}) == {"car": "leader", "wing": "member"}
     assert role_kinds({"a": 1, "b": 1}) == {"a": "", "b": ""}
     assert role_kinds({"platoon_commander": 2, "tank": 2})["platoon_commander"] == "leader"
+
+
+def test_a_member_running_the_standoff_command_is_reported() -> None:
+    """The standoff command claims the leader's own locomotion (scope: leader): on a member
+    it fights the leader's slot commands (S5 injection E3, 11-10)."""
+    contracts = _contracts()
+    contracts.actions["formation.command_standoff"] = SimpleNamespace(
+        written=set(),
+        resources=({"resource": "locomotion", "mode": "exclusive", "scope": "leader"},),
+    )
+    missions = {
+        r: {"initial_state": "TRACK", "states": ["TRACK"], "transitions": []}
+        for r in ("leader", "member")
+    }
+    spec = _spec(
+        {},
+        {
+            "leader_track": ["formation.command_standoff"],
+            "member_track": ["movement.stop", "formation.command_standoff"],
+        },
+        missions,
+    )
+    spec["roles"] = [{"id": "leader", "count": 1}, {"id": "member", "count": 2}]
+    found = [p for p in role_problems(spec, contracts, {}) if p[2] == "COMMAND_ROLE"]
+    assert [p[0] for p in found] == ["state_trees.member.TRACK"]
+    assert "formation.command_standoff" in found[0][1]

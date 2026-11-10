@@ -165,3 +165,23 @@ def test_periodic_starts_in_one_update_are_one_round() -> None:
     every = Obligation(id="every_5s", kind="not_before", action="a.x", after="a.x", min_s=5)
     (v,) = check([every], [(0, "p", "a.x"), (0, "p", "a.x"), (6, "p", "a.x")], [], end_s=20)
     assert v.passed
+
+
+def test_stop_before_sensor_off_needs_the_vehicle_still_stopped() -> None:
+    ob = Obligation(
+        id="stop_before_sensor_off",
+        kind="precedes",
+        first="movement.stop",
+        then="perception.stop_search",
+    )
+    # stopped on contact, then the standoff manoeuvre, then the sensor off without a stop
+    moved = [
+        (100, "car_0", "movement.stop"),
+        (120, "car_0", "formation.command_standoff"),
+        (400, "car_0", "perception.stop_search"),
+    ]
+    (v,) = check([ob], moved, [])
+    assert not v.passed and "又开始移动" in v.detail
+    # the same with a stop at the shutdown
+    (v,) = check([ob], moved[:2] + [(399, "car_0", "movement.stop"), moved[2]], [])
+    assert v.passed
