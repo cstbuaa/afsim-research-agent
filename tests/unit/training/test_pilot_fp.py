@@ -62,3 +62,19 @@ def test_check_flags_added_fire():
 
     s = replace(sample("K1", 1), stated=[])
     assert any("加入了" in p for p in check(s, "发现敌车后长车停止间射击准备"))
+
+
+@pytest.mark.parametrize("skeleton", ["K1", "K4", "K6"])
+def test_render_prompts_round_trip(skeleton):
+    from afsim_research_agent.training.backtranslate import facts
+    from afsim_research_agent.training.render import TASKS, render
+
+    s = sample(skeleton, 3)
+    text, request = sheet(s)
+    out = render(text, request, "；".join(facts(s)), facts(s))
+    assert [x.task for x in out] == list(TASKS)
+    assert all(x.ok for x in out), [x.problems for x in out]
+    assert "```yaml model" in out[0].target and "```python conditions" in out[1].target
+    assert out[2].target.startswith("```yaml verification")
+    # the structure prompt comes before the obligations; the later ones carry them
+    assert "cancel_shutdown" not in out[0].prompt and "cancel_shutdown" in out[1].prompt
