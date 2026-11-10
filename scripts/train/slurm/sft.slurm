@@ -18,6 +18,13 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 cd $R/scripts
 echo "job $SLURM_JOB_ID on $(hostname), GPUs $CUDA_VISIBLE_DEVICES"
 nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv
+# only fully idle cards: no compute process and almost no memory in use on any card this
+# job was given; otherwise stop at once without touching the card (resubmit later)
+busy=$(nvidia-smi --query-gpu=index,memory.used --format=csv,noheader,nounits | awk -F', ' '$2 > 500 {print $1}')
+apps=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader | wc -l)
+if [ -n "$busy" ] || [ "$apps" -gt 0 ]; then
+  echo "GPU in use by others (cards: ${busy:-none}, processes: $apps): not starting"; exit 3
+fi
 if [ "${NPROC:-1}" -gt 1 ]; then
   $E/bin/accelerate launch --num_processes "$NPROC" sft.py --config "$CONFIG" ${EXTRA:-}
 else
