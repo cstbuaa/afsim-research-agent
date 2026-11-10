@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from afsim_research_agent.falcon.sheet.blocks import Block, split_sheet
-from afsim_research_agent.falcon.v3.fixer import SheetFixer, _prompt, _rebuild
+from afsim_research_agent.falcon.v3.fixer import SheetFixer, _clip, _prompt, _rebuild
 from afsim_research_agent.training.render import drafter
 
 MAX_STEPS = 20  # the loop's step budget the prompt reports (fix_sheet default)
@@ -281,6 +281,117 @@ INJECTORS: list[Callable[[dict[str, str]], Iterator[Injection]]] = [
 ]
 
 
+# ------------------------------------------------- generic injectors (any v3 sheet)
+_TRANS = re.compile(r"^(\s*)(\w+) --> (\w+) : (\w+)\s*$", re.M)
+
+
+def g_e2_interface(blocks: dict[str, str]) -> Iterator[Injection]:
+    for key, t in blocks.items():
+        if not key.startswith("pytree:"):
+            continue
+        for m in re.finditer(r"\b(route|point)=(\w+)", t):
+            if t.count(m.group(0)) == 1:
+                kind = "路线" if m.group(1) == "route" else "点"
+                yield Injection(
+                    "E2", key, m.group(0), f"{m.group(1)}={m.group(2)}_x",
+                    f"{kind}名写成想定接口里没有的 {m.group(2)}_x",
+                    f"引用的{kind} {m.group(2)}_x 不在想定接口中",
+                    f"改回想定接口的 {m.group(0)}",
+                )  # fmt: skip
+                return
+
+
+def g_e4_entry(blocks: dict[str, str]) -> Iterator[Injection]:
+    t = blocks.get("conditions", "")
+    for line in t.splitlines():
+        m = re.search(r" and time_in_state\(\) >= [\d.]+ \* s", line)
+        if m and t.count(line) == 1:
+            name = line.split("=")[0].strip()
+            yield Injection(
+                "E4", "conditions", line, line.replace(m.group(0), ""),
+                f"{name} 去掉时间保护",
+                f"进入状态的同一拍 {name} 就成立，状态一进入就离开",
+                f"{name} 加回{m.group(0)}",
+            )  # fmt: skip
+            return
+
+
+def g_e5_exit(blocks: dict[str, str]) -> Iterator[Injection]:
+    for key, t in blocks.items():
+        if not key.startswith("mermaid:"):
+            continue
+        for m in _TRANS.finditer(t):
+            src, dst, trig = m.group(2), m.group(3), m.group(4)
+            line = m.group(0) + "\n"
+            if t.count(line) != 1 or len(re.findall(rf"^\s*{src} --> ", t, re.M)) != 1:
+                continue  # the only exit of its state: the state is then stuck
+            yield Injection(
+                "E5", key, line, "", f"{key} 删掉 {src} 的出口 {trig}",
+                f"{src} 没有出口转换（{trig}），进入后停在这个状态",
+                f"加回转换 {src} --> {dst} : {trig}",
+            )  # fmt: skip
+            break
+
+
+def g_e8_reference(blocks: dict[str, str]) -> Iterator[Injection]:
+    for key, t in blocks.items():
+        if not key.startswith("mermaid:"):
+            continue
+        m = next((m for m in _TRANS.finditer(t) if len(m.group(3)) > 4), None)
+        if m and t.count(m.group(0)) == 1:
+            dst = m.group(3)
+            bad = dst[:-2] + dst[-1]
+            yield Injection(
+                "E8", key, m.group(0), m.group(0).replace(f"--> {dst} :", f"--> {bad} :"),
+                "转换的目标状态名拼错", f"转换指向不存在的状态 {bad}",
+                f"目标状态改回 {dst}",
+            )  # fmt: skip
+            break
+    for key, t in blocks.items():
+        if not key.startswith("pytree:"):
+            continue
+        m = re.search(r'tactic\("([\w.]+)"', t)
+        if m and t.count(m.group(0)) == 1 and len(m.group(1)) > 8:
+            tid = m.group(1)
+            bad = tid[:-3] + tid[-2:]
+            yield Injection(
+                "E8", key, m.group(0), m.group(0).replace(tid, bad), "子树名拼错",
+                f"战术集里没有 {bad}", f"改回 {tid}",
+            )  # fmt: skip
+            break
+
+
+def g_e9_value(blocks: dict[str, str]) -> Iterator[Injection]:
+    t = blocks.get("model", "")
+    for m in re.finditer(r"  (\w+):\n(?:    .*\n)*?    after: ['\"]?(\d+) s['\"]?", t):
+        v = int(m.group(2))
+        yield Injection(
+            "E9", "model", m.group(0), m.group(0).replace(f"{v} s", f"{v * 10} s"),
+            f"{m.group(1)} 的时限 {v} s 写成 {v * 10} s",
+            f"{m.group(1)} 的时限与需求不符（需求为 {v} 秒），想定里到时没有转换",
+            f"{m.group(1)} 的 after 改回 {v} s",
+        )  # fmt: skip
+        return
+
+
+def g_e10_cancel(blocks: dict[str, str]) -> Iterator[Injection]:
+    for key, t in blocks.items():
+        if not key.startswith("mermaid:"):
+            continue
+        for line in t.splitlines(keepends=True):
+            m = re.match(r"\s*\* --> (\w+) : (\w+)\s*$", line)
+            if m and t.count(line) == 1:
+                yield Injection(
+                    "E10", key, line, "", f"{key} 删掉全局转换 {m.group(2)}",
+                    f"{key.split(':')[1]} 没有 {m.group(2)} 的全局转换，任何状态下都不响应",
+                    f"加回 * --> {m.group(1)} : {m.group(2)}",
+                )  # fmt: skip
+                return
+
+
+GENERIC = [g_e2_interface, g_e4_entry, g_e5_exit, g_e8_reference, g_e9_value, g_e10_cancel]
+
+
 # ---------------------------------------------------------------------- samples
 def _unique_window(text: str, start: int, end: int, original: str) -> tuple[str, str] | None:
     """The smallest whole-line window around [start, end) of ``text`` that occurs once, and
@@ -316,68 +427,119 @@ def _json(thought: str, action: str, args: dict[str, Any]) -> str:
     return json.dumps({"thought": thought, "action": action, "args": args}, ensure_ascii=False)
 
 
-def make(
-    gold_sheet: str,
-    request: dict[str, Any],
-    requirement: str,
-    facts: list[str],
-    inj: Injection,
-) -> RepairSample:
-    out = RepairSample(inj.rule, "")
-    d = drafter(request, requirement, facts)
-    gold = split_sheet(gold_sheet)[0]
-    d.blocks = [Block(b.kind, b.role, b.text, b.line, b.info) for b in gold]
-    d.slices = d._slices(d.compile(pending=True))
-    asyncio.run(d.obligations_stage())
+def execute(
+    fixer: SheetFixer,
+    records: list[dict[str, Any]],
+    action: str,
+    args: dict[str, Any],
+    thought: str,
+) -> str:
+    """One loop step with the loop's own tools and bookkeeping (``fix_sheet``)."""
+    fixer.step = len(records) + 1
+    if action in ("edit", "diagnose"):
+        fixer.reads = 0
+    if action == "show":
+        result = fixer.show(str(args.get("block", "")), args.get("start"), args.get("end"))
+        fixer.reads += 1
+        fixer.looks += 1
+    elif action == "diagnose":
+        result = fixer.diagnose(args)
+    elif action == "edit":
+        result = fixer.edit(args.get("changes"), str(args.get("reason") or thought))
+    else:
+        result = f"（评测不执行 {action}）"
+    records.append(
+        {"step": fixer.step, "action": action, "args": args, "thought": thought,
+         "result": _clip(result)}
+    )  # fmt: skip
+    return result
+
+
+def injected(gold_sheet: str, inj: Injection, d: Any) -> tuple[SheetFixer, tuple[str, str]] | None:
+    """Apply the injection to a ready drafter: its fixer and the edit (old, new) that
+    undoes it, or None when the snippet is not unique."""
     texts = {b.key: b.text for b in d.blocks}
-    text = texts[inj.block]
+    text = texts.get(inj.block, "")
     if text.count(inj.before) != 1:
-        out.problems.append("原文片段不唯一")
-        return out
+        return None
     start = text.index(inj.before)
     texts[inj.block] = text.replace(inj.before, inj.after)
     d.blocks = _rebuild(d.blocks, texts)
     window = _unique_window(texts[inj.block], start, start + len(inj.after), inj.before)
-    if window is None:
-        out.problems.append("找不到唯一的修改片段")
+    return (SheetFixer(d), window) if window else None
+
+
+def _ready(request: dict[str, Any], requirement: str, facts: list[str], gold: list[Block]):
+    d = drafter(request, requirement, facts)
+    d.blocks = [Block(b.kind, b.role, b.text, b.line, b.info) for b in gold]
+    d.slices = d._slices(d.compile(pending=True))
+    asyncio.run(d.obligations_stage())
+    return d
+
+
+def _look_args(d: Any, inj: Injection) -> dict[str, Any]:
+    """``show`` of the injected block: whole when what the loop returns (120 lines, 5000
+    characters) reaches the injected place, else a window of lines around it."""
+    block = next(b for b in d.blocks if b.key == inj.block)
+    at = block.text.find(inj.after) if inj.after else -1
+    if at < 0:
+        at = max(block.text.find(inj.before[:40]), 0)
+    idx = block.text[:at].count("\n")
+    if idx < 100 and len(block.text) <= 4500:
+        return {"block": inj.block}
+    lo = max(idx - 20, 0)
+    return {"block": inj.block, "start": block.line + lo, "end": block.line + idx + 40}
+
+
+def make(
+    gold_sheet: str,
+    request: dict[str, Any] | None,
+    requirement: str,
+    facts: list[str],
+    inj: Injection,
+    look: bool = False,
+    base: Callable[[], Any] | None = None,
+) -> RepairSample:
+    """One injection → the loop's steps that fix it. ``look`` puts a ``show`` of the block
+    first (repair v2: the edit is written after seeing the text, not from memory);
+    ``base`` builds the drafter for a sheet that is not a pilot one (``collect.load``)."""
+    out = RepairSample(inj.rule, "")
+    gold = split_sheet(gold_sheet)[0]
+    d = base() if base is not None else _ready(request or {}, requirement, facts, gold)
+    got = injected(gold_sheet, inj, d)
+    if got is None:
+        out.problems.append("原文片段不唯一或找不到唯一的修改片段")
         return out
-    old, new = window
-    fixer = SheetFixer(d)
+    fixer, (old, new) = got
     check = fixer.last
     if check.verified:
         out.problems.append("注入后检查仍全部通过")
+        return out
+    if fixer.outside_left():
+        out.problems.append("注入后的失败按规则不属于稿件")
         return out
     out.failed = _failed(check)
     out.stage = "l1" if not check.l1_ok else "behaviour"
     changes = [{"block": inj.block, "old": old, "new": new}]
     records: list[dict[str, Any]] = []
+
+    def step(action: str, args: dict[str, Any], thought: str) -> str:
+        out.steps.append(
+            {
+                "prompt": _prompt(fixer, records, MAX_STEPS - len(records)),
+                "target": _json(thought, action, args),
+            }
+        )
+        return execute(fixer, records, action, args, thought)
+
+    if look:
+        step("show", _look_args(d, inj), f"先看 {inj.block} 的内容，再按检查结果定位")
     if fixer.needs_diagnosis:
         found = [f for f in fixer.findings() if f.sheet]
         issue = found[0].render() if found else (out.failed[0] if out.failed else inj.what)
-        where = [inj.block]
-        args = {"issue": issue[:400], "where": where, "cause": inj.cause, "plan": inj.plan}
-        thought = "先按检查结果写诊断"
-        out.steps.append(
-            {
-                "prompt": _prompt(fixer, records, MAX_STEPS),
-                "target": _json(thought, "diagnose", args),
-            }
-        )
-        fixer.step = 1
-        result = fixer.diagnose(args)
-        records.append(
-            {"step": 1, "action": "diagnose", "args": args, "thought": thought, "result": result}
-        )
-    thought = inj.plan
-    prompt = _prompt(fixer, records, MAX_STEPS - len(records))
-    out.steps.append(
-        {
-            "prompt": prompt,
-            "target": _json(thought, "edit", {"changes": changes, "reason": inj.plan}),
-        }
-    )
-    fixer.step = len(records) + 1
-    result = fixer.edit(changes, inj.plan)
+        args = {"issue": issue[:400], "where": [inj.block], "cause": inj.cause, "plan": inj.plan}
+        step("diagnose", args, "按检查结果和块的内容写诊断" if look else "先按检查结果写诊断")
+    result = step("edit", {"changes": changes, "reason": inj.plan}, inj.plan)
     if not fixer.solved:
         out.problems.append("按目标修改后检查仍未全部通过：" + result[:300])
         return out
@@ -390,6 +552,18 @@ def make(
     return out
 
 
-def injections(gold_sheet: str) -> list[Injection]:
+def injections(gold_sheet: str, generic: bool | str = False) -> list[Injection]:
+    """The pilot injectors (the generated sheets' names); with ``generic`` the ones that
+    work on any v3 sheet (historical drafts); ``"both"``: pilot then generic, the same
+    change only once. A sample's ``meta.injset`` says which list its index refers to."""
     blocks = {b.key: b.text for b in split_sheet(gold_sheet)[0]}
-    return [inj for f in INJECTORS for inj in f(blocks)]
+    sets = {False: INJECTORS, True: GENERIC, "both": INJECTORS + GENERIC}[generic]
+    out: list[Injection] = []
+    seen: set[tuple[str, str, str]] = set()
+    for f in sets:
+        for inj in f(blocks):
+            key = (inj.block, inj.before, inj.after)
+            if key not in seen:
+                seen.add(key)
+                out.append(inj)
+    return out

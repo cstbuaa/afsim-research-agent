@@ -72,6 +72,14 @@ MANUAL: dict[str, Symptom] = {
             " result: success}}`），或改读本状态动作写入的字段；出口条件：{exits}",
         ),
         Symptom(
+            "STUCK_NO_EXIT",
+            MODEL,
+            "停在非终止状态直到结束，这个状态在状态图里没有自己的出口转换",
+            "状态图里没有从 {state} 出去的转换（只有“任意状态”的全局转换），漏写了或被删掉了",
+            "对照需求，在 mermaid:{role} 里补上 {state} 的出口转换（何时离开、去哪个状态），"
+            "触发名与 conditions / events 中的名字一致；不要改用树完成事件",
+        ),
+        Symptom(
             "STUCK_EVENT_TEST",
             TEST,
             "等待的外部事件在这个想定里没有发出",
@@ -305,6 +313,13 @@ def _stuck(
         f"{x.get('from')} → {x.get('to')} 当 {_condition_text(model, str(x.get('on')))}"
         for x in exits
     )
+    if not exits:
+        # the state has no transition of its own: a missing exit, not a wrong condition
+        # (S5 injection E5: the old advice to switch to a tree event led away from the fix)
+        return Finding(
+            "STUCK_NO_EXIT", check, role, state, f"{t:g} s 起一直停在 {state}",
+            [f"mermaid:{role}"], {"role": role},
+        )  # fmt: skip
     return Finding(
         "STUCK",
         check,

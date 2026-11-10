@@ -130,3 +130,34 @@ def test_score_accepts_the_gold_answers():
     second = score_repair(rows[1], pair, _json.loads(rows[0]["target"]), rows[1]["target"])
     assert second["solved"]
     assert not score_repair(rows[1], pair, _json.loads(rows[0]["target"]), "不知道")["parsed"]
+
+
+def test_repair_v2_looks_first_and_scores_with_replay():
+    import json as _json
+
+    from afsim_research_agent.training.backtranslate import facts
+    from afsim_research_agent.training.inject import injections, make
+    from afsim_research_agent.training.score import score_repair
+
+    s = sample("K2", 1)
+    text, request = sheet(s)
+    req = "；".join(facts(s))
+    pair = {"tactic_sheet": text, "falcon_request": yaml.safe_dump(request), "requirement": req}
+    both = injections(text, "both")
+    assert len(both) >= len(injections(text))
+    assert len({(i.block, i.before, i.after) for i in both}) == len(both)
+    k = next(i for i, inj in enumerate(both) if inj.rule == "E5")
+    smp = make(text, request, req, facts(s), both[k], look=True)
+    assert smp.ok, smp.problems
+    acts = [_json.loads(st["target"])["action"] for st in smp.steps]
+    assert acts == ["show", "diagnose", "edit"]
+    assert both[k].block in smp.steps[1]["prompt"]
+    rows = [
+        {"id": f"x-{k:02d}-E5-s{j}", "target": st["target"], "meta": {"stage": smp.stage}}
+        for j, st in enumerate(smp.steps)
+    ]
+    gold = [_json.loads(r["target"]) for r in rows]
+    for j, r in enumerate(rows):
+        res = score_repair(r, pair, gold[:j], r["target"], injset="both")
+        assert res["accepted"], (j, res)
+    assert res["solved"]

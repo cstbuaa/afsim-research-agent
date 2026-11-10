@@ -1,0 +1,19 @@
+# T: repair v2 (show -> diagnose -> edit, pilot + generic + historical bases) — Qwen3-8B QLoRA (4-bit base, bf16 LoRA), loss on the completion only
+model: /data/caoshutong/models/Qwen3-8B
+data_dir: /data/caoshutong/projects/afsim_train/sft/repair_v2
+output_dir: /data/caoshutong/projects/afsim_train/runs/repair-qwen3-8b-v2
+load_in_4bit: true
+max_length: 6144
+lora_r: 32
+lora_alpha: 64
+lora_dropout: 0.05
+target_modules: all-linear
+batch_size: 1
+grad_accum: 32        # effective batch 32 on one card; use 16 with two cards
+learning_rate: 1.0e-4
+epochs: 2
+warmup_ratio: 0.03
+eval_steps: 25
+liger: true           # fused linear + cross entropy: no full logits tensor at long lengths
+attn: sdpa            # flash_attention_2 if flash-attn is installed
+report_to: tensorboard

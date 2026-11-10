@@ -31,8 +31,8 @@ import yaml
 from afsim_research_agent.falcon.sheet.blocks import Block, split_sheet
 from afsim_research_agent.falcon.sheet.generate import merge
 from afsim_research_agent.falcon.v3.draft import CONTROL_KINDS, STRUCTURE_KINDS
-from afsim_research_agent.falcon.v3.fixer import SheetFixer, _rebuild
-from afsim_research_agent.training.inject import injections
+from afsim_research_agent.training import collect
+from afsim_research_agent.training.inject import execute, injected, injections
 from afsim_research_agent.training.render import drafter
 
 KINDS = {
@@ -88,22 +88,38 @@ def _action(text: str) -> dict[str, Any] | None:
 
 
 def score_repair(
-    row: dict[str, Any], pair: dict[str, Any], diagnosis: dict[str, Any] | None, output: str
+    row: dict[str, Any],
+    pair: dict[str, Any] | None,
+    earlier: dict[str, Any] | list[dict[str, Any]] | None,
+    output: str,
+    hist: Path | None = None,
+    injset: bool | str | None = None,
 ) -> dict[str, Any]:
+    """``earlier``: the gold actions of the sample's previous steps (one dict for the old
+    two-step samples), replayed with the loop's tools before the model's action. ``hist``:
+    the package of a historical base sheet (``meta.base`` = ``hist:…``); ``injset``: which
+    injection list the id's index refers to (``meta.injset``; pilot or generic by default)."""
     m = re.match(r".+-(\d+)-(E\d+)-s(\d)$", row["id"])
     if m is None:
         return {"error": "id"}
     k, step = int(m.group(1)), int(m.group(3))
-    inj = injections(pair["tactic_sheet"])[k]
-    gold = split_sheet(pair["tactic_sheet"])[0]
-    d = _ready(pair, _copy(gold))
-    texts = {b.key: b.text for b in d.blocks}
-    texts[inj.block] = texts[inj.block].replace(inj.before, inj.after)
-    d.blocks = _rebuild(d.blocks, texts)
-    fixer = SheetFixer(d)
-    if step == 1 and diagnosis is not None:
-        fixer.step = 1
-        fixer.diagnose(diagnosis["args"])
+    if hist is not None:
+        sheet = (hist / "tactic_sheet.md").read_text(encoding="utf-8")
+        inj = injections(sheet, generic=True if injset is None else injset)[k]
+        d = collect.load(hist)
+    else:
+        assert pair is not None
+        sheet = pair["tactic_sheet"]
+        inj = injections(sheet, generic=False if injset is None else injset)[k]
+        d = _ready(pair, _copy(split_sheet(sheet)[0]))
+    got = injected(sheet, inj, d)
+    if got is None:
+        return {"error": "injection"}
+    fixer = got[0]
+    records: list[dict[str, Any]] = []
+    prev = [earlier] if isinstance(earlier, dict) else list(earlier or [])
+    for g in prev:
+        execute(fixer, records, g["action"], g.get("args") or {}, g.get("thought", ""))
     expected = json.loads(row["target"])["action"]
     act = _action(output)
     out: dict[str, Any] = {
@@ -117,21 +133,21 @@ def score_repair(
     if act is None:
         return out | {"accepted": False, "solved": False}
     args = act.get("args") or {}
-    fixer.step = step + 1
+    before = fixer.score(fixer.last)
+    result = execute(fixer, records, act["action"], args, str(act.get("thought") or ""))
     if act["action"] == "diagnose":
-        result = fixer.diagnose(args)
         where = args.get("where") or []
         out["accepted"] = result.startswith("诊断已记录")
         out["right_block"] = inj.block in (where if isinstance(where, list) else [where])
-        out["solved"] = False
+    elif act["action"] == "show":
+        out["accepted"] = not result.startswith("没有块")
+        out["right_block"] = args.get("block") == inj.block
     elif act["action"] == "edit":
-        before = fixer.score(fixer.last)
-        result = fixer.edit(args.get("changes"), str(args.get("reason") or ""))
         out["accepted"] = result.startswith("已修改")
         out["improved"] = fixer.score(fixer.last) < before
-        out["solved"] = bool(fixer.solved)
     else:
-        out |= {"accepted": False, "solved": False}
+        out["accepted"] = False
+    out["solved"] = act["action"] == "edit" and bool(fixer.solved)
     return out
 
 
@@ -155,6 +171,7 @@ def main() -> None:
     ap.add_argument("--pred", type=Path, required=True)
     ap.add_argument("--task", choices=["structure", "control", "verification", "repair"])
     ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--hist-index", type=Path, default=None, help="real/index.json")
     a = ap.parse_args()
     pairs = {p["id"]: p for p in _load(a.bundle / "pairs" / "pairs_v3.jsonl")}
     preds = {p["id"]: p["output"] for p in _load(a.pred)}
@@ -162,17 +179,24 @@ def main() -> None:
     errors: Counter[str] = Counter()
     if a.task == "repair":
         samples = {r["id"]: r for r in _load(a.bundle / "repair" / "repair.jsonl")}
+        index = json.loads(a.hist_index.read_text(encoding="utf-8")) if a.hist_index else []
         for sid, output in preds.items():
             r = samples.get(sid)
             if r is None:
                 errors["未知样本"] += 1
                 continue
-            s0 = samples.get(sid[:-1] + "0") if sid.endswith("s1") else None
-            diagnosis = json.loads(s0["target"]) if s0 else None
+            j = int(sid[-1])
+            earlier = [json.loads(samples[sid[:-1] + str(i)]["target"]) for i in range(j)]
+            base = str(r["meta"].get("base") or "")
+            injset = r["meta"].get("injset")
             try:
-                rows.append(
-                    {"id": sid} | score_repair(r, pairs[r["meta"]["pair"]], diagnosis, output)
-                )
+                if base.startswith("hist:"):
+                    pkg = Path(index[int(base[5:])]["pkg"])
+                    res = score_repair(r, None, earlier, output, hist=pkg, injset=injset)
+                else:
+                    pair = pairs[r["meta"]["pair"]]
+                    res = score_repair(r, pair, earlier, output, injset=injset)
+                rows.append({"id": sid, "base": base.split(":")[0] or "pilot"} | res)
             except Exception as exc:  # noqa: BLE001 - one bad sample does not stop the run
                 errors[type(exc).__name__] += 1
         keys = ["parsed", "accepted", "solved"]
@@ -183,6 +207,12 @@ def main() -> None:
                 "expected_action",
             ),
             "by_rule": _summary(rows, keys, "rule"),
+            "edit_by_base": _summary(
+                [x for x in rows if x.get("expected_action") == "edit"], keys, "base"
+            ),
+            "edit_by_rule": _summary(
+                [x for x in rows if x.get("expected_action") == "edit"], keys, "rule"
+            ),
             "edit_steps": _summary(
                 [x for x in rows if x.get("expected_action") == "edit"], keys, "stage"
             ),
