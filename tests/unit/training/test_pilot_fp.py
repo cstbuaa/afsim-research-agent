@@ -78,3 +78,24 @@ def test_render_prompts_round_trip(skeleton):
     assert out[2].target.startswith("```yaml verification")
     # the structure prompt comes before the obligations; the later ones carry them
     assert "cancel_shutdown" not in out[0].prompt and "cancel_shutdown" in out[1].prompt
+
+
+def test_injected_errors_are_caught_and_fixed():
+    import json as _json
+
+    from afsim_research_agent.training.backtranslate import facts
+    from afsim_research_agent.training.inject import injections, make
+
+    s = sample("K2", 1)
+    text, request = sheet(s)
+    injs = injections(text)
+    assert {i.rule for i in injs} >= {"E1", "E2", "E4", "E5", "E8", "E10"}
+    done = [make(text, request, "；".join(facts(s)), facts(s), i) for i in injs]
+    ok = [x for x in done if x.ok]
+    assert len(ok) >= len(done) // 2, [(x.rule, x.problems) for x in done if not x.ok]
+    for x in ok:
+        assert x.failed
+        last = _json.loads(x.steps[-1]["target"])
+        assert last["action"] == "edit" and last["args"]["changes"]
+        if x.stage == "behaviour":
+            assert _json.loads(x.steps[0]["target"])["action"] == "diagnose"
