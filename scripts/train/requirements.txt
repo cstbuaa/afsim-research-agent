@@ -5,7 +5,7 @@ peft>=0.15
 datasets>=3.0
 accelerate>=1.6
 bitsandbytes>=0.45
-liger-kernel>=0.5
+liger-kernel==0.5.10   # 0.6+ needs transformers 5
 tensorboard
 pyyaml
 vllm>=0.9

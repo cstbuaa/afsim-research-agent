@@ -15,7 +15,7 @@
 python -m venv ~/venv-train && source ~/venv-train/bin/activate
 pip install torch --index-url https://download.pytorch.org/whl/cu124   # 按服务器的 CUDA 版本选
 pip install "transformers>=4.51" "trl>=0.20" "peft>=0.15" "datasets>=3.0" "accelerate>=1.6" \
-    "bitsandbytes>=0.45" "liger-kernel>=0.5" tensorboard pyyaml
+    "bitsandbytes>=0.45" "liger-kernel==0.5.10" tensorboard pyyaml
 # 推理
 python -m venv ~/venv-vllm && source ~/venv-vllm/bin/activate
 pip install "vllm>=0.9"
