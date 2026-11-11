@@ -246,6 +246,7 @@ class SheetFixer:
         self.tried: dict[int, tuple[int, tuple[int, int, int]]] = {}  # sheet → (step, score)
         self.snapshots: dict[int, list[Block]] = {}  # step → blocks before its change
         self.no_gain = 0
+        self.repeats: dict[str, int] = {}  # unchanged blocks shown again
 
     # ------------------------------------------------------------------ scoring
     @staticmethod
@@ -277,6 +278,9 @@ class SheetFixer:
         for i, p in enumerate(check.problems, start=1):
             lines.append(f"[{i}] {p.render()[2:]}")
             lines += self._context(p.block, p.line, 2)
+            hint = T.problem_hint(self, p.message) if i <= 4 else None
+            if hint:
+                lines.append(f"     {hint}")
         if check.l1_ok:
             failed = [t for t in check.l2 if not t["passed"]]
             lines.append(f"L2：{len(check.l2) - len(failed)}/{len(check.l2)} 通过")
@@ -424,7 +428,14 @@ class SheetFixer:
         # until the loop ran out (formation batch 10)
         note = ""
         seen = self.shown.get((key, start, end))
+        if seen is not None and seen[0] == block.text and self.repeats.get(key, 0) >= 1:
+            self.refused += 1
+            return (
+                f"不再显示：{key} 自第 {seen[1]} 步以来没有变化，内容在前面的步骤里。下一步请修改"
+                "（检查结果里的改法已写好工具参数），或用 explain_check 查看原因"
+            )
         if seen is not None and seen[0] == block.text:
+            self.repeats[key] = self.repeats.get(key, 0) + 1
             note = (
                 f"\n（与第 {seen[1]} 步看到的相同，战术稿没有变化。下一步请用 edit 修改"
                 "（old 抄上面的原文片段），或用 ask_human 说明为什么不该改模型）"
@@ -1109,6 +1120,18 @@ def _history(records: list[dict[str, Any]]) -> str:
     return "\n\n".join(lines)
 
 
+def _first_explained(fixer: SheetFixer) -> str:
+    """Once L1 passes: the explanation of the first failed check, without a tool call."""
+    if not fixer.last.l1_ok or fixer.solved:
+        return ""
+    first = T.first_failure(fixer)
+    if first is None:
+        return ""
+    return "第一个未通过项的解释（explain_check 的结果）：\n" + _clip(
+        T.explain_check(fixer, first), 2000
+    )
+
+
 def _prompt(fixer: SheetFixer, records: list[dict[str, Any]], remaining: int) -> str:
     outline = "\n".join(
         f"- {b.key}（第 {b.line}–{b.line + len(b.text.splitlines()) - 1} 行）"
@@ -1122,6 +1145,7 @@ def _prompt(fixer: SheetFixer, records: list[dict[str, Any]], remaining: int) ->
         f"战术稿的块：\n{outline}",
         records and "最近几步：\n" + _history(records),
         (fixer.edits or fixer.attempts) and "本轮试过的修改：\n" + T.tried_summary(fixer),
+        _first_explained(fixer),
         (not records or records[-1]["action"] not in ("check", "edit", "revert"))
         and "当前检查结果：\n" + fixer.summary(),
         f"还剩 {remaining} 步。输出下一步的 JSON。",

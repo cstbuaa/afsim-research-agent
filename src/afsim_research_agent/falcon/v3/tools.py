@@ -342,6 +342,42 @@ def entry_true_hint(fixer: Any, message: str) -> str:
     return head + "。只追加 time_in_state() 等待只是推迟出口，测试期望立即转出时会失败"
 
 
+def _role_of(fixer: Any, src: str, trig: str) -> str | None:
+    for b in fixer.d.blocks:
+        if b.kind == "mermaid" and any(t[1] == src and t[3] == trig for t in _transitions(b.text)):
+            return str(b.role)
+    return None
+
+
+def problem_hint(fixer: Any, message: str) -> str | None:
+    """A concrete way to fix an L1 problem, with the tool calls written out."""
+    if "ENTRY_TRUE" in message:
+        return entry_true_hint(fixer, message)
+    m = re.search(r"树事件 (\w+) 要等 (\w+) 的 parallel", message)
+    if m:
+        event, state = m.groups()
+        field = re.search(r"如 ([a-z_]+(?:\.[a-z_0-9]+)+)", message)
+        role = _role_of(fixer, state, event) or "<角色>"
+        name = f"{event}_now"
+        to = next(
+            (
+                t[2]
+                for b in fixer.d.blocks
+                if b.kind == "mermaid"
+                for t in _transitions(b.text)
+                if t[1] == state and t[3] == event
+            ),
+            "<目标状态>",
+        )
+        return (
+            f'改法：新建一个读字段的条件，再让转换改用它：set_condition {{"name": "{name}", "expr": '
+            f'"{field.group(1) if field else "<进入后才会变化的字段>"}"}}，然后 set_trigger '
+            f'{{"role": "{role}", "from": "{state}", "to": "{to}", "trigger": "{name}", '
+            f'"old_trigger": "{event}"}}。新条件不要和事件 {event} 同名；事件不再使用时可以留着'
+        )
+    return None
+
+
 def explain_check(fixer: Any, ref: Any) -> str:
     raw = str(ref if ref is not None else "").strip()
     raw = re.sub(r"^(L[123])\s*[:：]\s*", "", raw)
@@ -800,6 +836,25 @@ def lint(fixer: Any, before: dict[str, str], after: dict[str, str]) -> tuple[str
             return out
 
         a, b = defs(old), defs(new)
+        events = _declared(after.get("model") or before.get("model") or "")
+        for name, text in b.items():
+            if text == a.get(name):
+                continue
+            if name in events:
+                return (
+                    f"修改被拒绝：条件 {name} 和 model 里的事件 {name} 同名。给条件换一个名字，再用"
+                    "set_trigger 让转换改用新条件（或 rename 事件）",
+                    [],
+                )
+            expr = text.split("=", 1)[1] if "=" in text else text
+            used = [e for e in events if re.search(rf"(?<![\w.]){re.escape(e)}(?![\w])", expr)]
+            if used or "events." in expr:
+                return (
+                    f"修改被拒绝：条件 {name} 里引用了事件 {', '.join(used) or 'events.*'}。事件只能作"
+                    '状态图转换的触发：set_trigger {"role", "from", "to", "trigger": 事件名, '
+                    '"old_trigger": 原条件名}',
+                    [],
+                )
         for name, text in b.items():
             expr = text.split("=", 1)[1].strip() if "=" in text else text
             if expr.strip("() ") in ("True", "False", "true", "false", "0", "1"):

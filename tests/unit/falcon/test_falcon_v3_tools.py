@@ -205,3 +205,41 @@ def test_events_are_triggers_not_condition_terms(contracts: Contracts):
     )
     assert '"role": "scout", "from": "MOVE", "to": "OBSERVE"' in hint and "declare_event" in hint
     assert "常量" in T.lint(fixer, {"conditions": "a = x"}, {"conditions": "a = false"})[0]
+
+
+def test_hints_in_the_check_result_and_the_prompt(contracts: Contracts):
+    from afsim_research_agent.falcon.v3.fixer import _prompt
+
+    fixer = _fixer(contracts)
+    msg = (
+        '树事件 target_seen 要等 MOVE 的 parallel("all") 中所有分支都完成才触发……改用字段条件'
+        "（如 sense.target.valid）"
+    )
+    hint = T.problem_hint(fixer, msg)
+    assert '"expr": "sense.target.valid"' in hint and '"old_trigger": "target_seen"' in hint
+    assert '"role": "scout", "from": "MOVE", "to": "OBSERVE"' in hint
+    # an event written into a condition is refused for a text edit too
+    out = fixer.edit(
+        [
+            {
+                "block": "conditions",
+                "old": "target_seen = sense.target.valid",
+                "new": "target_seen = cancelled",
+            }
+        ],
+        "x",
+        {"because": "试"},
+    )
+    assert "引用了事件 cancelled" in out
+    clash = fixer.apply(
+        "set_condition", {"name": "cancelled", "expr": "sense.target.valid", "because": "x"}, "x"
+    )
+    assert "同名" in clash
+    # the same unchanged block is shown twice at most
+    assert "def OBSERVE" in fixer.show("pytree:scout")
+    assert "没有变化" in fixer.show("pytree:scout")
+    assert fixer.show("pytree:scout").startswith("不再显示")
+    # once L1 passes, the prompt carries the explanation of the first failed check
+    guarded = _fixer(contracts, GUARDED)
+    prompt = _prompt(guarded, [], 5)
+    assert "第一个未通过项的解释" in prompt and "决定结果的项" in prompt
