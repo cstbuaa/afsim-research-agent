@@ -26,6 +26,7 @@ from afsim_research_agent.ir.units import infer_dimension, to_canonical
 from afsim_research_agent.ir.v2.contracts import Contracts
 
 RUNNING, SUCCESS, FAILURE = "running", "success", "failure"
+MAX_HOPS = 8  # state changes per update, as the AFSIM compiler cuts a cycle (afsim.compiler)
 
 
 class ActionHost(Protocol):
@@ -62,6 +63,7 @@ class Instance:
     issued: list[str] = field(default_factory=list)  # actions started in the last update
     trace: list[dict[str, Any]] = field(default_factory=list)
     unresolved: set[str] = field(default_factory=set)
+    loops: list[tuple[float, str]] = field(default_factory=list)  # updates cut at MAX_HOPS
     # a single-step test that names a tree event: the current tree ends that way this update
     force_tree: str | None = None
 
@@ -93,7 +95,11 @@ class Instance:
         state in the same update, until a state stays (probes t01 / t02)."""
         self.now = now
         self.issued = []
-        for _ in range(len(self.mission["states"]) + 1):
+        for hop in range(len(self.mission["states"]) + 1):
+            if hop >= MAX_HOPS:
+                # as the AFSIM compiler cuts the update: a cycle of true transitions
+                self.loops.append((now, self.state))
+                return
             tree = self.role_model["states"].get(self.state, {}).get("tree")
             if tree is not None and self.state not in self.mission["terminal"]:
                 self.tree_status = self.tick(tree)

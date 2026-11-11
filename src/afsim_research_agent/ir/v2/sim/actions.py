@@ -62,6 +62,20 @@ class ActionContext:
     def read(self, key: str, default: Any = None) -> Any:
         return self.blackboard.get(self.fields.get(key, f"sim.{key}"), default)
 
+    def put(self, path: str, value: Any) -> None:
+        """Write a capability-set field by its own path (team models; ``[sim_fields]`` can
+        still redirect it)."""
+        self.write(path, value) if path in self.fields else self._raw(path, value)
+
+    def get(self, path: str, default: Any = None) -> Any:
+        return self.blackboard.get(self.fields.get(path, path), default)
+
+    def _raw(self, path: str, value: Any) -> None:
+        if self.allowed is not None and path not in self.allowed:
+            self.dropped.add(path)
+            return
+        self.blackboard[path] = value
+
     def param(self, option: str, default_name: str, default: Any = None) -> Any:
         name = self.options.get(option, default_name)
         return self.params.get(name, default)

@@ -162,7 +162,7 @@ scenarios:        # L3 二维仿真：平面坐标（米），x 向东、y 向�
   remove_s 或 faults 制造（不是事件）。故障要在后面的流程（如结束时的关机）之前用第二条 faults 恢复，
   除非这个想定就是要测故障下的收尾。
 - 出发位置、路线、车辆位置和敌方基准位置由想定绑定给出（见"想定绑定"）：environment 只写 duration_s
-  和 step_s，不写 origin_deg 和 routes，不写 vehicles；hostiles 省略时按绑定放置敌方，需要制造目标
+  和 step_s，不写 origin_deg 和 routes，不写 vehicles；hostiles 省略时按绑定放置敌方，hostiles: [] 表示没有敌方，需要制造目标
   出现、丢失、移动时再写 hostiles（平面坐标以出发位置为原点，米，x 向东、y 向北）。"""
 
 EXAMPLE = """示例（虚构能力集）：

@@ -79,29 +79,77 @@ def candidates(index: list[dict[str, Any]], split: str) -> list[tuple[int, dict[
     return out
 
 
-async def run_one(d: Any, model: Any, max_steps: int) -> dict[str, Any]:
-    """``d``: the drafter from ``collect.load`` (built outside the event loop: it runs its own)."""
+def _brief(log: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The loop's steps for a local log: action, arguments and the head of each result."""
+    out = []
+    for r in log:
+        args = json.dumps(r.get("args") or {}, ensure_ascii=False)
+        out.append(
+            {
+                "step": r.get("step"),
+                "action": r.get("action"),
+                "thought": str(r.get("thought") or "")[:200],
+                "args": args[:600],
+                "result": str(r.get("result") or "")[:700],
+            }
+        )
+    return out
+
+
+async def run_one(
+    d: Any, model: Any, max_steps: int, afsim: Any = None, staging: Path | None = None
+) -> dict[str, Any]:
+    """``d``: the drafter from ``collect.load`` (built outside the event loop: it runs its
+    own). ``afsim`` (an ``AfsimConfig``): once the 2D checks pass, the sheet runs in AFSIM
+    and a failure goes back to the repair loop, as ``draft3 --afsim-*`` does."""
     start = d.check(verify=True)
     t0 = time.perf_counter()
-    outcome = await fix_sheet(d, ModelRunner(model), max_steps=max_steps)
+    run = ModelRunner(model)
+    outcome = await fix_sheet(d, run, max_steps=max_steps)
+    logs = _brief(outcome.log)
+    extra: dict[str, Any] = {}
+    if afsim is not None and outcome.solved:
+        from afsim_research_agent.falcon.v3.afsim_loop import sheet_hash
+        from afsim_research_agent.falcon.v3.draft import _afsim_rounds
+
+        fixes: list[Any] = []
+        assert staging is not None
+        staging.mkdir(parents=True, exist_ok=True)
+        _check, history = await _afsim_rounds(d, run, d.check(verify=True), fixes, afsim, staging)
+        note = d.afsim_verdicts.get(sheet_hash(d.sheet))
+        rounds = [r.passed for r in history.rounds]
+        extra = {
+            "afsim_rounds": rounds,
+            "afsim_first": bool(rounds and rounds[0]),
+            "afsim_final": bool(note is not None and note.passed and d.check(verify=True).verified),
+            "afsim_fix_steps": sum(f.steps for f in fixes),
+        }
+        for f in fixes:
+            logs += [{"afsim_round": True}] + _brief(f.log)
     end = d.check(verify=True)
     acts = Counter(r["action"] for r in outcome.log)
-    return {
-        "solved": bool(outcome.solved),
-        "l1_start": bool(start.l1_ok),
-        "l1_end": bool(end.l1_ok),
-        "l1_problems_start": len(start.problems),
-        "l1_problems_end": len(end.problems),
-        "score_start": list(outcome.score_start),
-        "score_end": list(outcome.score_end),
-        "improved": tuple(outcome.score_end) < tuple(outcome.score_start),
-        "steps": outcome.steps,
-        "edits": len(outcome.edits),
-        "actions": dict(acts),
-        "parse_errors": acts.get("error", 0),
-        "first_error": next((r["result"][:160] for r in outcome.log if r["action"] == "error"), ""),
-        "seconds": round(time.perf_counter() - t0, 1),
-    }
+    return (
+        extra
+        | {"_log": logs}
+        | {
+            "solved": bool(outcome.solved),
+            "l1_start": bool(start.l1_ok),
+            "l1_end": bool(end.l1_ok),
+            "l1_problems_start": len(start.problems),
+            "l1_problems_end": len(end.problems),
+            "score_start": list(outcome.score_start),
+            "score_end": list(outcome.score_end),
+            "improved": tuple(outcome.score_end) < tuple(outcome.score_start),
+            "steps": outcome.steps,
+            "edits": len(outcome.edits),
+            "actions": dict(acts),
+            "parse_errors": acts.get("error", 0),
+            "first_error": next(
+                (r["result"][:160] for r in outcome.log if r["action"] == "error"), ""
+            ),
+            "seconds": round(time.perf_counter() - t0, 1),
+        }
+    )
 
 
 def _rate(rows: list[dict[str, Any]], key: str) -> float:
@@ -124,6 +172,9 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "mean_steps": round(sum(r["steps"] for r in ok) / len(ok), 1) if ok else 0,
         "mean_edits": round(sum(r["edits"] for r in ok) / len(ok), 1) if ok else 0,
         "parse_errors": sum(r["parse_errors"] for r in ok),
+        "afsim_first": _rate([r for r in ok if "afsim_rounds" in r], "afsim_first"),
+        "afsim_final": _rate([r for r in ok if "afsim_rounds" in r], "afsim_final"),
+        "solved_with_afsim": _rate(ok, "afsim_final"),
         "actions": dict(sum((Counter(r["actions"]) for r in ok), Counter())),
     }
 
@@ -138,7 +189,21 @@ def main() -> None:
     ap.add_argument("--max-steps", type=int, default=12)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--save-fixed", type=Path, default=None, help="copy solved sheets here")
+    ap.add_argument("--only", default="", help="comma-separated index numbers to run")
+    ap.add_argument("--log-dir", type=Path, default=None, help="per-sheet step logs (local)")
+    ap.add_argument("--afsim-binding", type=Path, default=None)
+    ap.add_argument("--afsim-mission", default=None)
+    ap.add_argument(
+        "--afsim-run",
+        action="append",
+        default=[],
+        help="<word in the package path>=<run config>, e.g. strike=…/strike_allocation_v1.toml",
+    )
+    ap.add_argument("--afsim-rounds", type=int, default=3)
+    ap.add_argument("--afsim-steps", type=int, default=8)
+    ap.add_argument("--staging", type=Path, default=None, help="AFSIM work directory (local)")
     a = ap.parse_args()
+    runs = dict(x.split("=", 1) for x in a.afsim_run)
     if a.model.startswith("local:"):
         model: Any = LocalModel(a.model[6:], a.base_url)
     else:
@@ -148,6 +213,9 @@ def main() -> None:
         model = DashScopeModel(a.model.split(":", 1)[1] if ":" in a.model else None)
     index = json.loads(a.index.read_text(encoding="utf-8"))
     todo = candidates(index, a.split)
+    if a.only:
+        keep = {int(x) for x in a.only.split(",") if x.strip()}
+        todo = [(i, r) for i, r in candidates(index, "all") if i in keep]
     if a.limit:
         todo = todo[: a.limit]
     rows: list[dict[str, Any]] = []
@@ -155,7 +223,26 @@ def main() -> None:
         pkg = Path(row["pkg"])
         try:
             d = collect.load(pkg)
-            res = asyncio.run(run_one(d, model, a.max_steps))
+            cfg = None
+            word = next((w for w in runs if w in str(pkg)), None)
+            if a.afsim_binding is not None and word is not None:
+                from afsim_research_agent.falcon.v3.afsim_loop import AfsimConfig
+
+                cfg = AfsimConfig(
+                    binding=a.afsim_binding,
+                    runs=[Path(runs[word])],
+                    mission=a.afsim_mission or "mission",
+                    rounds=a.afsim_rounds,
+                    steps=a.afsim_steps,
+                )
+            stage = (a.staging or a.out.parent / "afsim_work") / f"r{i:03d}"
+            res = asyncio.run(run_one(d, model, a.max_steps, cfg, stage))
+            log = res.pop("_log", [])
+            if a.log_dir is not None:
+                a.log_dir.mkdir(parents=True, exist_ok=True)
+                (a.log_dir / f"r{i:03d}.json").write_text(
+                    json.dumps(log, ensure_ascii=False, indent=1), encoding="utf-8"
+                )
             if a.save_fixed is not None and res["solved"]:
                 dst = a.save_fixed / f"r{i:03d}"
                 dst.mkdir(parents=True, exist_ok=True)

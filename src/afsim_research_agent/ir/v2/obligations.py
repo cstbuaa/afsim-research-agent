@@ -237,6 +237,7 @@ def check(
     capable: dict[str, set[str]] | None = None,  # platform → actions its model can run
     after_event: dict[str, dict[str, set[str]]] | None = None,  # platform → event → actions
     completions: list[tuple[float, str, str]] | None = None,  # (time, platform, action) done
+    completions_only: bool = False,
 ) -> list[Verdict]:
     """With ``capable``, an obligation is judged on a platform only when the platform's model
     runs the constrained action. An ordering between actions of different platforms (e.g. the
@@ -247,7 +248,9 @@ def check(
 
     With ``completions`` (the run reports when actions succeed), an ordering across vehicles
     is judged: the prerequisite's first completion (else start) on any other vehicle must
-    come no later than the follower's first completion (else start) on this one. Effect
+    come no later than the follower's first completion (else start) on this one. With
+    ``completions_only`` (the 2D run, whose completions cover the modelled actions only) an
+    ordering across vehicles is judged only when both actions completed. Effect
     kinds (:data:`SPATIAL`) are judged by :mod:`.effects`, not here."""
     done: dict[str, dict[str, list[float]]] = {}
     for t, platform, action in completions or []:
@@ -277,7 +280,7 @@ def check(
                 and ob.first not in own
                 and any(ob.first in o for o in others.values())
             ):
-                verdicts.append(_across(ob, platform, own, others, done, step_s))
+                verdicts.append(_across(ob, platform, own, others, done, step_s, completions_only))
                 continue
             if caps is not None and prereq and prereq not in caps:
                 verdicts.append(
@@ -318,9 +321,16 @@ def check(
     return out
 
 
-def _across(ob, platform, own, others, done, step_s) -> Verdict:
+def _across(ob, platform, own, others, done, step_s, only_done: bool = False) -> Verdict:
     """``precedes`` with the prerequisite on other vehicles (see :func:`check`)."""
     then_done = _first(done.get(platform, {}), ob.then)
+    if only_done:
+        firsts_done = [t for n in others if (t := _first(done.get(n, {}), ob.first)) is not None]
+        if then_done is None or not firsts_done:
+            return Verdict(
+                ob.id, True, f"{platform}: {ob.then} 或 {ob.first} 没有完成", judged=False
+            )
+        own, others = {}, {n: {} for n in others}  # judge on the completions alone
     tt = then_done if then_done is not None else _first(own, ob.then)
     if tt is None:
         return Verdict(ob.id, True, f"{platform}: {ob.then} 没有执行", judged=False)

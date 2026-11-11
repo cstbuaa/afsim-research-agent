@@ -247,6 +247,25 @@ class V3Result:
         return {"draft_valid": 0, UNVERIFIED: 4, "needs_capability": 5}.get(self.status, 3)
 
 
+def _uncovered(o: Any, after: dict[str, dict[str, set[str]]]) -> str:
+    """The coverage note of an obligation no scenario judged. A response whose action no
+    state after the event runs cannot be covered by a scenario: the response states must
+    run it (or the obligation does not apply)."""
+    head = f"  [FAIL] 需求约束 {o.id}（{o.description or o.kind}）"
+    if o.kind == "response" and o.on_event and o.action and after:
+        if not any(o.action in per.get(str(o.on_event), set()) for per in after.values()):
+            return (
+                head
+                + f"无法被想定覆盖：外部事件 {o.on_event} 之后进入的状态（及其后的状态）都不运行 "
+                f"{o.action}；在响应这个事件的状态树里加入它（或含有它的战术）"
+            )
+    return (
+        head
+        + "没有被任何想定覆盖：在 verification 中加一个会出现它的前提的想定"
+        + (f"（外部事件 {o.on_event}）" if o.on_event else "")
+    )
+
+
 class Drafter:
     def __init__(self, request: V3Request, contracts: Contracts, run: ModelRunner) -> None:
         self.r = request
@@ -423,6 +442,8 @@ class Drafter:
                     end_s=res.duration_s,
                     capable=capable,
                     after_event=after,
+                    completions=res.completions,
+                    completions_only=True,
                 )
                 covered |= {v.id for v in verdicts if v.judged}
                 unmodelled |= set(res.idealized)
@@ -513,12 +534,7 @@ class Drafter:
                         "id": "obligation_coverage",
                         "passed": False,
                         "render": "obligation_coverage: FAIL\n"
-                        + "\n".join(
-                            f"  [FAIL] 需求约束 {o.id}（{o.description or o.kind}）没有被任何想定"
-                            "覆盖：在 verification 中加一个会出现它的前提的想定"
-                            + (f"（外部事件 {o.on_event}）" if o.on_event else "")
-                            for o in missing
-                        ),
+                        + "\n".join(_uncovered(o, after) for o in missing),
                         "obligations": [],
                         "states": {},
                         "transitions": {},
@@ -576,10 +592,9 @@ class Drafter:
 
     def _modelled(self, action: str) -> bool:
         """Whether the 2D simulation has a model for the action."""
-        from afsim_research_agent.ir.v2.sim.actions import MODELS
+        from afsim_research_agent.ir.v2.sim.team import sim_spec
 
-        sem = self.c.semantics.actions.get(action)
-        return sem is not None and sem.get("model") in MODELS
+        return sim_spec(self.c, action) is not None
 
     def _blind_fields(self, spec: dict[str, Any], idealized: set[str]) -> set[str]:
         """Fields the model's conditions read that only actions without a 2D model write
@@ -1124,8 +1139,7 @@ class Drafter:
         for role in check.model["roles"].values():
             for body in role["states"].values():
                 walk(body.get("tree"))
-        modelled = set(self.c.semantics.actions)
-        bare = sorted(a for a in used if a not in modelled)
+        bare = sorted(a for a in used if not self._modelled(a))
         if bare:
             lines.append(
                 "二维仿真中没有模型的动作（按立即成功处理，它们本应写入的黑板字段保持默认值，"

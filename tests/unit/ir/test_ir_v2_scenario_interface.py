@@ -258,6 +258,8 @@ def test_an_approaching_enemy_moves_in_the_2d_scenario() -> None:
     sc = bind_scenario({"id": "s"}, model, b)
     assert sc["hostiles"][0]["velocity_mps"] == [-10.0, -0.0]
     assert "velocity_mps" not in bind_scenario({"id": "s"}, model, bind(iface, {}))["hostiles"][0]
+    # written as an empty list: a scenario without enemies (r139 no_target_hold, 11-11)
+    assert bind_scenario({"id": "s", "hostiles": []}, model, b)["hostiles"] == []
 
 
 def test_a_delayed_enemy_approach_waits_then_stops_short() -> None:

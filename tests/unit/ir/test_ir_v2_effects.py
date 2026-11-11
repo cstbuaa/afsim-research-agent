@@ -98,6 +98,12 @@ def test_orderings_across_vehicles_are_judged_on_completions() -> None:
     done = [(2.0, "o1", "move.go"), (8.0, "b1", "comms.report_set")]
     v = check([ob], acts, [], completions=done)[0]
     assert v.judged and not v.passed
+    # the 2D run (completions of modelled actions only): judged only when both completed
+    v = check([ob], acts, [], completions=[(2.0, "o1", "move.go")], completions_only=True)[0]
+    assert not v.judged
+    done = [(5.0, "b1", "comms.report_set"), (6.0, "o1", "move.go")]
+    v = check([ob], acts, [], completions=done, completions_only=True)[0]
+    assert v.judged and v.passed
 
 
 def test_the_afsim_judge_reports_motion_and_effects() -> None:

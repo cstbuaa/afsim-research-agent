@@ -67,6 +67,7 @@ class Vehicle:
     accel: float = 2.0  # m/s²
     turn_rate: float = 30.0  # deg/s
     mobility_available: bool = True
+    radio_operational: bool = True
     cmd_speed: float = 0.0
     cmd_heading: float | None = None
     sensor: Sensor | None = field(default_factory=Sensor)
@@ -102,9 +103,15 @@ class Hostile:
     # the velocity applies from move_start_s until move_stop_s (None: no end)
     move_start_s: float = 0.0
     move_stop_s: float | None = None
+    hits: int = 0
+    destroyed_at: float | None = None
 
     def present(self, now: float) -> bool:
-        return now >= self.appear_s and (self.remove_s is None or now < self.remove_s)
+        return (
+            now >= self.appear_s
+            and (self.remove_s is None or now < self.remove_s)
+            and self.destroyed_at is None
+        )
 
     def moving(self, now: float) -> bool:
         return now >= self.move_start_s and (self.move_stop_s is None or now < self.move_stop_s)
@@ -122,12 +129,55 @@ class Hostile:
 
 
 @dataclass
+class Message:
+    """A radio message between own vehicles (task assignment, shared target, track report)."""
+
+    sender: str
+    target_id: str
+    epoch: int
+    seq: int
+    sent_at: float
+
+
+@dataclass
+class Shot:
+    shooter: str
+    weapon: str
+    target: str
+    fired_at: float
+    impact_at: float
+    result: str | None = None  # DAMAGED / DESTROYED once the round arrived
+
+
+@dataclass
+class Team:
+    """What the vehicles exchange by radio, and the shots in flight (sim.team models).
+
+    Messages are delivered when the sender's and the recipient's radios work; the
+    recipients' radio callbacks (``sim.team.sync_team``) see them at their next update."""
+
+    leader: str | None = None
+    seq: int = 0
+    assignments: dict[str, Message] = field(default_factory=dict)  # member → last task
+    shared: dict[str, Message] = field(default_factory=dict)  # follower → last broadcast
+    reports: dict[str, float] = field(default_factory=dict)  # target id → last report time
+    shots: list[Shot] = field(default_factory=list)
+    seen: dict[str, dict[str, int]] = field(default_factory=dict)  # vehicle → message seqs
+
+    def next_seq(self) -> int:
+        self.seq += 1
+        return self.seq
+
+
+@dataclass
 class World:
     geo: Geo = field(default_factory=Geo)
     vehicles: dict[str, Vehicle] = field(default_factory=dict)
     hostiles: list[Hostile] = field(default_factory=list)
     routes: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
     now: float = 0.0
+    team: Team = field(default_factory=Team)
+    hits_to_kill: int = 2
 
     def step(self, dt: float) -> None:
         for v in self.vehicles.values():
@@ -137,6 +187,21 @@ class World:
                 h.x += h.vx * dt
                 h.y += h.vy * dt
         self.now += dt
+        for shot in self.team.shots:
+            if shot.result is None and shot.impact_at <= self.now + 1e-9:
+                h = self.hostile(shot.target)
+                if h is None or h.destroyed_at is not None:
+                    shot.result = "NO_EFFECT"
+                    continue
+                h.hits += 1
+                if h.hits >= self.hits_to_kill:
+                    h.destroyed_at = self.now
+                    shot.result = "DESTROYED"
+                else:
+                    shot.result = "DAMAGED"
+
+    def hostile(self, hid: str | None) -> Hostile | None:
+        return next((h for h in self.hostiles if h.id == hid), None)
 
     def visible(self, vehicle: Vehicle) -> list[dict[str, Any]]:
         """Tracks the vehicle's sensor holds now (ideal detection within range)."""

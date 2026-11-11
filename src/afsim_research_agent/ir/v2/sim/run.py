@@ -17,13 +17,14 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from afsim_research_agent.ir.v2.contracts import Contracts
 from afsim_research_agent.ir.v2.from_tactic import event_id
-from afsim_research_agent.ir.v2.runtime import FAILURE, RUNNING, SUCCESS, Instance
+from afsim_research_agent.ir.v2.runtime import FAILURE, MAX_HOPS, RUNNING, SUCCESS, Instance
 from afsim_research_agent.ir.v2.sim.actions import (
     MODELS,
     ActionContext,
     ActionModel,
     sync_vehicle,
 )
+from afsim_research_agent.ir.v2.sim.team import sim_spec, sync_team
 from afsim_research_agent.ir.v2.sim.world import Geo, Hostile, Sensor, Vehicle, World
 
 
@@ -45,6 +46,7 @@ class VehicleSpec(_Strict):
     speed_mps: float = 0.0
     max_speed_mps: float = 20.0
     mobility_available: bool = True
+    radio_operational: bool = True
     sensor: SensorSpec | None = Field(default_factory=SensorSpec)
 
 
@@ -81,6 +83,7 @@ class Fault(_Strict):
     instance: int = 0
     sensor_operational: bool | None = None
     mobility_available: bool | None = None
+    radio_operational: bool | None = None  # tactical radio off / back on
 
 
 class Expectation(_Strict):
@@ -113,6 +116,7 @@ class Check:
     id: str
     passed: bool
     detail: str
+    instance: str | None = None  # the instance an expectation is about
 
 
 @dataclass
@@ -132,6 +136,13 @@ class SimResult:
     step_s: float = 1.0
     duration_s: float = 0.0
     error: str | None = None
+    # (time, shooter, weapon, target, result) of the team models' shots
+    shots: list[tuple[float, str, str, str, str | None]] = field(default_factory=list)
+    # (time, instance, action) whenever a modelled action leaf succeeds: orderings across
+    # vehicles (the leader's broadcast before a member's adoption) are judged on them
+    completions: list[tuple[float, str, str]] = field(default_factory=list)
+    # instance → failed leaves (time, state, action, failure code), first of each run
+    failures: dict[str, list[tuple[float, str, str, str]]] = field(default_factory=dict)
     # positions every update (x east, y north, m), own vehicles "blue", hostiles "red":
     # effect obligations (ir.v2.effects) can be judged on them
     tracks: Any = None
@@ -140,15 +151,60 @@ class SimResult:
     def passed(self) -> bool:
         return self.error is None and all(c.passed for c in self.checks)
 
+    def _stuck(self) -> list[str]:
+        """For the instances of failed expectations: the state they stayed in last and the
+        action leaves that failed there (with their failure codes), the usual reason a
+        member never reaches the next state."""
+        from afsim_research_agent.ir.v2.sim.team import CODE_HINTS
+
+        names = [c.instance for c in self.checks if not c.passed and c.instance]
+        out = []
+        for name in dict.fromkeys(names):
+            seq = self.states.get(name) or []
+            if not seq:
+                continue
+            since, last = seq[-1]
+            # failures in the last state and in the state before it (a tree that failed
+            # there let a guard pass into the state the instance is stuck in)
+            keep = {last} | ({seq[-2][1]} if len(seq) > 1 else set())
+            fails = [
+                f
+                for f in self.failures.get(name, [])
+                if f[1] in keep and f[0] >= (seq[-2][0] if len(seq) > 1 else 0.0)
+            ]
+            if not fails:
+                continue
+            seen, parts, hints = set(), [], []
+            for t, state, action, code in fails:
+                if (state, action, code) in seen:
+                    continue
+                seen.add((state, action, code))
+                parts.append(f"{action} {code} @{t:g}s ({state})")
+                if code in CODE_HINTS and CODE_HINTS[code] not in hints:
+                    hints.append(CODE_HINTS[code])
+            out.append(
+                f"  {name} stayed in {last} from {since:g}s; failed leaves: "
+                + ", ".join(parts[:4])
+                + (" — " + "; ".join(hints) if hints else "")
+            )
+        return out
+
     def render(self) -> str:
         lines = [f"scenario {self.scenario}: {'PASS' if self.passed else 'FAIL'}"]
         if self.error:
             lines.append(f"  error: {self.error}")
         for c in self.checks:
             lines.append(f"  [{'ok' if c.passed else 'FAIL'}] {c.id}: {c.detail}")
+        lines += self._stuck()
         for name, seq in self.states.items():
             path = " -> ".join(f"{s}@{t:g}" for t, s in seq)
             lines.append(f"  {name}: {path}")
+        if self.shots:
+            fired: dict[str, int] = {}
+            for _t, who, *_rest in self.shots:
+                fired[who] = fired.get(who, 0) + 1
+            kills = sorted({tgt for *_x, tgt, res in self.shots if res == "DESTROYED"})
+            lines.append(f"  fired: {fired}; destroyed: {kills or 'none'}")
         if self.idealized:
             lines.append(f"  idealized actions (no model): {sorted(self.idealized)}")
         if self.placeholders:
@@ -174,6 +230,9 @@ class SimHost:
         self.placeholders: set[str] = set()  # gaps run by their stub
         self.dropped: set[str] = set()  # fields a model wrote but the contract does not
         self.activations: list[tuple[float, str, str]] = []
+        self.completions: list[tuple[float, str, str]] = []
+        self.failures: dict[str, list[tuple[float, str, str, str]]] = {}
+        self._last: dict[tuple[str, str], tuple[str, str | None]] = {}
 
     def _context(self, inst: Instance, leaf: dict[str, Any], options: dict[str, Any]):
         contract = self.c.actions.get(leaf.get("action") or "")
@@ -198,8 +257,8 @@ class SimHost:
         key = (inst.name, leaf["node_id"])
         if new or key not in self.models:
             self.activations.append((self.world.now, inst.name, action))
-        spec = self.c.semantics.actions.get(action)
-        if spec is None or spec.get("model") not in MODELS:
+        spec = sim_spec(self.c, action)
+        if spec is None:
             self.idealized.add(action)
             self.models.setdefault(key, None)  # type: ignore[arg-type]
             return SUCCESS, None
@@ -217,6 +276,14 @@ class SimHost:
             model, ctx = self.models[key]
             status, code = model.update(ctx)
         self._execution(ctx, action, status, code, new)
+        now = self.world.now
+        if status == SUCCESS:
+            self.completions.append((now, inst.name, action))
+        if status == FAILURE and (new or self._last.get(key) != (status, code)):
+            self.failures.setdefault(inst.name, []).append(
+                (now, inst.state, action, str(code or "FAILURE"))
+            )
+        self._last[key] = (status, code)
         return status, code
 
     def cancel(self, inst: Instance, leaf: dict[str, Any]) -> None:
@@ -285,6 +352,7 @@ def simulate(
                 speed=vs.speed_mps,
                 max_speed=vs.max_speed_mps,
                 mobility_available=vs.mobility_available,
+                radio_operational=vs.radio_operational,
                 sensor=sensor,
             )
             host.vehicles[name] = world.vehicles[name]
@@ -296,6 +364,8 @@ def simulate(
         if rid not in model["roles"]:
             result.error = f"scenario places vehicles for unknown role '{rid}'"
             return result
+    # the vehicle the team models treat as the leader (task and target authority)
+    world.team.leader = next((i.name for i in instances if "lead" in i.role.lower()), None)
     from afsim_research_agent.ir.v2.effects import Sample, Tracks
 
     tracks = Tracks()
@@ -318,10 +388,13 @@ def simulate(
                     v.mobility_available = f.mobility_available
                 if f.sensor_operational is not None and v.sensor is not None:
                     v.sensor.operational = f.sensor_operational
+                if f.radio_operational is not None:
+                    v.radio_operational = f.radio_operational
         for inst in instances:
             sync_vehicle(
                 world, host.vehicles[inst.name], inst.blackboard, contracts.semantics.fields
             )
+            sync_team(world, inst.name, inst.blackboard)
             hops = len(inst.trace)
             inst.step(now)
             # every state entered in this update, as AFSIM writes one line per state entry
@@ -342,10 +415,28 @@ def simulate(
     result.idealized = set(host.idealized)
     result.placeholders = set(host.placeholders)
     result.activations = list(host.activations)
+    result.completions = list(host.completions)
+    result.failures = {k: v[-40:] for k, v in host.failures.items()}
     result.step_s = env.step_s
     result.duration_s = env.duration_s
     result.dropped = set(host.dropped)
     result.checks = [_check(e, result) for e in sc.expect]
+    for inst in instances:
+        if inst.loops:
+            t, state = inst.loops[0]
+            result.checks.append(
+                Check(
+                    f"loop:{inst.name}",
+                    False,
+                    f"{inst.name}: transitions kept firing from {state} within one update at "
+                    f"t={t:g} (a cycle of conditions that are all true, e.g. read values left "
+                    f"from the previous round); the update was cut after {MAX_HOPS} state "
+                    f"changes ({len(inst.loops)} such updates)",
+                )
+            )
+    shots = world.team.shots
+    if shots:
+        result.shots = [(s.fired_at, s.shooter, s.weapon, s.target, s.result) for s in shots]
     known = {k for inst in instances for k, v in inst.events.items() if _external(v)}
     for name in dict.fromkeys(ev.event for ev in sc.events):
         if not any(_event_name(inst, name) in inst.events for inst in instances):
@@ -431,7 +522,7 @@ def _check(e: Expectation, result: SimResult) -> Check:
                 )
     if e.never is not None and e.never in visited:
         problems.append(f"entered {e.never}")
-    return Check(e.id, not problems, "; ".join(problems) or "met")
+    return Check(e.id, not problems, "; ".join(problems) or "met", name)
 
 
 # ------------------------------------------------------------------------ L2

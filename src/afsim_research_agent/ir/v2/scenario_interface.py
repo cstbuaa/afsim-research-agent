@@ -558,7 +558,8 @@ def check_binding(model: dict[str, Any], binding: Binding) -> list[str]:
 def bind_scenario(raw: dict[str, Any], model: dict[str, Any], binding: Binding) -> dict[str, Any]:
     """A 2D simulation scenario laid out from the binding: origin and routes always from the
     binding; vehicles and hostiles from the binding unless the scenario writes them (a
-    hostile that appears, disappears or moves is a variation the scenario may write)."""
+    hostile that appears, disappears or moves is a variation the scenario may write;
+    ``hostiles: []`` is a scenario without enemies)."""
     sc = copy.deepcopy(raw)
     env = dict(sc.get("environment") or {})
     env["origin_deg"] = list(binding.origin)
@@ -595,7 +596,7 @@ def bind_scenario(raw: dict[str, Any], model: dict[str, Any], binding: Binding) 
         else:
             k += n
     sc["vehicles"] = vehicles
-    if not sc.get("hostiles"):
+    if sc.get("hostiles") is None:  # omitted: the binding's; an empty list: no enemy
         sc["hostiles"] = [
             {"id": f"e{i + 1}", "position_m": list(p)}
             | (
