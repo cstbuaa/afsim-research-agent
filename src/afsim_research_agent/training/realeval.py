@@ -79,8 +79,8 @@ def candidates(index: list[dict[str, Any]], split: str) -> list[tuple[int, dict[
     return out
 
 
-async def run_one(pkg: Path, model: Any, max_steps: int) -> tuple[dict[str, Any], Any]:
-    d = collect.load(pkg)
+async def run_one(d: Any, model: Any, max_steps: int) -> dict[str, Any]:
+    """``d``: the drafter from ``collect.load`` (built outside the event loop: it runs its own)."""
     start = d.check(verify=True)
     t0 = time.perf_counter()
     outcome = await fix_sheet(d, ModelRunner(model), max_steps=max_steps)
@@ -100,7 +100,7 @@ async def run_one(pkg: Path, model: Any, max_steps: int) -> tuple[dict[str, Any]
         "actions": dict(acts),
         "parse_errors": acts.get("error", 0),
         "seconds": round(time.perf_counter() - t0, 1),
-    }, d
+    }
 
 
 def _rate(rows: list[dict[str, Any]], key: str) -> float:
@@ -150,7 +150,8 @@ def main() -> None:
     for i, row in todo:
         pkg = Path(row["pkg"])
         try:
-            res, d = asyncio.run(run_one(pkg, model, a.max_steps))
+            d = collect.load(pkg)
+            res = asyncio.run(run_one(d, model, a.max_steps))
             if a.save_fixed is not None and res["solved"]:
                 dst = a.save_fixed / f"r{i:03d}"
                 dst.mkdir(parents=True, exist_ok=True)
