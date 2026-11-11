@@ -99,6 +99,7 @@ async def run_one(d: Any, model: Any, max_steps: int) -> dict[str, Any]:
         "edits": len(outcome.edits),
         "actions": dict(acts),
         "parse_errors": acts.get("error", 0),
+        "first_error": next((r["result"][:160] for r in outcome.log if r["action"] == "error"), ""),
         "seconds": round(time.perf_counter() - t0, 1),
     }
 
@@ -141,6 +142,9 @@ def main() -> None:
     if a.model.startswith("local:"):
         model: Any = LocalModel(a.model[6:], a.base_url)
     else:
+        from dotenv import load_dotenv
+
+        load_dotenv()
         model = DashScopeModel(a.model.split(":", 1)[1] if ":" in a.model else None)
     index = json.loads(a.index.read_text(encoding="utf-8"))
     todo = candidates(index, a.split)
