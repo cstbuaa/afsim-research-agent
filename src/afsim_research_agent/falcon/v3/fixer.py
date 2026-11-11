@@ -894,6 +894,8 @@ class SheetFixer:
         self.no_gain = 0 if after < before_score else self.no_gain + 1
         trend = "变好" if after < before_score else ("变差" if after > before_score else "不变")
         lines = [f"已修改（得分 {before_score} → {after}，{trend}）"]
+        if after > before_score:
+            lines.append(f'（变差了：可以 revert {{"step": {self.step}}} 撤销这一步）')
         lines += warnings + ([note] if note else [])
         lines += self._expectation(extra.get("expect"), check)
         return "\n".join(lines) + "\n" + self.summary(check)

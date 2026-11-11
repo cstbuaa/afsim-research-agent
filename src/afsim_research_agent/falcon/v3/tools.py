@@ -303,12 +303,43 @@ def _l1(fixer: Any, index: int) -> str:
         if a not in "".join(extra):
             extra.append(f"动作 {a}：{K._writes_text(c, c.actions[a])}")
     if "ENTRY_TRUE" in p.message:
-        extra.append(
-            "改法方向：让这个条件读本状态动作执行之后才会变化的字段，或在 model 的 events 中"
-            "声明树事件（source: tree）由本状态的树结束触发。只追加 time_in_state() 等待只是"
-            "推迟出口，测试期望立即转出时会失败"
-        )
+        extra.append(entry_true_hint(fixer, p.message))
     return text + ("\n" + "\n".join(extra) if extra else "")
+
+
+def _transition_of(fixer: Any, message: str) -> tuple[str, str, str, str] | None:
+    """(role, from, to, trigger) of the transition an ENTRY_TRUE problem is about."""
+    m = re.search(r"状态 (\w+) → (\w+) 的条件 (\w+)", message)
+    if not m:
+        return None
+    src, dst, cond = m.groups()
+    for b in fixer.d.blocks:
+        if b.kind == "mermaid" and any(
+            t[1] == src and t[2] == dst and t[3] == cond for t in _transitions(b.text)
+        ):
+            return str(b.role), src, dst, cond
+    return None
+
+
+def entry_true_hint(fixer: Any, message: str) -> str:
+    where = _transition_of(fixer, message)
+    head = (
+        "改法方向（二选一）：1) 让条件读本状态动作执行之后才会变化的字段（who_writes 查谁写它）；"
+        "2) 用树事件："
+    )
+    if where:
+        role, src, dst, cond = where
+        name = f"{src.lower()}_tree_{'failed' if 'fail' in cond else 'done'}"
+        result = "failure" if "fail" in cond else "success"
+        head += (
+            f'declare_event {{"name": "{name}", "source": "tree", "result": "{result}"}}，'
+            f'再 set_trigger {{"role": "{role}", "from": "{src}", "to": "{dst}", '
+            f'"trigger": "{name}", "old_trigger": "{cond}"}}（树事件在 {src} 的树以该结果结束时'
+            "触发；事件只能作转换的触发，不能写进 conditions）"
+        )
+    else:
+        head += "declare_event 声明 source: tree 的事件，再用 set_trigger 把这条转换的触发改成它"
+    return head + "。只追加 time_in_state() 等待只是推迟出口，测试期望立即转出时会失败"
 
 
 def explain_check(fixer: Any, ref: Any) -> str:
@@ -545,6 +576,14 @@ def structured(fixer: Any, op: str, a: dict[str, Any]) -> dict[str, str] | str:
             return 'set_condition 要写 {"name": 条件名, "expr": 表达式}'
         if expr.startswith(f"{name} ="):
             expr = expr.split("=", 1)[1].strip()
+        events = _events(fixer) | _declared(texts.get("model") or "")
+        used = [e for e in events if re.search(rf"(?<![\w.]){re.escape(e)}(?![\w])", expr)]
+        if used or "events." in expr:
+            return (
+                f"条件里不能引用事件（{', '.join(used) or expr}）：事件只能作状态图转换的触发。"
+                '把转换的触发改成事件：set_trigger {"role", "from", "to", "trigger": 事件名, '
+                '"old_trigger": 原条件名}'
+            )
         cur = texts.get("conditions")
         if cur is None:
             texts["conditions"] = f"{name} = {expr}"
@@ -657,6 +696,10 @@ def structured(fixer: Any, op: str, a: dict[str, Any]) -> dict[str, str] | str:
             else:
                 rows.insert(j, entry)
         texts["model"] = "\n".join(rows)
+        texts["_note"] = (
+            f"事件 {name} 只能作状态图转换的触发（不能写进 conditions）：用 set_trigger 把要用它的"
+            f'转换改过来，如 set_trigger {{"role", "from", "to", "trigger": "{name}", "old_trigger": 原触发}}'
+        )
         return texts
     if op in ("set_state_tree", "attach_subtree"):
         role, state = str(a.get("role") or "").strip(), str(a.get("state") or "").strip()
@@ -719,6 +762,15 @@ def structured(fixer: Any, op: str, a: dict[str, Any]) -> dict[str, str] | str:
     return f"不认识的修改 {op}"
 
 
+def _declared(model_text: str) -> set[str]:
+    try:
+        data = yaml.safe_load(model_text) or {}
+    except yaml.YAMLError:
+        return set()
+    ev = data.get("events") if isinstance(data, dict) else None
+    return {str(k) for k in ev} if isinstance(ev, dict) else set()
+
+
 def _events(fixer: Any) -> set[str]:
     spec = fixer.last.compiled.spec if getattr(fixer.last, "compiled", None) else None
     return {str(e.get("id")) for e in (spec or {}).get("events") or [] if isinstance(e, dict)}
@@ -750,7 +802,7 @@ def lint(fixer: Any, before: dict[str, str], after: dict[str, str]) -> tuple[str
         a, b = defs(old), defs(new)
         for name, text in b.items():
             expr = text.split("=", 1)[1].strip() if "=" in text else text
-            if expr in ("True", "False"):
+            if expr.strip("() ") in ("True", "False", "true", "false", "0", "1"):
                 return (f"修改被拒绝：条件 {name} 被写成常量 {expr}，这等于删掉了这个判断", [])
             gained = len(TIME_GUARD.findall(text)) > len(TIME_GUARD.findall(a.get(name, "")))
             if name in a and gained:

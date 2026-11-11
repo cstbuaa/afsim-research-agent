@@ -192,3 +192,16 @@ def test_fix_loop_with_explain_check_and_a_structured_edit(contracts: Contracts)
     assert "决定结果的项" in outcome.log[0]["result"]
     assert "explain_check" in model.calls[0][1] and "set_condition" in model.calls[0][1]
     assert "本轮试过的修改：" not in model.calls[0][1]
+
+
+def test_events_are_triggers_not_condition_terms(contracts: Contracts):
+    fixer = _fixer(contracts)
+    refused = T.structured(fixer, "set_condition", {"name": "target_seen", "expr": "cancelled"})
+    assert isinstance(refused, str) and "set_trigger" in refused
+    texts = T.structured(fixer, "declare_event", {"name": "seen_tree", "source": "tree"})
+    assert "set_trigger" in texts["_note"]
+    hint = T.entry_true_hint(
+        fixer, "ENTRY_TRUE 状态 MOVE → OBSERVE 的条件 target_seen 在进入 MOVE 时就成立"
+    )
+    assert '"role": "scout", "from": "MOVE", "to": "OBSERVE"' in hint and "declare_event" in hint
+    assert "常量" in T.lint(fixer, {"conditions": "a = x"}, {"conditions": "a = false"})[0]
