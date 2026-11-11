@@ -13,6 +13,15 @@ scenario), ``edit`` (several blocks at once, applied together), ``revert``, ``fi
 L1 passes), ``run_afsim`` (re-run AFSIM on the current sheet, when AFSIM is in the loop) and
 ``classify`` (a failed check that is not the sheet's to fix: scenario, judge, capability).
 
+Repair tools v2 (falcon.v3.tools, design ``repair-tools-v2``): ``explain_check`` (why one
+check fails, condition terms evaluated), ``eval_condition``, ``who_writes``, ``history``;
+structured edits (``set_condition``, ``add_transition`` / ``remove_transition`` /
+``set_trigger``, ``declare_event``, ``set_state_tree``, ``attach_subtree``, ``rename``) and
+``try_edit`` (dry run); ``revert`` by step. Once L1 passes a change carries ``because`` (it
+is then its own diagnosis) or follows a ``diagnose``; ``expect`` names the checks it should
+make pass. A refused change says what to do instead; the same resulting sheet twice is
+refused; a time guard added to a condition is warned about, a constant condition refused.
+
 Rule triage (falcon.v3.triage) comes first: every failed run is classified (the sheet's
 model or verification block / the scenario / a false alarm of the judge / a missing
 capability) and the sheet's failures come with their likely cause and change. The loop does
@@ -49,6 +58,7 @@ from pydantic import BaseModel, Field
 from afsim_research_agent.falcon.llm import ModelRunner
 from afsim_research_agent.falcon.sheet.blocks import Block
 from afsim_research_agent.falcon.v3 import catalog as K
+from afsim_research_agent.falcon.v3 import tools as T
 from afsim_research_agent.falcon.v3 import triage
 from afsim_research_agent.ir.v2.sim import simulate
 from afsim_research_agent.progress import report
@@ -62,7 +72,9 @@ SHOW_LINES = 120
 LOOKS = 5  # reads in a row (show / lookup / explain / try_tick / simulate) before a
 # diagnosis is written; more are refused once L1 passes
 LOOKS_AFTER_DIAGNOSIS = 2  # reads between a diagnosis and its edit
-READS = ("show", "lookup", "explain", "try_tick", "simulate")
+READS = ("show", "lookup", "explain", "try_tick", "simulate", *T.READ_TOOLS, "try_edit")
+WRITES = ("edit", "revert", *T.WRITE_TOOLS)
+NO_GAIN = 3  # applied or refused changes in a row without a better score: explain again
 OUTSIDE = (triage.SCENARIO, triage.JUDGE, triage.CAPABILITY)
 
 
@@ -82,6 +94,19 @@ class FixStep(BaseModel):
         "diagnose",
         "run_afsim",
         "classify",
+        "explain_check",
+        "eval_condition",
+        "who_writes",
+        "history",
+        "try_edit",
+        "set_condition",
+        "add_transition",
+        "remove_transition",
+        "set_trigger",
+        "declare_event",
+        "set_state_tree",
+        "attach_subtree",
+        "rename",
     ]
     args: dict[str, Any] = Field(default_factory=dict)
 
@@ -149,39 +174,48 @@ def _counts(blocks: list[Block]) -> dict[str, int]:
 RULES = """你在修正一份战术稿（v3）。每一步调用一个工具，输出 JSON：
 {"thought": "简短想法", "action": "<工具名>", "args": {…}}
 
-工具：
-- check {}：重新检查，返回各块的问题（L1）和 L2 / L3 未通过项。
+定位（不改稿件）：
+- check {}：重新检查，返回 L1 问题（带编号）和 L2 / L3 未通过项。
+- explain_check {"id": L1 问题编号 / L2 测试 ID / L3 想定 ID}：这一项为什么没过——期望什么、实际怎样、
+  当时每个出口条件逐项的取值（标出决定结果的项）、本轮改过哪些相关条件。不知道原因时先用它。
+- eval_condition {"role", "state", "name": 条件或事件名（不写则列出全部出口）, "given": {"blackboard": {…}, "events": […], "time_in_state_s": 0, "actions": {…}}}：
+  在给定情况下逐项求值。
+- who_writes {"field": 黑板字段}：哪些动作写它、写成什么值，本稿件哪些状态运行这些动作，哪些条件读它。
 - show {"block": "块名", "start": 行号, "end": 行号}：查看一个块（带整份稿件的行号）。
 - lookup {"id": "动作 ID / 战术集 ID / 黑板字段 / 切片 ID"}：查契约、子树写法、字段类型与取值。
-- explain {"problem": 问题编号}：某个问题的详细上下文（如资源冲突发生在哪两个分支、各自含哪些动作）。
-- try_tick {"role": 角色, "state": 状态, "given": {"blackboard": {…}, "events": […], "time_in_state_s": 0, "actions": {…}}}：
-  用临时测试跑一拍，返回下一状态、树的结果、下达的动作。
-- simulate {"scenario": 想定 ID}：跑一个 L3 想定，返回状态轨迹。
-- edit {"changes": [{"block": "块名", "old": "原文片段", "new": "新文本"} 或 {"block": "块名", "text": "整块新内容"}], "reason": "…"}：
-  一次修改一个或多个块（同时生效）；old 必须在块中唯一出现。改完自动检查。
-- revert {"block": "块名"}：把一个块恢复为修正开始前的内容。
-- diagnose {"issue": "要解决的问题（抄检查结果里的原文）", "where": ["块名", …], "cause": "为什么会这样", "plan": "打算怎么改"}：
-  写下诊断。L1 通过后（修 L2/L3/AFSIM 问题时），每次 edit 之前必须先有诊断，edit 只能改诊断 where 里列出的块。
-- classify {"check": "失败项 ID（想定 ID 或 afsim）", "category": "scenario|judge|capability", "reason": "…"}：
-  记录一个失败项不是战术稿的问题（想定/绑定没给出条件、判定误报、能力集缺能力）。检查结果里"定位与改法"
-  标为稿件的问题不能这样记录。
-- run_afsim {}：用真实 AFSIM 复验当前稿件（只在有 AFSIM 反馈时可用，次数有限）；二维检查全部通过时会自动复验。
-- finish {"summary": "…"}：结束（有 AFSIM 反馈时，AFSIM 复验通过前不接受）。
-- ask_human {"question": "…"}：问题需要人决定时结束并提问。
+- explain {"problem": 问题编号}：L1 问题的上下文（资源冲突的分支等）。
+- try_tick {"role", "state", "given": {…}}：用临时测试跑一拍；simulate {"scenario": 想定 ID}：跑一个 L3 想定的完整轨迹。
+- history {}：本轮试过的修改和各自的得分变化。
+
+修改（改完自动检查；L1 通过后要带 because：依据哪一步的哪个结论，可选 expect：预期哪些检查会通过）：
+- set_condition {"name": 条件名, "expr": 表达式}：改写或新增 conditions 里的一个条件。
+- add_transition / remove_transition {"role", "from", "to", "trigger"}：增删状态图转换（from 写 * 表示任意状态）。
+- set_trigger {"role", "from", "to", "trigger": 新触发, "old_trigger": 原触发（有多条时）}。
+- declare_event {"name", "source": "tree"|"timer"|"external", "result": "success"|"failure"（tree）, "after": "5 s"（timer）}：
+  在 model 的 events 中声明事件（例如本状态的树结束时触发）。
+- set_state_tree {"role", "state", "code": "def STATE():\n    …"}：整体替换一个状态的树；
+  attach_subtree {"role", "state", "subtree": 战术集子树 ID, "position": "start"|"end"}：在状态树里引用子树。
+- rename {"kind": "trigger"|"condition"|"event"|"state", "old", "new"}：一次改完所有引用处。
+- edit {"changes": [{"block", "old": "原文片段", "new": "新文本"} 或 {"block", "text": "整块新内容"}]}：文本替换（兜底）；old 必须唯一。
+- try_edit {"op": 上面任一修改工具名, "args": {…}}：试改，只返回得分变化，不保存。
+- revert {"block": 块名} 或 {"step": 步数}：恢复一个块的初始内容，或撤销某一步及之后的修改。
+
+流程：
+- diagnose {"issue", "where": [块名], "cause", "plan"}：写下诊断（可选；修改带 because 时等同于诊断）。
+- classify {"check": 失败项 ID, "category": "scenario|judge|capability", "reason"}：记录不是战术稿的问题
+  （想定/绑定没给出条件、判定误报、能力集缺能力）；"定位与改法"标为稿件的问题不能这样记录。
+- run_afsim {}：用真实 AFSIM 复验（只在有 AFSIM 反馈时可用）；finish {"summary"}：结束；ask_human {"question"}：需要人决定时提问。
 
 规则：
 - 块名写法：model、mermaid:<角色>、conditions、pytree:<角色>、gaps、verification。
-- 状态图里的触发名与 conditions / events 的名字必须一致；一处改名，另一处同一步一起改。
+- 状态图里的触发名与 conditions / events 的名字必须一致（rename 会一起改）。
 - 状态树和任务状态机自己写；只能用 tactic("…") 引用战术集子树，不能引用战术集状态树和任务。
 - 引用的战术集子树已经包含的动作，不要在并行分支里再写一遍（会争用同一独占资源）。
-- 不能删测试、想定和想定期望；期望与需求不符时可以改，但不能为了通过而改成与需求不符的期望。
-- 检查结果里有"定位与改法"时先照它处理：标为稿件的，按给出的原因和改法 diagnose 再 edit；
-  标为想定/判定误报/能力缺失的，不要改稿件，用 classify 记录。
-- 写了诊断就要改：诊断之后最多再查看 2 次，然后 edit；改不了就重新 diagnose 或 classify，不能只诊断不改。
+- 不能删测试、想定和想定期望；期望与需求不符时可以改期望（带 because 引用需求原文），不能为了通过而改成与需求不符的期望。
+- 检查结果里有"定位与改法"时先照它处理；标为想定/判定误报/能力缺失的用 classify 记录，不要改稿件。
+- 修改没有达到预期时，先 explain_check 弄清原因再换改法；不要重复提交同样的修改。
+- 只给条件追加 time_in_state() 等待只会推迟出口：需求要求等待时才这样写，否则让条件读本状态动作写入的字段或用树事件。
 - 位置和路线只用 point=<接口点> / route=<接口路线>，不要写经纬度，也不要改成 latitude_deg 等参数。
-- L2/L3/AFSIM 问题：先 diagnose 再 edit。诊断要指到具体的状态、转换、条件或动作，说明它为什么导致
-  这个问题；不知道原因时先用 show / lookup / try_tick / simulate 查清楚。
-- AFSIM 复验仍未通过时，上一份诊断作废：对照新的反馈重新 diagnose，不要在别处随手改。
 - 保持需求的意图；只修正表达错误和遗漏。检查通过后调用 finish。"""
 
 
@@ -208,6 +242,10 @@ class SheetFixer:
         self.edited_since_diagnosis = False
         self.classified: list[dict[str, Any]] = []
         self.finish_refusals = 0
+        self.attempts: list[dict[str, Any]] = []  # changes that were not applied, and why
+        self.tried: dict[int, tuple[int, tuple[int, int, int]]] = {}  # sheet → (step, score)
+        self.snapshots: dict[int, list[Block]] = {}  # step → blocks before its change
+        self.no_gain = 0
 
     # ------------------------------------------------------------------ scoring
     @staticmethod
@@ -331,7 +369,7 @@ class SheetFixer:
             if self.looks >= LOOKS_AFTER_DIAGNOSIS:
                 self.refused += 1
                 return (
-                    f"{action} 被拒绝：诊断之后已经查看 {self.looks} 次。按诊断的改法 edit"
+                    f"{action} 被拒绝：诊断之后已经查看 {self.looks} 次。按诊断的改法修改"
                     f"（块：{', '.join(self.diagnosis['where'])}）；改法不对就重新 diagnose；"
                     "不是稿件的问题就 classify"
                 )
@@ -339,7 +377,7 @@ class SheetFixer:
             self.refused += 1
             return (
                 f"{action} 被拒绝：已经连续查看 {self.looks} 次。照检查结果里的"
-                '"定位与改法"写 diagnose（标为稿件的问题）或 classify（其余问题）'
+                '"定位与改法"带上 because 修改，或写 diagnose（标为稿件的问题）、classify（其余问题）'
             )
         return None
 
@@ -665,34 +703,56 @@ class SheetFixer:
             "重新 diagnose。\n" + self.summary()
         )
 
-    def edit(self, changes: Any, reason: str) -> str:
+    def _refuse(self, what: str, why: str) -> str:
+        self.refused += 1
+        self.attempts.append({"step": self.step, "what": what[:300], "why": why[:300]})
+        self.no_gain += 1
+        return why
+
+    def _basis(self, keys: list[str], extra: dict[str, Any], reason: str) -> str | None:
+        """Once L1 passes a change needs a basis: a written diagnosis whose ``where`` holds
+        the blocks, or ``because`` on the change itself (it then becomes the diagnosis)."""
+        if not self.needs_diagnosis:
+            return None
+        because = str(extra.get("because") or "").strip()
+        if because:
+            self.diagnosis = {
+                "step": self.step,
+                "issue": because[:400],
+                "where": sorted(set(keys)),
+                "cause": because[:400],
+                "plan": reason[:600],
+            }
+            self.diagnoses.append(dict(self.diagnosis))
+            self.edited_since_diagnosis = False
+            return None
+        if self.diagnosis is None:
+            first = T.first_failure(self)
+            hint = (
+                ("\n当前第一个未通过项的解释：\n" + T.explain_check(self, first)) if first else ""
+            )
+            return self._refuse(
+                f"修改 {keys}",
+                "修改被拒绝：L1 已通过，修改要有依据：在修改里带上 because（引用 explain_check 的"
+                "结论），或先用 diagnose 写出诊断（问题原文、所在块、原因、改法）" + hint,
+            )
+        outside = [k for k in keys if not self._allowed(k)]
+        if outside:
+            return self._refuse(
+                f"修改 {outside}",
+                f"修改被拒绝：块 {outside} 不在诊断的 where 中（{self.diagnosis['where']}）；"
+                "确实要改就带上 because 说明原因，或先重新 diagnose",
+            )
+        return None
+
+    def edit(self, changes: Any, reason: str, extra: dict[str, Any] | None = None) -> str:
+        extra = extra or {}
         if isinstance(changes, dict):
             changes = [changes]
         if not isinstance(changes, list) or not changes:
             return (
                 'changes 写成列表：[{"block": …, "old": …, "new": …}] 或 [{"block": …, "text": …}]'
             )
-        if self.needs_diagnosis:
-            if self.diagnosis is None:
-                self.refused += 1
-                return (
-                    "修改被拒绝：L1 已通过，修 L2/L3/AFSIM 问题前先用 diagnose 写出诊断"
-                    "（问题原文、所在块、原因、改法），再按诊断 edit"
-                )
-            outside = [
-                str(ch.get("block"))
-                for ch in changes
-                if isinstance(ch, dict) and not self._allowed(str(ch.get("block")))
-            ]
-            if outside:
-                self.refused += 1
-                return (
-                    f"修改被拒绝：块 {outside} 不在诊断的 where 中（{self.diagnosis['where']}）；"
-                    "确实要改就先重新 diagnose 说明原因"
-                )
-        before_blocks = _copy(self.d.blocks)
-        before_check = self.last
-        before_score = self.score(before_check)
         texts: dict[str, str] = {b.key: b.text for b in self.d.blocks}
         for ch in changes:
             if not isinstance(ch, dict) or "block" not in ch:
@@ -714,16 +774,100 @@ class SheetFixer:
                 return "old 不能为空"
             n = current.count(old)
             if n != 1:
-                return f"块 {key} 中 old 出现了 {n} 次，需要唯一；可多带一点上下文，或先 show"
+                block = self._block(key)
+                shown = _clip(block.numbered(), 2500) if block is not None else ""
+                tool = {
+                    "conditions": "set_condition（按条件名改，不用抄原文）",
+                    "mermaid": "add_transition / remove_transition / set_trigger",
+                    "model": "declare_event",
+                    "pytree": "set_state_tree / attach_subtree",
+                }.get(kind)
+                return self._refuse(
+                    f"edit {key} old={old[:120]}",
+                    f"块 {key} 中 old 出现了 {n} 次，需要唯一。这个块现在的内容：\n{shown}"
+                    + (f"\n也可以改用 {tool}" if tool else ""),
+                )
             texts[key] = current.replace(old, new)
+        return self.commit(texts, reason, extra)
+
+    def apply(self, op: str, args: dict[str, Any], reason: str) -> str:
+        """A structured edit (tools.structured) committed like an edit."""
+        got = T.structured(self, op, args)
+        if isinstance(got, str):
+            return self._refuse(f"{op} {json.dumps(args, ensure_ascii=False)[:200]}", got)
+        return self.commit(got, reason, args)
+
+    def try_edit(self, args: dict[str, Any], reason: str) -> str:
+        op = str(args.get("op") or "edit")
+        inner = args.get("args") if isinstance(args.get("args"), dict) else args
+        inner = {k: v for k, v in inner.items() if k != "op"}
+        if op == "edit":
+            texts: dict[str, str] | str = {b.key: b.text for b in self.d.blocks}
+            for ch in inner.get("changes") or []:
+                if not isinstance(ch, dict) or "block" not in ch or texts.get(ch["block"]) is None:
+                    return "try_edit 的 changes 写法同 edit"
+                cur = texts[ch["block"]]
+                if "text" in ch:
+                    texts[ch["block"]] = _strip_fence(str(ch["text"]))
+                elif cur.count(str(ch.get("old", ""))) != 1 or not ch.get("old"):
+                    return f"块 {ch['block']} 中 old 不唯一或不存在"
+                else:
+                    texts[ch["block"]] = cur.replace(str(ch["old"]), str(ch.get("new", "")))
+        elif op in T.WRITE_TOOLS:
+            texts = T.structured(self, op, inner)
+            if isinstance(texts, str):
+                return texts
+        else:
+            return f"try_edit 的 op 写 edit 或 {', '.join(T.WRITE_TOOLS)}"
+        return self.commit(texts, reason, {}, dry_run=True)
+
+    def commit(
+        self, texts: dict[str, str], reason: str, extra: dict[str, Any], dry_run: bool = False
+    ) -> str:
+        note = texts.pop("_note", None)
+        current = {b.key: b.text for b in self.d.blocks}
+        keys = [k for k, v in texts.items() if current.get(k) != v]
+        if not keys:
+            return self._refuse("没有变化的修改", "修改没有改变任何内容")
+        refusal, warnings = T.lint(self, current, texts)
+        if refusal:
+            return self._refuse(f"修改 {keys}", refusal)
+        if not dry_run:
+            basis = self._basis(keys, extra, reason)
+            if basis is not None:
+                return basis
+        h = hash(tuple(sorted(texts.items())))
+        if not dry_run and h in self.tried:
+            step, score = self.tried[h]
+            return self._refuse(
+                f"修改 {keys}（与第 {step} 步结果相同）",
+                f"修改被拒绝：第 {step} 步已经得到过完全相同的稿件，得分 {score}。换一种改法；"
+                "不确定原因时先 explain_check\n" + T.tried_summary(self),
+            )
+        before_blocks = _copy(self.d.blocks)
+        before_check = self.last
+        before_score = self.score(before_check)
         self.d.blocks = _rebuild(self.d.blocks, texts)
         counts = _counts(self.d.blocks)
         lost = [k for k in counts if 0 <= counts[k] < self.counts0[k]]
         if lost:
             self.d.blocks = before_blocks
-            self.refused += 1
+            return self._refuse(
+                f"修改 {keys}",
+                f"修改被拒绝：不能减少 {', '.join(lost)}（开始时 {self.counts0}，修改后 {counts}）",
+            )
+        if dry_run:
+            check = self.d.check(verify=True)
+            after = self.score(check)
+            self.d.blocks = before_blocks
+            self.last = before_check
+            trend = "变好" if after < before_score else ("变差" if after > before_score else "不变")
             return (
-                f"修改被拒绝：不能减少 {', '.join(lost)}（开始时 {self.counts0}，修改后 {counts}）"
+                f"试改结果（未保存）：得分 {before_score} → {after}，{trend}\n"
+                + "\n".join(warnings + ([note] if note else []))
+                + ("\n" if warnings or note else "")
+                + self.summary(check)
+                + "\n（满意就用同样的参数正式提交）"
             )
         check = self._recheck()
         after = self.score(check)
@@ -731,12 +875,14 @@ class SheetFixer:
             problems = "\n".join(p.render() for p in check.problems[:8])
             self.d.blocks = before_blocks
             self.last = before_check
-            self.refused += 1
             self.looks = 0
-            return (
-                f"修改被拒绝：会让 L1 不通过：\n{problems}\n诊断仍然有效：照上面的报错改写 new 再"
-                "提交（位置和路线用 point=/route= 引用想定接口，不写坐标、不改参数名）"
+            return self._refuse(
+                f"修改 {keys}",
+                f"修改被拒绝：会让 L1 不通过：\n{problems}\n诊断仍然有效：照上面的报错改写再"
+                "提交（位置和路线用 point=/route= 引用想定接口，不写坐标、不改参数名）",
             )
+        self.snapshots[self.step] = before_blocks
+        self.tried[h] = (self.step, after)
         for key, text in texts.items():
             old_text = next((b.text for b in before_blocks if b.key == key), "")
             if text != old_text:
@@ -745,10 +891,57 @@ class SheetFixer:
                 )
         self.looks = 0
         self.edited_since_diagnosis = True
+        self.no_gain = 0 if after < before_score else self.no_gain + 1
         trend = "变好" if after < before_score else ("变差" if after > before_score else "不变")
-        return f"已修改（得分 {before_score} → {after}，{trend}）\n" + self.summary(check)
+        lines = [f"已修改（得分 {before_score} → {after}，{trend}）"]
+        lines += warnings + ([note] if note else [])
+        lines += self._expectation(extra.get("expect"), check)
+        return "\n".join(lines) + "\n" + self.summary(check)
 
-    def revert(self, key: str, reason: str) -> str:
+    def _expectation(self, expect: Any, check: Any) -> list[str]:
+        """``expect`` on a change: the checks it was meant to make pass."""
+        if not expect:
+            return []
+        ids = [expect] if isinstance(expect, str) else [str(x) for x in expect]
+        status = {t["id"]: t["passed"] for t in check.l2} | {
+            str(s["id"]): s["passed"] for s in check.l3
+        }
+        if any(x.upper() == "L1" for x in ids):
+            status["L1"] = bool(check.l1_ok)
+        missed = [x for x in ids if status.get(x) is False or (x not in status and x != "L1")]
+        if not missed:
+            return [f"预期达成：{', '.join(ids)} 通过"]
+        return [
+            f"预期没有达成：{', '.join(missed)} 仍未通过（或不存在）。原因多半不是你以为的那样："
+            "用 explain_check 看它在这一刻的条件取值"
+        ]
+
+    def revert(self, key: str, reason: str, step: Any = None) -> str:
+        if step not in (None, ""):
+            try:
+                n = int(step)
+            except (TypeError, ValueError):
+                return "step 写步数"
+            if n not in self.snapshots:
+                return f"第 {n} 步没有生效的修改；有修改的步：{sorted(self.snapshots)}"
+            before = self.score(self.last)
+            texts_now = {b.key: b.text for b in self.d.blocks}
+            self.d.blocks = _copy(self.snapshots[n])
+            check = self._recheck()
+            for b in self.d.blocks:
+                if texts_now.get(b.key) != b.text:
+                    self.edits.append(
+                        EditRecord(
+                            self.step,
+                            b.key,
+                            texts_now.get(b.key, ""),
+                            b.text,
+                            f"revert 第 {n} 步: " + reason,
+                            before,
+                            self.score(check),
+                        )
+                    )
+            return f"已撤销第 {n} 步及之后的修改\n" + self.summary(check)
         if key not in self.original:
             return f"块 {key} 在开始时不存在"
         texts = {b.key: b.text for b in self.d.blocks}
@@ -926,6 +1119,7 @@ def _prompt(fixer: SheetFixer, records: list[dict[str, Any]], remaining: int) ->
         clauses and f"需求条款：\n{clauses}",
         f"战术稿的块：\n{outline}",
         records and "最近几步：\n" + _history(records),
+        (fixer.edits or fixer.attempts) and "本轮试过的修改：\n" + T.tried_summary(fixer),
         (not records or records[-1]["action"] not in ("check", "edit", "revert"))
         and "当前检查结果：\n" + fixer.summary(),
         f"还剩 {remaining} 步。输出下一步的 JSON。",
@@ -970,8 +1164,9 @@ async def fix_sheet(
         a = action.args
         reason = str(a.get("reason") or action.thought)[:300]
         report(f"修复循环第 {step}/{max_steps} 步：{action.action}")
-        if action.action in ("edit", "revert", "diagnose", "classify"):
+        if action.action in (*WRITES, "diagnose", "classify"):
             fixer.reads = 0
+        edits_before = len(fixer.edits)
         finish_refused = False
         refused_read = fixer.read_refused(action.action) if action.action in READS else None
         if refused_read is not None:
@@ -1029,8 +1224,27 @@ async def fix_sheet(
             result = fixer.try_tick(str(a.get("role", "")), str(a.get("state", "")), a.get("given"))
         elif action.action == "simulate":
             result = fixer.simulate(str(a.get("scenario", "")))
-        elif action.action == "edit":
-            result = fixer.edit(a.get("changes"), reason)
+        elif action.action == "explain_check":
+            result = T.explain_check(fixer, a.get("id", a.get("check", a.get("problem"))))
+        elif action.action == "eval_condition":
+            result = T.eval_condition(
+                fixer,
+                str(a.get("role", "")),
+                str(a.get("state", "")),
+                str(a.get("name", "")),
+                a.get("given"),
+            )
+        elif action.action == "who_writes":
+            result = T.who_writes(fixer, str(a.get("field", "")))
+        elif action.action == "history":
+            result = T.history(fixer)
+        elif action.action == "try_edit":
+            result = fixer.try_edit(a, reason)
+        elif action.action in WRITES and action.action != "revert":
+            if action.action == "edit":
+                result = fixer.edit(a.get("changes"), reason, a)
+            else:
+                result = fixer.apply(action.action, a, reason)
             if (
                 result.startswith("已修改")
                 and fixer._only_afsim_left()
@@ -1038,7 +1252,20 @@ async def fix_sheet(
             ):
                 result += "\n" + await fixer.run_afsim(auto=True)
         else:
-            result = fixer.revert(str(a.get("block", "")), reason)
+            result = fixer.revert(str(a.get("block", "")), reason, a.get("step"))
+        if action.action in WRITES and fixer.no_gain >= NO_GAIN and not fixer.solved:
+            first = T.first_failure(fixer)
+            result += (
+                f"\n（已经连续 {fixer.no_gain} 次修改没有让得分变好。本轮试过的：\n"
+                + T.tried_summary(fixer)
+                + (
+                    "\n当前第一个未通过项的解释：\n" + T.explain_check(fixer, first)
+                    if first
+                    else ""
+                )
+                + "\n换一个方向：先弄清上面标出的决定项为什么是这个值）"
+            )
+            fixer.no_gain = 0
         if action.action in READS and refused_read is None:
             fixer.looks += 1
         if action.action == "show" and refused_read is None:
@@ -1047,15 +1274,15 @@ async def fix_sheet(
                 result += f"\n（与第 {same[-1]} 步看过的内容相同，战术稿没有变化）"
         idle = 0
         for r in reversed(records):
-            if r["action"] in ("edit", "revert", "diagnose", "run_afsim", "classify"):
+            if r["action"] in (*WRITES, "diagnose", "run_afsim", "classify"):
                 break
             idle += 1
-        quiet = ("edit", "revert", "finish", "ask_human", "diagnose", "run_afsim", "classify")
+        quiet = (*WRITES, "try_edit", "finish", "ask_human", "diagnose", "run_afsim", "classify")
         if action.action not in quiet and idle >= 3:
             nxt = (
-                "先 diagnose 写出诊断，再 edit"
+                "带上 because 修改（set_condition / add_transition / edit 等），或先 diagnose"
                 if fixer.needs_diagnosis and fixer.diagnosis is None
-                else "用 edit 改战术稿"
+                else "修改战术稿（set_condition / add_transition / edit 等）"
             )
             result += (
                 f"\n（已连续 {idle + 1} 步没有修改。信息已经够用：下一步{nxt}，"
@@ -1080,9 +1307,11 @@ async def fix_sheet(
             best_step = step
         # progress also counts an applied edit or an AFSIM re-run (an edit that leaves the
         # 2D score unchanged may still fix what AFSIM showed)
-        if action.action in ("edit", "revert", "run_afsim", "classify") and not str(
-            result
-        ).startswith(("修改被拒绝", "不接受", "check 写", "category", "写出")):
+        applied = action.action in WRITES and len(fixer.edits) > edits_before
+        if applied or (
+            action.action in ("run_afsim", "classify")
+            and not str(result).startswith(("不接受", "check 写", "category", "写出"))
+        ):
             fixer.best_step = step
             best_step = step
         # looking things up (show / lookup / explain) is how a diagnosis is reached: it
@@ -1090,7 +1319,8 @@ async def fix_sheet(
         reads = sum(
             1
             for r in records
-            if r["step"] > max(best_step, 0) and r["action"] in ("show", "lookup", "explain")
+            if r["step"] > max(best_step, 0)
+            and r["action"] in ("show", "lookup", "explain", *T.READ_TOOLS, "try_edit")
         )
         idle = step - max(best_step, 0) - min(reads, READ_ALLOWANCE)
         if idle >= STALL and action.action not in ("finish", "ask_human"):

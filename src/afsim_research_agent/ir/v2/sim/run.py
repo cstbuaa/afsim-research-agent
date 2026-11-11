@@ -476,38 +476,49 @@ class _StubHost:
         return None
 
 
+def prepare_l2(
+    model: dict[str, Any], contracts: Contracts, raw: dict[str, Any]
+) -> tuple[TestCase, Instance] | str:
+    """The instance of one L2 test with its ``given`` applied, before the update; or why
+    the test cannot run."""
+    try:
+        case = TestCase.model_validate(raw)
+    except ValidationError as exc:
+        return f"structure: {exc.errors()[0]}"
+    g = case.given
+    if g.role not in model["roles"]:
+        return f"unknown role '{g.role}'"
+    inst = Instance(
+        f"{g.role}_{g.instance}", g.role, g.instance, model, contracts, _StubHost(g.actions)
+    )
+    if g.state not in inst.mission["states"]:
+        return f"unknown state '{g.state}'"
+    inst.enter(g.state, -g.time_in_state_s)
+    inst.tree_status = g.tree_status
+    inst.blackboard.update(g.blackboard)
+    for name in g.events:
+        ev = _event_name(inst, name)
+        spec = inst.events.get(ev) or {}
+        if spec.get("source") == "tree":
+            # "the tree ended that way": the state's tree is given that result
+            inst.force_tree = str(spec.get("result") or "success")
+        elif spec.get("source") == "timer":
+            # "the timer ran out": the state has been entered at least that long ago
+            inst.entered_at = min(inst.entered_at, -float(spec.get("after_s") or 0.0))
+        else:
+            inst.raise_event(ev)
+    return case, inst
+
+
 def run_l2(model: dict[str, Any], contracts: Contracts, tests: list[dict[str, Any]]) -> list[Check]:
     checks = []
     for raw in tests:
-        try:
-            case = TestCase.model_validate(raw)
-        except ValidationError as exc:
-            checks.append(Check(str(raw.get("id", "?")), False, f"structure: {exc.errors()[0]}"))
+        ready = prepare_l2(model, contracts, raw)
+        if isinstance(ready, str):
+            checks.append(Check(str(raw.get("id", "?")), False, ready))
             continue
+        case, inst = ready
         g = case.given
-        if g.role not in model["roles"]:
-            checks.append(Check(case.id, False, f"unknown role '{g.role}'"))
-            continue
-        inst = Instance(
-            f"{g.role}_{g.instance}", g.role, g.instance, model, contracts, _StubHost(g.actions)
-        )
-        if g.state not in inst.mission["states"]:
-            checks.append(Check(case.id, False, f"unknown state '{g.state}'"))
-            continue
-        inst.enter(g.state, -g.time_in_state_s)
-        inst.tree_status = g.tree_status
-        inst.blackboard.update(g.blackboard)
-        for name in g.events:
-            ev = _event_name(inst, name)
-            spec = inst.events.get(ev) or {}
-            if spec.get("source") == "tree":
-                # "the tree ended that way": the state's tree is given that result
-                inst.force_tree = str(spec.get("result") or "success")
-            elif spec.get("source") == "timer":
-                # "the timer ran out": the state has been entered at least that long ago
-                inst.entered_at = min(inst.entered_at, -float(spec.get("after_s") or 0.0))
-            else:
-                inst.raise_event(ev)
         inst.step(0.0)
         problems = []
         # the state the given one leaves for; further transitions in the same tick follow
