@@ -41,6 +41,24 @@ WEAPONS = (  # default weapon fit (option ``weapons`` replaces it)
      "flight_s": 4.0},
 )  # fmt: skip
 
+# fields the radio callbacks keep (sync_team): they change while no action of the
+# receiving vehicle runs, so the L1 check STATE_FROZEN does not count on them staying put
+RADIO_FIELDS = frozenset(
+    {
+        "allocation.execution_task.intent",
+        "allocation.execution_task.target_id",
+        "allocation.received_assignment.expires_at_s",
+        "allocation.received_assignment.valid",
+        "communication.link.last_rx_s",
+        "formation.members.count",
+        "threat.scoring.updated_at_s",
+        "threat.targets.count",
+        "track_sharing.execution_target.source",
+        "track_sharing.recovery.fresh_message_count",
+        "track_sharing.shared_target.valid",
+    }
+)
+
 # what a failure code of these models means for a scenario or a sheet (render notes)
 CODE_HINTS = {
     "FRIENDLY_IN_LINE_OF_FIRE": (

@@ -452,3 +452,16 @@ def test_set_test_under_a_wrapped_verification_block_and_subtree_stubs(contracts
     inner = contracts.tactics[sub].raw.get("uses", {}).get("actions") or []
     out = _stub_outcomes({sub: "failure"}, contracts)
     assert all(out[a] == "failure" for a in inner)
+
+
+def test_role_total_needs_as_many_own_vehicles_as_the_requirement():
+    from afsim_research_agent.falcon.v3.semantics import role_total_problems as R
+
+    one = {"roles": {"leader": {"count": 1}}}
+    three = {"roles": {"leader": {"count": 1}, "wing": {"count": 2}}}
+    assert R("三辆装甲车组成纵队，沿路线搜索前进", one)[0][2] == "ROLE_TOTAL"
+    assert R("长车带两辆僚车前出", one) and R("2 辆战车编队前进", one)
+    assert not R("三辆装甲车组成纵队", three)
+    assert not R("发现敌方三辆坦克后报告", one)
+    assert not R("敌方 3 辆车组成编队，我车观察", one)
+    assert not R("单车前出观察，发现目标编队后报告", one)

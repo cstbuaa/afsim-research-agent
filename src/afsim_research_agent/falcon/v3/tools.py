@@ -467,6 +467,23 @@ def problem_hint(fixer: Any, message: str) -> str | None:
     """A concrete way to fix an L1 problem, with the tool calls written out."""
     if "ENTRY_TRUE" in message:
         return entry_true_hint(fixer, message)
+    m = re.search(r"STATE_FROZEN 角色 (\w+) 的状态 (\w+)", message)
+    if m:
+        role, state = m.groups()
+        writers = re.findall(r"只由 ([\w.、]+) 写入", message)
+        acts = {a for w in writers for a in w.split("、")}
+        subs = sorted(
+            tid
+            for tid, e in fixer.d.c.tactics.items()
+            if e.section == "subtrees" and any(f'"{a}"' in json.dumps(e.raw) for a in acts)
+        )
+        if subs:
+            return (
+                f'改法：attach_subtree {{"role": "{role}", "state": "{state}", "subtree": "{subs[0]}", '
+                f'"position": "end"}}（含写入动作的子树：{", ".join(subs[:4])}）；或把出口改成读 {state} '
+                "的动作会写的字段"
+            )
+        return f"改法：把 {'、'.join(sorted(acts)[:3])} 加到 {state} 的树里（set_state_tree），或改读 {state} 的动作会写的字段"
     m = re.search(r"树事件 (\w+) 要等 (\w+) 的 parallel", message)
     if m:
         event, state = m.groups()

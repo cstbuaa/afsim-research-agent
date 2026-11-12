@@ -188,3 +188,30 @@ def test_a_member_running_the_standoff_command_is_reported() -> None:
     found = [p for p in role_problems(spec, contracts, {}) if p[2] == "COMMAND_ROLE"]
     assert [p[0] for p in found] == ["state_trees.member.TRACK"]
     assert "formation.command_standoff" in found[0][1]
+
+
+def test_a_state_whose_exit_field_only_later_states_write_is_frozen() -> None:
+    ready = _cmp("formation.quality.in_position", "eq", True)
+    spec = _spec(
+        {"ready": ready},
+        {
+            "car_search": ["movement.stop"],
+            "car_fuse": ["formation.move_to_slot"],
+            "car_track": ["formation.move_to_slot"],
+        },
+        {
+            "car": {
+                "initial_state": "SEARCH",
+                "states": ["SEARCH", "FUSE", "TRACK"],
+                "transitions": [{"from": "SEARCH", "to": "FUSE", "on": "ready"}],
+            }
+        },
+    )
+    found = role_problems(spec, _contracts(), {})
+    assert [p[2] for p in found] == ["STATE_FROZEN"], found
+    assert "SEARCH 离不开" in found[0][1] and "formation.move_to_slot" in found[0][1]
+    # written in the state itself: not frozen
+    spec["subtrees"][0]["root"]["children"].append(
+        {"type": "action", "action": "formation.move_to_slot"}
+    )
+    assert role_problems(spec, _contracts(), {}) == []

@@ -39,6 +39,11 @@ action uses. These checks look at the compiled spec (no model call):
   is decided by the rest of the condition (often a timer — e.g. entering a firing state
   30 s after tracking began, where the tactic meant "on a fire command").
 
+* ``STATE_FROZEN`` every exit of a state reads fields that nothing in the state, or in the
+  states leading into it, writes, and every exit is false at their initial values: the
+  state is never left (r102 / r110: the leader waited in SEARCHING on the fused-track count
+  that only the fusing states update).
+
 ``completion_items`` lists the transitions ``autofix`` repairs mechanically: ENTRY_TRUE,
 and conditions that read a field nothing (or nothing in the role) writes.
 """
@@ -703,7 +708,153 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
                             "ENTRY_TRUE",
                         )
                     )
+        out += _frozen_states(
+            role, mission, states, conds, params, writers, contracts, tree_events, runs
+        )
     return out
+
+
+def _uses_time(expr: Any, conds: dict[str, Any], seen: frozenset = frozenset()) -> bool:
+    if isinstance(expr, dict):
+        call = expr.get("function_call")
+        if isinstance(call, dict) and str(call.get("name", "")).startswith(
+            ("time_in_state", "elapsed_since")
+        ):
+            return True
+        ref = expr.get("condition_ref")
+        if isinstance(ref, str) and ref in conds and ref not in seen:
+            return _uses_time(conds[ref], conds, seen | {ref})
+        return any(_uses_time(v, conds, seen) for v in expr.values())
+    if isinstance(expr, list):
+        return any(_uses_time(v, conds, seen) for v in expr)
+    return False
+
+
+def _frozen_states(
+    role: str,
+    mission: dict[str, Any],
+    states: dict[str, set[str]],
+    conds: dict[str, Any],
+    params: dict[str, Any],
+    writers: dict[str, set[str]],
+    contracts: Any,
+    events: set[str],
+    runs: set[str] = frozenset(),
+) -> list[Problem]:
+    """STATE_FROZEN: every exit of a state is a condition on fields that only actions write,
+    none of them run in the state or in a state leading into it, and every exit is false
+    with those fields at their initial values: the state is entered with the exits false
+    and nothing can change them, so it is never left (except by a global transition such
+    as cancel). r102 / r110 (11-12): the leader waited in SEARCHING on
+    track_sharing.fused_tracks.count, written only by update_fused_tracks in FUSING and
+    BROADCASTING; NEXT_STATE_FIELD let it pass because another state writes it too."""
+    from afsim_research_agent.ir.v2.sim.team import RADIO_FIELDS
+
+    out: list[Problem] = []
+    known = set(contracts.actions)
+    trans = [t for t in mission.get("transitions") or [] if t.get("from") not in ("*", None)]
+    declared = events | {
+        str(k) for k in (mission.get("events") or {})
+    }  # tree / timer / external events can fire whatever the fields
+    initial = mission.get("initial_state")
+    for st, here in states.items():
+        exits = [t for t in trans if t.get("from") == st]
+        if not exits or any(t.get("on") not in conds or t.get("on") in declared for t in exits):
+            continue
+        preds = {str(t.get("from")) for t in trans if t.get("to") == st}
+        before = set().union(*(states.get(p, set()) for p in preds)) if preds else set()
+        if st == initial:
+            before = set()
+        notes, frozen = [], True
+        for t in exits:
+            cid = str(t.get("on"))
+            expr = conds[cid]
+            fields = _fields(expr, conds)
+            if not fields or _uses_time(expr, conds):
+                frozen = False
+                break
+            values: dict[str, Any] = {}
+            for f in fields:
+                w = writers.get(f) or set()
+                bf = getattr(contracts, "blackboard", {}).get(f)
+                if (
+                    not w
+                    or f in RADIO_FIELDS  # radio callbacks change it (team.sync_team)
+                    or not w & runs  # no state of the role writes it: ROLE_FIELD's case
+                    or not w <= known  # a radio callback or the platform writes it
+                    or w & (here | before)
+                    # "always": its writers update it on every tick they run; with only
+                    # actions as writers it still cannot change while none of them runs
+                    or getattr(bf, "updated", None) in ("constant", "state_entry")
+                ):
+                    frozen = False
+                    break
+                values[f] = _initial(contracts, f)
+            if not frozen:
+                break
+            try:
+                holds = bool(_eval(expr, values, conds, params))
+            except _Unknown:
+                frozen = False
+                break
+            if holds:
+                frozen = False
+                break
+            f0 = sorted(fields)[0]
+            notes.append(
+                f"{cid}（读 {f0}，只由 {'、'.join(sorted(writers.get(f0) or ())[:3])} 写入）"
+            )
+        if frozen and notes:
+            out.append(
+                (
+                    f"missions.{role}",
+                    f"STATE_FROZEN 角色 {role} 的状态 {st} 离不开：出口条件 {'；'.join(notes[:3])}"
+                    f"读的字段在 {st} 和进入它之前的状态里都没有动作写入，进入时条件为假，之后也不会变化。"
+                    f"把写这些字段的动作（或含它们的子树）加到 {st} 的树里，或改读 {st} 的动作会写的字段",
+                    "STATE_FROZEN",
+                )
+            )
+    return out
+
+
+CN_NUM = {"两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+# "三辆装甲车组成纵队", "两车编队", "带两辆僚车": our own vehicles in a formation
+OWN_COUNT = re.compile(
+    r"([两二三四五六七八九十]|\d+)\s*(?:辆|台|部)?\s*[^，。；,;、]{0,8}?"
+    r"(?:车|僚车|装甲车|战车)[^，。；,;]{0,12}?(?:组成|编队|纵队|横队|队形|楔形|协同|一起)"
+)
+FORMATION_WORDS = ("僚车", "长车带", "编队", "纵队", "横队", "楔形队")
+
+
+def role_total_problems(requirement: str, spec: dict[str, Any]) -> list[Problem]:
+    """ROLE_TOTAL: the requirement asks for several of our vehicles (a formation, wingmen,
+    "three vehicles in column") and the model has fewer. Six of the 14 never-fixed real
+    sheets (11-12) were three-vehicle columns drafted as one leader: repairs then rewrote
+    every state for a single vehicle; the draft, not the repair, has to change."""
+    text = str(requirement or "")
+    roles = spec.get("roles") or []
+    items = roles if isinstance(roles, list) else [{"id": k, **v} for k, v in roles.items()]
+    total = sum(int(r.get("count") or 1) for r in items if isinstance(r, dict))
+    want = 0
+    for clause in re.split(r"[，。；,;\n]", text):
+        if re.search(r"(敌|对方|目标|红方)", clause):
+            continue  # about the enemy's vehicles
+        for m in OWN_COUNT.finditer(clause):
+            n = m.group(1)
+            want = max(want, int(n) if n.isdigit() else CN_NUM.get(n, 0))
+        if not want and any(w in clause for w in FORMATION_WORDS):
+            want = 2
+    if want <= max(total, 1):
+        return []
+    return [
+        (
+            "roles",
+            f"ROLE_TOTAL 需求要求多辆我方车辆（至少 {want} 辆：编队、僚车或“几辆车组成…”），"
+            f"model 的 roles 一共只有 {total} 辆：按需求写出全部角色和数量（如长车 1 + 僚车 2，"
+            "僚车用 count），编队、协同类子树才能运行",
+            "ROLE_TOTAL",
+        )
+    ]
 
 
 SCN_PARAMS = ("latitude_deg", "longitude_deg", "route_name")

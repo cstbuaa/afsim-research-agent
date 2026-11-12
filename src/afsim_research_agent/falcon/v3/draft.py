@@ -399,6 +399,11 @@ class Drafter:
             ):
                 block, line = compiled.locate(path)
                 problems.append(SheetProblem(block, line, message, code=code))
+            for path, message, code in semantics.role_total_problems(
+                self.r.requirement, compiled.spec
+            ):
+                block, line = compiled.locate(path)
+                problems.append(SheetProblem(block, line, message, code=code))
             if self.iface is not None:
                 for path, message, code in semantics.scenario_literals(compiled.spec):
                     block, line = compiled.locate(path)
