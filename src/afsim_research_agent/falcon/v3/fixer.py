@@ -252,6 +252,7 @@ class SheetFixer:
         self.refused = 0
         self.refused_basis: tuple[Any, ...] | None = None  # the last change refused for a basis
         self.auto_basis = False
+        self.failed_calls: dict[str, int] = {}
         self.shown: dict[tuple[Any, ...], tuple[str, int]] = {}
         self.reads = 0  # consecutive show calls
         self.diagnosis: dict[str, Any] | None = None  # the plan edits must follow
@@ -890,6 +891,10 @@ class SheetFixer:
         """A structured edit (tools.structured) committed like an edit."""
         got = T.structured(self, op, args)
         if isinstance(got, str):
+            key = f"{op} {json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)}"
+            n = self.failed_calls[key] = self.failed_calls.get(key, 0) + 1
+            if n > 1:  # the same call again gets the same answer (r145: set_test x5)
+                got += f"\n（这个调用已经第 {n} 次得到同样的结果：不要再重复，按上面的说明换一种做法）"
             return self._refuse(f"{op} {json.dumps(args, ensure_ascii=False)[:200]}", got)
         return self.commit(got, reason, args)
 

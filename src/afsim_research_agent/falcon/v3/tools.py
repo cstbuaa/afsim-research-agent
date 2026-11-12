@@ -333,10 +333,10 @@ def entry_true_hint(fixer: Any, message: str) -> str:
         "改法方向（二选一）：1) 让条件读本状态动作执行之后才会变化的字段（who_writes 查谁写它）；"
         "2) 用树事件："
     )
-    if where:
-        decision = _decision_hint(fixer, *where)
-        if decision:
-            return decision
+    # _decision_hint (both exits as tree success / failure events, failure tests stubbed) is
+    # kept for set_test but no longer the ENTRY_TRUE advice: in round 5 (11-12) it turned
+    # sheets that the single success event had solved (r145, r170, r178) into L2 / L3
+    # failures, mostly through task expiry on re-attacks.
     if where:
         role, src, dst, cond = where
         result = _result_of(cond)
@@ -409,14 +409,22 @@ def _decision_hint(fixer: Any, role: str, src: str, dst: str, cond: str) -> str 
     return text
 
 
+def _vroot(data: Any) -> dict[str, Any]:
+    """The verification mapping: the block may wrap it in a top-level ``verification:``."""
+    if isinstance(data, dict) and isinstance(data.get("verification"), dict):
+        return data["verification"]
+    return data if isinstance(data, dict) else {}
+
+
 def _l2_tests_to(fixer: Any, role: str, state: str, dst: str) -> list[str]:
     block = fixer._block("verification")
     try:
         data = yaml.safe_load(block.text) if block is not None else None
     except yaml.YAMLError:
         return []
+    data = _vroot(data)
     out = []
-    for t in (data or {}).get("tests") or [] if isinstance(data, dict) else []:
+    for t in data.get("tests") or []:
         g, e = t.get("given") or {}, t.get("expect") or {}
         if g.get("role") == role and g.get("state") == state and e.get("next_state") == dst:
             out.append(str(t.get("id")))
@@ -697,8 +705,8 @@ def _verification_edit(
     if not str(a.get("because") or "").strip():
         return f"{op} 要带 because：引用需求原文，说明为什么原来的写法与需求不符"
     if op == "set_test":
-        return _set_test(data, a, texts)
-    scenarios = data.get("scenarios") if isinstance(data, dict) else None
+        return _set_test(fixer, data, a, texts)
+    scenarios = _vroot(data).get("scenarios")
     sid = str(a.get("scenario") or "").strip()
     sc = next((x for x in scenarios or [] if isinstance(x, dict) and x.get("id") == sid), None)
     if sc is None:
@@ -758,12 +766,28 @@ def _verification_edit(
     return texts
 
 
-def _set_test(data: Any, a: dict[str, Any], texts: dict[str, str]) -> dict[str, str] | str:
+def _set_test(
+    fixer: Any, data: Any, a: dict[str, Any], texts: dict[str, str]
+) -> dict[str, str] | str:
     """set_test: the stubbed action results (``actions``), blackboard values (``blackboard``)
-    or the expected next state (``next_state``) of one L2 test."""
+    or the expected next state (``next_state``) of one L2 test. A tactic-set subtree id in
+    ``actions`` stands for its actions (the test stubs action leaves only)."""
     from afsim_research_agent.ir.v2.sim.run import TestCase
 
-    tests = data.get("tests") if isinstance(data, dict) else None
+    if isinstance(a.get("actions"), dict):
+        acts: dict[str, Any] = {}
+        tactics = fixer.d.c.tactics
+        for k, v in a["actions"].items():
+            entry = tactics.get(str(k))
+            inner = (
+                ((entry.raw.get("uses") or {}).get("actions") or []) if entry is not None else []
+            )
+            if inner:
+                acts.update({str(x): v for x in inner})
+            else:
+                acts[str(k)] = v
+        a = a | {"actions": acts}
+    tests = _vroot(data).get("tests")
     tid = str(a.get("id") or "").strip()
     t = next((x for x in tests or [] if isinstance(x, dict) and x.get("id") == tid), None)
     if t is None:

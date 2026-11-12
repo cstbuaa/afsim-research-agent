@@ -430,3 +430,25 @@ def test_triage_sequence_strict_names_the_set_expectation_call():
     assert [f.symptom for f in found] == ["SEQUENCE_STRICT"]
     text = found[0].render()
     assert '"scenario": "main", "id": "leader_main", "kind": "visits_in_order"' in text
+
+
+def test_set_test_under_a_wrapped_verification_block_and_subtree_stubs(contracts: Contracts):
+    import yaml
+
+    from afsim_research_agent.ir.v2.sim.run import _stub_outcomes
+
+    body = SHEET.split("```yaml verification\n", 1)[1].split("```", 1)[0]
+    indented = "verification:\n" + "".join("  " + ln + "\n" for ln in body.splitlines())
+    fixer = _fixer(contracts, SHEET.replace(body, indented))
+    texts = T.structured(
+        fixer,
+        "set_test",
+        {"id": "sees_target", "actions": {"nav.goto": "failure"}, "because": "x"},
+    )
+    assert not isinstance(texts, str), texts
+    data = yaml.safe_load(texts["verification"])
+    assert data["verification"]["tests"][0]["given"]["actions"] == {"nav.goto": "failure"}
+    sub = next(t for t, e in contracts.tactics.items() if e.section == "subtrees")
+    inner = contracts.tactics[sub].raw.get("uses", {}).get("actions") or []
+    out = _stub_outcomes({sub: "failure"}, contracts)
+    assert all(out[a] == "failure" for a in inner)

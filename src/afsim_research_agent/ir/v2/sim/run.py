@@ -575,6 +575,20 @@ class _StubHost:
         return None
 
 
+def _stub_outcomes(actions: dict[str, Any], contracts: Contracts) -> dict[str, Any]:
+    """L2 stubs by action; a tactic-set subtree id stands for each of its actions (tests
+    wrote ``engagement.validate_engagement_authority: failure`` and the stub ignored it).
+    An action named itself wins over its subtree's entry."""
+    out: dict[str, Any] = {}
+    for k, v in actions.items():
+        entry = contracts.tactics.get(str(k))
+        inner = ((entry.raw.get("uses") or {}).get("actions") or []) if entry is not None else []
+        for x in inner:
+            out.setdefault(str(x), v)
+    out.update({k: v for k, v in actions.items() if k not in contracts.tactics})
+    return out
+
+
 def prepare_l2(
     model: dict[str, Any], contracts: Contracts, raw: dict[str, Any]
 ) -> tuple[TestCase, Instance] | str:
@@ -588,7 +602,12 @@ def prepare_l2(
     if g.role not in model["roles"]:
         return f"unknown role '{g.role}'"
     inst = Instance(
-        f"{g.role}_{g.instance}", g.role, g.instance, model, contracts, _StubHost(g.actions)
+        f"{g.role}_{g.instance}",
+        g.role,
+        g.instance,
+        model,
+        contracts,
+        _StubHost(_stub_outcomes(g.actions, contracts)),
     )
     if g.state not in inst.mission["states"]:
         return f"unknown state '{g.state}'"
