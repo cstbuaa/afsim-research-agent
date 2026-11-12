@@ -108,6 +108,9 @@ class FixStep(BaseModel):
         "attach_subtree",
         "rename",
         "use_tree_event",
+        "set_expectation",
+        "set_scenario",
+        "set_test",
     ]
     args: dict[str, Any] = Field(default_factory=dict)
 
@@ -199,6 +202,14 @@ RULES = """你在修正一份战术稿（v3）。每一步调用一个工具，�
 - rename {"kind": "trigger"|"condition"|"event"|"state", "old", "new"}：一次改完所有引用处。
 - use_tree_event {"role", "from", "to", "result": "success"|"failure", "old_trigger"} 或 {"items": [同上, …]}：
   一步完成"声明 from 状态的树事件 + 把这条转换改由它触发"（ENTRY_TRUE 的常用改法；items 一次改多处）。
+- set_expectation {"scenario": 想定 ID, "id": 期望 ID, "kind": "visits_in_order" 或 "set": {字段: 值}, "unset": [字段], "because": 引用需求原文}：
+  改 L3 想定的一个期望（如把完整序列 state_sequence 改成按顺序经过 visits_in_order、改 reaches / within_s / never）；
+  只在期望与需求不符时用，不能为了通过而改成与需求不符的期望。
+- set_scenario {"scenario": 想定 ID, "set": {"vehicles"|"hostiles"|"events"|"faults"|"environment": 新值}, "because"}：
+  改想定的站位、敌方、事件或故障（如车辆排成一线挡住射线时改成横向排开、故障时机晚于要检查的行为时提前）。
+- set_test {"id": L2 测试 ID, "actions": {动作: "success"|"failure"}, "blackboard": {…}, "next_state": 状态, "because"}：
+  改一个 L2 测试的给定（模拟的动作结果、黑板值）或期望的下一状态（例如判断状态改用树成功/失败事件后，
+  “无效 → HOLDING”的测试要把检查动作模拟为失败）。
 - edit {"changes": [{"block", "old": "原文片段", "new": "新文本"} 或 {"block", "text": "整块新内容"}]}：文本替换（兜底）；old 必须唯一。
 - try_edit {"op": 上面任一修改工具名, "args": {…}}：试改，只返回得分变化，不保存。
 - revert {"block": 块名} 或 {"step": 步数}：恢复一个块的初始内容，或撤销某一步及之后的修改。
@@ -216,6 +227,9 @@ RULES = """你在修正一份战术稿（v3）。每一步调用一个工具，�
 - 引用的战术集子树已经包含的动作，不要在并行分支里再写一遍（会争用同一独占资源）。
 - 不能删测试、想定和想定期望；期望与需求不符时可以改期望（带 because 引用需求原文），不能为了通过而改成与需求不符的期望。
 - 检查结果里有"定位与改法"时先照它处理；标为想定/判定误报/能力缺失的用 classify 记录，不要改稿件。
+- L1 通过后的 L2 / L3 失败，先 explain_check 看是稿件行为错了（卡住、缺出口、动作失败）还是测试写得不对
+  （期望过严、站位、事件时机）：前者改状态图和树，后者用 set_expectation / set_scenario / set_test；
+  不要再把条件逐个换成树事件（会让判断类测试失败）。
 - 修改没有达到预期时，先 explain_check 弄清原因再换改法；不要重复提交同样的修改。
 - 只给条件追加 time_in_state() 等待只会推迟出口：需求要求等待时才这样写，否则让条件读本状态动作写入的字段或用树事件。
 - 位置和路线只用 point=<接口点> / route=<接口路线>，不要写经纬度，也不要改成 latitude_deg 等参数。
@@ -313,11 +327,54 @@ class SheetFixer:
         """Rule findings for the failed checks: the 2D scenarios', and the AFSIM run's while
         its check is failed."""
         check = check or self.last
-        out = triage.from_check(check)
+        out = [self._unwritten_exit(f) for f in triage.from_check(check)]
         if any(s.get("afsim") and not s["passed"] for s in check.l3):
             note = getattr(self.d, "afsim_note", None)
             out += list(getattr(note, "findings", None) or [])
         return out
+
+    def _unwritten_exit(self, f: triage.Finding) -> triage.Finding:
+        """A STUCK finding: name the exit-condition fields that no action of the state
+        writes, with the actions that do and the subtrees that contain them (r102 / r110:
+        the leader waited in SEARCHING on track_sharing.fused_tracks.count, which only
+        update_fused_tracks writes, run in FUSING)."""
+        if f.symptom != "STUCK" or not f.role or not f.state:
+            return f
+        try:
+            runs = T.state_actions(self).get((f.role, f.state), set())
+        except Exception:  # noqa: BLE001 - a hint only
+            return f
+        conds = self._conditions()
+        notes = []
+        for t in triage._exits(getattr(self.last, "model", None), f.role, f.state):
+            expr = conds.get(str(t.get("on"))) or ""
+            for path in dict.fromkeys(re.findall(r"[a-z_]+(?:\.[a-z_0-9]+){2,}", expr)):
+                writers = [
+                    a.id
+                    for a in self.d.c.actions.values()
+                    if any(str(w.get("field")) == path for w in a.writes or ())
+                ]
+                if writers and not set(writers) & runs:
+                    subs = sorted(
+                        tid
+                        for tid, e in self.d.c.tactics.items()
+                        if e.section == "subtrees"
+                        and any(f'"{w}"' in json.dumps(e.raw) for w in writers)
+                    )[:3]
+                    notes.append(
+                        f"{t.get('on')} 读的 {path} 只由 {'、'.join(writers[:3])} 写入，{f.state} 的树里没有"
+                        + (
+                            f"（含它的子树：{'、'.join(subs)}，可用 attach_subtree 加到 {f.state}）"
+                            if subs
+                            else ""
+                        )
+                    )
+        if not notes:
+            return f
+        return triage.Finding(
+            "STUCK_UNWRITTEN", f.check, f.role, f.state, f.detail, f.blocks,
+            {"fields": "；".join(notes[:3])},
+        )  # fmt: skip
 
     def _triage_lines(self, check: Any) -> list[str]:
         found = self.findings(check)

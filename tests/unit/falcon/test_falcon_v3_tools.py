@@ -329,3 +329,104 @@ def test_triage_stuck_on_failing_actions_and_tree_events_are_not_enter_leave():
     assert [f.symptom for f in found] == ["STUCK_ACTION_FAILED"]
     text = found[0].render()
     assert "FRIENDLY_IN_LINE_OF_FIRE" in text and "side by side" in text
+
+
+def test_set_expectation_scenario_and_test_edit_the_verification_by_id(contracts: Contracts):
+    import yaml
+
+    fixer = _fixer(contracts)
+    assert "because" in T.structured(
+        fixer, "set_expectation", {"scenario": "cancel", "id": "shut", "set": {"within_s": 8}}
+    )
+    texts = T.structured(
+        fixer,
+        "set_expectation",
+        {"scenario": "cancel", "id": "shut", "set": {"within_s": 8}, "because": "需求：8 s 内"},
+    )
+    data = yaml.safe_load(texts["verification"])
+    exp = data["scenarios"][0]["expect"][0]
+    assert exp == {"id": "shut", "role": "scout", "reaches": "SHUTDOWN", "within_s": 8}
+    assert "没有想定 nope" in T.structured(
+        fixer, "set_expectation", {"scenario": "nope", "id": "shut", "because": "x"}
+    )
+    assert "不再检查任何内容" in T.structured(
+        fixer,
+        "set_expectation",
+        {"scenario": "cancel", "id": "shut", "unset": ["reaches"], "because": "x"},
+    )
+    texts = T.structured(
+        fixer,
+        "set_scenario",
+        {
+            "scenario": "cancel",
+            "set": {"events": [{"at_s": 5, "event": "cancelled"}]},
+            "because": "x",
+        },
+    )
+    assert yaml.safe_load(texts["verification"])["scenarios"][0]["events"][0]["at_s"] == 5
+    assert "只能改" in T.structured(
+        fixer, "set_scenario", {"scenario": "cancel", "set": {"expect": []}, "because": "x"}
+    )
+    texts = T.structured(
+        fixer,
+        "set_test",
+        {"id": "sees_target", "actions": {"nav.goto": "failure"}, "because": "无效时检查失败"},
+    )
+    test = yaml.safe_load(texts["verification"])["tests"][0]
+    assert test["given"]["actions"] == {"nav.goto": "failure"}
+    assert test["given"]["blackboard"] == {"sense.target.valid": True}
+    # committed like any change; the counts of tests / scenarios / expectations stay
+    fixer.step = 1
+    out = fixer.apply(
+        "set_expectation",
+        {"scenario": "cancel", "id": "shut", "set": {"within_s": 8}, "because": "需求：8 s 内"},
+        "改时限",
+    )
+    assert out.startswith("已修改"), out
+
+
+def test_a_judging_state_gets_both_tree_events_and_its_failure_test_stubbed(contracts: Contracts):
+    sheet = (
+        SHEET.replace(
+            "  MOVE --> OBSERVE : target_seen\n",
+            "  MOVE --> OBSERVE : target_seen\n  MOVE --> DONE : no_target\n",
+        )
+        .replace(
+            "target_seen = sense.target.valid\n",
+            "target_seen = sense.target.valid\nno_target = not sense.target.valid\n",
+        )
+        .replace(
+            "  - id: sees_target\n",
+            "  - id: no_target_done\n"
+            "    given: {role: scout, state: MOVE, blackboard: {sense.target.valid: false}}\n"
+            "    expect: {next_state: DONE}\n"
+            "  - id: sees_target\n",
+        )
+    )
+    fixer = _fixer(contracts, sheet)
+    hint = T._decision_hint(fixer, "scout", "MOVE", "DONE", "no_target")
+    assert hint is not None and "判断状态" in hint
+    assert (
+        '"to": "OBSERVE", "result": "success"' in hint
+        and '"to": "DONE", "result": "failure"' in hint
+    )
+    assert 'set_test {"id": "no_target_done"' in hint and '"failure"' in hint
+
+
+def test_triage_sequence_strict_names_the_set_expectation_call():
+    from afsim_research_agent.falcon.v3 import triage
+
+    entry = {
+        "id": "main",
+        "passed": False,
+        "duration_s": 30,
+        "render": "scenario main: FAIL\n  [FAIL] leader_main: visited ['A', 'B', 'A', 'B'], "
+        "expected ['A', 'B'] (state_sequence is the whole visit sequence; to check only "
+        "that these states come in this order write visits_in_order)",
+        "states": {},
+        "transitions": {},
+    }
+    found = triage.from_scenario(entry, {"roles": {}}, {"scenarios": [{"id": "main"}]})
+    assert [f.symptom for f in found] == ["SEQUENCE_STRICT"]
+    text = found[0].render()
+    assert '"scenario": "main", "id": "leader_main", "kind": "visits_in_order"' in text

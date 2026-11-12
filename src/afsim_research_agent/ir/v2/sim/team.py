@@ -45,8 +45,8 @@ WEAPONS = (  # default weapon fit (option ``weapons`` replaces it)
 CODE_HINTS = {
     "FRIENDLY_IN_LINE_OF_FIRE": (
         f"a friendly vehicle is within {LINE_OF_FIRE_M:g} m of the line to the target: place "
-        "the vehicles side by side across the direction of the target, or give the state a "
-        "way out when the fire check fails"
+        "the vehicles side by side across the direction of the target (set_scenario vehicles), "
+        "or give the state a way out when the fire check fails"
     ),
     "TASK_EXPIRED": (
         f"an assignment is valid {TASK_LIFE_S:g} s from the leader's send: the leader must "

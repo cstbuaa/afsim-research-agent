@@ -571,7 +571,9 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
                         f"state_trees.{role}.{st}",
                         f"ROLE_COUNT 模型只有 {count} 辆车，角色 {role} 状态 {st} 的树要求至少 "
                         f"{card.min_vehicles} 辆（用到 {what}，要指挥或等待其他车辆）：它会一直"
-                        "等其他车辆，单车用不了。单车改用机动、感知等单车能力"
+                        "等其他车辆，单车用不了。需求本身要求多辆车（编队、僚车）时，错在 model 的 "
+                        "roles（车辆数或缺僚车角色），这是起草错误，不要逐个状态改成单车：用 "
+                        "ask_human 说明需要重新起草；需求确实只有一辆车时，单车改用机动、感知等单车能力"
                         "（如前出用 movement.follow_route，到达用它的树完成事件）",
                         "ROLE_COUNT",
                     )

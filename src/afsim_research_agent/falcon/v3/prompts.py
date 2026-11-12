@@ -163,7 +163,15 @@ scenarios:        # L3 二维仿真：平面坐标（米），x 向东、y 向�
   除非这个想定就是要测故障下的收尾。
 - 出发位置、路线、车辆位置和敌方基准位置由想定绑定给出（见"想定绑定"）：environment 只写 duration_s
   和 step_s，不写 origin_deg 和 routes，不写 vehicles；hostiles 省略时按绑定放置敌方，hostiles: [] 表示没有敌方，需要制造目标
-  出现、丢失、移动时再写 hostiles（平面坐标以出发位置为原点，米，x 向东、y 向北）。"""
+  出现、丢失、移动时再写 hostiles（平面坐标以出发位置为原点，米，x 向东、y 向北）。
+- 有周期性重复（定时再评估、重发任务、补攻）的角色，期望用 visits_in_order 或 reaches，不用
+  state_sequence（重复会让完整序列多出循环）。
+- 用交战（engagement）时想定写了 vehicles，多车横向排开（与敌方方向垂直，间隔 ≥ 50 m），不要和目标排成一线：射线 30 m
+  内有友车不能开火。
+- 判断状态（如校验任务：有效 → 继续，无效 → 保持）的两个出口都要有；对应的测试用 actions 把检查动作
+  模拟成 success / failure，而不是只改黑板。
+- 用威胁分配（threat_allocation）周期下发任务时，重发间隔要短于任务有效期（自下发起 3 s），否则成员
+  校验时任务已过期。"""
 
 EXAMPLE = """示例（虚构能力集）：
 ```yaml model

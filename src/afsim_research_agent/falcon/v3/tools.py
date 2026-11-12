@@ -41,6 +41,9 @@ WRITE_TOOLS = (
     "attach_subtree",
     "rename",
     "use_tree_event",
+    "set_expectation",
+    "set_scenario",
+    "set_test",
 )
 READ_TOOLS = ("explain_check", "eval_condition", "who_writes", "history")
 
@@ -331,6 +334,10 @@ def entry_true_hint(fixer: Any, message: str) -> str:
         "2) 用树事件："
     )
     if where:
+        decision = _decision_hint(fixer, *where)
+        if decision:
+            return decision
+    if where:
         role, src, dst, cond = where
         result = _result_of(cond)
         name = f"{src.lower()}_tree_{'failed' if result == 'failure' else 'done'}"
@@ -357,6 +364,63 @@ def entry_true_hint(fixer: Any, message: str) -> str:
     else:
         head += "declare_event 声明 source: tree 的事件，再用 set_trigger 把这条转换的触发改成它"
     return head + "。只追加 time_in_state() 等待只是推迟出口，测试期望立即转出时会失败"
+
+
+def _decision_hint(fixer: Any, role: str, src: str, dst: str, cond: str) -> str | None:
+    """A judging state (task valid → go on, invalid → HOLDING): both exits read what the
+    state's check decides, so the pair becomes the tree's success and failure events, and
+    the L2 tests of the failure exit stub the check as failing. Switching only one exit to
+    the success event made the invalid-task tests fail (r114, r139, r156, round 4)."""
+    got = _mermaid(fixer, role)
+    if isinstance(got, str):
+        return None
+    conds = fixer._conditions()
+    exits = [t for t in _transitions(got[1]) if t[1] == src and t[3] in conds]
+    neg = [t for t in exits if NEGATIVE.search(str(t[3]))]
+    pos = [t for t in exits if not NEGATIVE.search(str(t[3]))]
+    if len(neg) != 1 or len(pos) != 1:
+        return None
+    (_, _, fdst, fcond), (_, _, sdst, scond) = neg[0], pos[0]
+    items = [
+        {"role": role, "from": src, "to": sdst, "result": "success", "old_trigger": scond},
+        {"role": role, "from": src, "to": fdst, "result": "failure", "old_trigger": fcond},
+    ]
+    text = (
+        f"{src} 是判断状态（{scond} → {sdst}，{fcond} → {fdst}）：两个出口都取决于本状态检查的结果，"
+        "进入时字段还是初值。改法：成功出口用树成功事件、失败出口用树失败事件，一步完成："
+        f'use_tree_event {{"items": {json.dumps(items, ensure_ascii=False)}}}'
+    )
+    tests = _l2_tests_to(fixer, role, src, fdst)
+    if tests:
+        model = getattr(fixer.last, "model", None) or {}
+        tree = (((model.get("roles") or {}).get(role) or {}).get("states") or {}).get(src, {})
+        from afsim_research_agent.falcon.v3.triage import _actions
+
+        acts = [str(x.get("action")) for x in _actions(tree.get("tree")) if x.get("action")]
+        stub = {acts[0]: "failure"} if acts else {"<本状态的检查动作>": "failure"}
+        text += (
+            f"；之后 L2 测试 {', '.join(tests)} 要把本状态的检查动作模拟为失败（树失败才会走 {fdst}）："
+            + "；".join(
+                f'set_test {{"id": "{t}", "actions": {json.dumps(stub, ensure_ascii=False)}, '
+                '"because": "无效时检查动作失败，树失败事件转出"}'
+                for t in tests[:3]
+            )
+        )
+    return text
+
+
+def _l2_tests_to(fixer: Any, role: str, state: str, dst: str) -> list[str]:
+    block = fixer._block("verification")
+    try:
+        data = yaml.safe_load(block.text) if block is not None else None
+    except yaml.YAMLError:
+        return []
+    out = []
+    for t in (data or {}).get("tests") or [] if isinstance(data, dict) else []:
+        g, e = t.get("given") or {}, t.get("expect") or {}
+        if g.get("role") == role and g.get("state") == state and e.get("next_state") == dst:
+            out.append(str(t.get("id")))
+    return out
 
 
 NEGATIVE = re.compile(
@@ -611,6 +675,121 @@ def _cond_span(lines: list[str], name: str) -> tuple[int, int] | None:
     return None
 
 
+SCENARIO_PARTS = ("description", "environment", "vehicles", "hostiles", "events", "faults")
+
+
+def _verification_edit(
+    fixer: Any, op: str, a: dict[str, Any], texts: dict[str, str]
+) -> dict[str, str] | str:
+    """set_expectation / set_scenario: change one expectation of an L3 scenario, or parts
+    of a scenario (vehicles, hostiles, events, faults), by id instead of a text edit. Each
+    change is validated with the 2D models' own schema; a change to what is expected needs
+    a because that cites the requirement (tests are not bent to the sheet)."""
+    from afsim_research_agent.ir.v2.sim.run import Expectation, Scenario
+
+    cur = texts.get("verification")
+    if cur is None:
+        return "没有 verification 块"
+    try:
+        data = yaml.safe_load(cur) or {}
+    except yaml.YAMLError as exc:
+        return f"verification 块不是合法的 YAML：{exc}"
+    if not str(a.get("because") or "").strip():
+        return f"{op} 要带 because：引用需求原文，说明为什么原来的写法与需求不符"
+    if op == "set_test":
+        return _set_test(data, a, texts)
+    scenarios = data.get("scenarios") if isinstance(data, dict) else None
+    sid = str(a.get("scenario") or "").strip()
+    sc = next((x for x in scenarios or [] if isinstance(x, dict) and x.get("id") == sid), None)
+    if sc is None:
+        ids = [x.get("id") for x in scenarios or [] if isinstance(x, dict)]
+        return f"没有想定 {sid or '（未写 scenario）'}；现有：{ids}"
+    changes = a.get("set") if isinstance(a.get("set"), dict) else {}
+    if op == "set_expectation":
+        eid = str(a.get("id") or "").strip()
+        exp = next(
+            (e for e in sc.get("expect") or [] if isinstance(e, dict) and e.get("id") == eid), None
+        )
+        if exp is None:
+            ids = [e.get("id") for e in sc.get("expect") or [] if isinstance(e, dict)]
+            return f"想定 {sid} 没有期望 {eid or '（未写 id）'}；现有：{ids}"
+        new = dict(exp)
+        kind = str(a.get("kind") or "").strip()
+        if kind == "visits_in_order" and new.get("state_sequence") is not None:
+            new["visits_in_order"] = new.pop("state_sequence")
+        elif kind:
+            return 'kind 目前只支持 "visits_in_order"（把完整序列改成按顺序经过）'
+        for k, v in changes.items():
+            if k in ("id", "role"):
+                return f"不能改期望的 {k}"
+            new[k] = v
+        for k in a.get("unset") or []:
+            new.pop(str(k), None)
+        if new == exp:
+            return "期望没有变化"
+        if not any(
+            new.get(k) is not None
+            for k in ("state_sequence", "visits_in_order", "final_state", "reaches", "never")
+        ):
+            return "改完后这个期望不再检查任何内容；不能这样删掉期望"
+        try:
+            Expectation.model_validate(new)
+        except Exception as exc:  # noqa: BLE001 - pydantic's message names the field
+            return f"期望写法不对：{str(exc)[:400]}"
+        exp.clear()
+        exp.update(new)
+        what = f"想定 {sid} 的期望 {eid} 已改为 {json.dumps(new, ensure_ascii=False)}"
+    else:
+        bad = [k for k in changes if k not in SCENARIO_PARTS]
+        if bad or not changes:
+            return f"set_scenario 的 set 只能改 {list(SCENARIO_PARTS)}（不能改 id 和 expect）"
+        new = dict(sc) | changes
+        try:
+            Scenario.model_validate(new)
+        except Exception as exc:  # noqa: BLE001
+            return f"想定写法不对：{str(exc)[:400]}"
+        sc.clear()
+        sc.update(new)
+        what = f"想定 {sid} 的 {', '.join(changes)} 已修改"
+    texts["verification"] = yaml.safe_dump(
+        data, allow_unicode=True, sort_keys=False, default_flow_style=None, width=1000
+    ).rstrip()
+    texts["_note"] = what
+    return texts
+
+
+def _set_test(data: Any, a: dict[str, Any], texts: dict[str, str]) -> dict[str, str] | str:
+    """set_test: the stubbed action results (``actions``), blackboard values (``blackboard``)
+    or the expected next state (``next_state``) of one L2 test."""
+    from afsim_research_agent.ir.v2.sim.run import TestCase
+
+    tests = data.get("tests") if isinstance(data, dict) else None
+    tid = str(a.get("id") or "").strip()
+    t = next((x for x in tests or [] if isinstance(x, dict) and x.get("id") == tid), None)
+    if t is None:
+        return f"没有 L2 测试 {tid or '（未写 id）'}；现有：{[x.get('id') for x in tests or [] if isinstance(x, dict)]}"
+    new = json.loads(json.dumps(t))
+    given = new.setdefault("given", {})
+    for key in ("actions", "blackboard"):
+        if isinstance(a.get(key), dict):
+            given[key] = dict(given.get(key) or {}) | a[key]
+    if a.get("next_state"):
+        new.setdefault("expect", {})["next_state"] = str(a["next_state"])
+    if new == t:
+        return 'set_test 要写 "actions"、"blackboard" 或 "next_state" 中至少一项（且与现在不同）'
+    try:
+        TestCase.model_validate(new)
+    except Exception as exc:  # noqa: BLE001
+        return f"测试写法不对：{str(exc)[:400]}"
+    t.clear()
+    t.update(new)
+    texts["verification"] = yaml.safe_dump(
+        data, allow_unicode=True, sort_keys=False, default_flow_style=None, width=1000
+    ).rstrip()
+    texts["_note"] = f"L2 测试 {tid} 已改为 {json.dumps(new, ensure_ascii=False)[:300]}"
+    return texts
+
+
 def _use_tree_event(fixer: Any, a: dict[str, Any]) -> dict[str, str] | str:
     """declare_event (a tree event of the source state) and set_trigger on its transition in
     one step, for one transition or several (``items``): the usual ENTRY_TRUE fix took two
@@ -663,6 +842,11 @@ def _use_tree_event(fixer: Any, a: dict[str, Any]) -> dict[str, str] | str:
     finally:
         fixer.d.blocks = saved
     out["_note"] = "；".join(done)
+    if getattr(fixer.last, "l1_ok", False):
+        out["_note"] += (
+            "。注意：L1 已经通过；把条件换成树事件常会让判断类 L2 测试失败，L2 / L3 的失败先用 "
+            "explain_check 看原因"
+        )
     return out
 
 
@@ -836,6 +1020,8 @@ def structured(fixer: Any, op: str, a: dict[str, Any]) -> dict[str, str] | str:
         return texts
     if op == "use_tree_event":
         return _use_tree_event(fixer, a)
+    if op in ("set_expectation", "set_scenario", "set_test"):
+        return _verification_edit(fixer, op, a, texts)
     if op in ("set_state_tree", "attach_subtree"):
         role, state = str(a.get("role") or "").strip(), str(a.get("state") or "").strip()
         key = f"pytree:{role}"

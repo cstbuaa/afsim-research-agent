@@ -143,6 +143,8 @@ class SimResult:
     completions: list[tuple[float, str, str]] = field(default_factory=list)
     # instance → failed leaves (time, state, action, failure code), first of each run
     failures: dict[str, list[tuple[float, str, str, str]]] = field(default_factory=dict)
+    # "action CODE" → what the contract says that failure code means (its result.codes)
+    code_notes: dict[str, str] = field(default_factory=dict)
     # positions every update (x east, y north, m), own vehicles "blue", hostiles "red":
     # effect obligations (ir.v2.effects) can be judged on them
     tracks: Any = None
@@ -176,8 +178,9 @@ class SimResult:
                     continue
                 seen.add((state, action, code))
                 parts.append(f"{action} {code} @{t:g}s ({state})")
-                if code in CODE_HINTS and CODE_HINTS[code] not in hints:
-                    hints.append(CODE_HINTS[code])
+                note = self.code_notes.get(f"{action} {code}") or CODE_HINTS.get(code)
+                if note and note not in hints:
+                    hints.append(note)
             out.append(
                 f"  {name} stayed in {last} from {since:g}s; failed leaves: "
                 + ", ".join(parts[:4])
@@ -228,6 +231,7 @@ class SimHost:
         self.activations: list[tuple[float, str, str]] = []
         self.completions: list[tuple[float, str, str]] = []
         self.failures: dict[str, list[tuple[float, str, str, str]]] = {}
+        self.code_notes: dict[str, str] = {}
         self._last: dict[tuple[str, str], tuple[str, str | None]] = {}
 
     def _context(self, inst: Instance, leaf: dict[str, Any], options: dict[str, Any]):
@@ -282,6 +286,10 @@ class SimHost:
             # first of a run, so earlier causes are not pushed out of the window
             if not any(r[1:] == row for r in rows[-12:]):
                 rows.append((now, *row))
+            contract = self.c.actions.get(action)
+            codes = ((contract.result or {}).get("codes") or {}) if contract is not None else {}
+            if isinstance(codes, dict) and row[2] in codes:
+                self.code_notes[f"{action} {row[2]}"] = str(codes[row[2]])
         self._last[key] = (status, code)
         return status, code
 
@@ -416,6 +424,7 @@ def simulate(
     result.activations = list(host.activations)
     result.completions = list(host.completions)
     result.failures = {k: v[-40:] for k, v in host.failures.items()}
+    result.code_notes = dict(host.code_notes)
     result.step_s = env.step_s
     result.duration_s = env.duration_s
     result.dropped = set(host.dropped)

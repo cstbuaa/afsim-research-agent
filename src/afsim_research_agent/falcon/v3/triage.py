@@ -23,6 +23,7 @@ feedback.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -68,8 +69,8 @@ MANUAL: dict[str, Symptom] = {
             MODEL,
             "停在非终止状态直到结束",
             "离开它的触发在运行中从未成立：条件读的字段没有被本角色的动作写入，或猜错了字段取值",
-            "让 {state} 的出口改用本状态树完成事件（events 加 `{state_l}_done: {{source: tree,"
-            " result: success}}`），或改读本状态动作写入的字段；出口条件：{exits}",
+            "让 {state} 的出口条件改读本状态动作写入的字段（who_writes 查谁写它），"
+            "或在本状态的树真正会结束时改用树完成事件（use_tree_event）；出口条件：{exits}",
         ),
         Symptom(
             "STUCK_ACTION_FAILED",
@@ -79,6 +80,22 @@ MANUAL: dict[str, Symptom] = {
             "不要改出口条件或换成树完成事件：让前提成立（在前一个状态先做检查、改想定站位等），"
             '或给 {state} 加一条失败出口（use_tree_event {{"role": "{role}", "from": "{state}", '
             '"to": 保持/等待状态, "result": "failure"}}，需先 add_transition 加这条转换）',
+        ),
+        Symptom(
+            "STUCK_UNWRITTEN",
+            MODEL,
+            "停在非终止状态直到结束，出口条件读的字段在这个状态里没有动作会写",
+            "{fields}",
+            "把写这个字段的动作或子树加到这个状态的树里（attach_subtree），或改成读本状态动作会写的字段",
+        ),
+        Symptom(
+            "SEQUENCE_STRICT",
+            TEST,
+            "期望写成了完整状态序列，实际按顺序经过了这些状态，只是多出了循环或重复",
+            "state_sequence 要求整个访问序列完全一致；周期性再评估、补攻等循环会让序列更长",
+            '需求没有要求“只走一遍”时，把期望改成按顺序经过：set_expectation {{"scenario": '
+            '"{scenario}", "id": "{expectation}", "kind": "visits_in_order", '
+            '"because": 引用需求原文}}；不要为此改模型',
         ),
         Symptom(
             "STUCK_NO_EXIT",
@@ -365,6 +382,13 @@ def from_scenario(entry: dict[str, Any], model: dict[str, Any] | None, spec: dic
         {},
     )  # fmt: skip
     sent = {str(e.get("event")) for e in scenario.get("events") or [] if isinstance(e, dict)}
+    for line in str(entry.get("render") or "").splitlines():
+        m = re.search(r"\[FAIL\] (\S+): visited .*state_sequence is the whole visit sequence", line)
+        if m:
+            out.append(
+                Finding("SEQUENCE_STRICT", sid, detail=m.group(1), blocks=["verification"],
+                        values={"scenario": sid, "expectation": m.group(1)})
+            )  # fmt: skip
     for name, moves in (entry.get("transitions") or {}).items():
         role, _ = _role_of(name)
         for a, b in zip(moves, moves[1:], strict=False):
@@ -392,7 +416,12 @@ def from_scenario(entry: dict[str, Any], model: dict[str, Any] | None, spec: dic
         if fails:
             from afsim_research_agent.ir.v2.sim.team import CODE_HINTS
 
-            hints = [CODE_HINTS[c] for c in dict.fromkeys(f[3] for f in fails) if c in CODE_HINTS]
+            notes = entry.get("code_notes") or {}
+            hints = list(
+                dict.fromkeys(
+                    n for f in fails if (n := notes.get(f"{f[2]} {f[3]}") or CODE_HINTS.get(f[3]))
+                )
+            )
             out.append(
                 Finding(
                     "STUCK_ACTION_FAILED", sid, role, state, f"{t:g} s 起一直停在 {state}",

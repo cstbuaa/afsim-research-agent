@@ -247,18 +247,41 @@ class V3Result:
         return {"draft_valid": 0, UNVERIFIED: 4, "needs_capability": 5}.get(self.status, 3)
 
 
-def _uncovered(o: Any, after: dict[str, dict[str, set[str]]]) -> str:
+def _uncovered(
+    o: Any, after: dict[str, dict[str, set[str]]], contracts: Any = None, model: Any = None
+) -> str:
     """The coverage note of an obligation no scenario judged. A response whose action no
     state after the event runs cannot be covered by a scenario: the response states must
-    run it (or the obligation does not apply)."""
+    run it (or the obligation does not apply); the note names the states and the subtrees
+    that contain the action, as a ready attach_subtree call (r172 / r179 only looked)."""
     head = f"  [FAIL] 需求约束 {o.id}（{o.description or o.kind}）"
     if o.kind == "response" and o.on_event and o.action and after:
         if not any(o.action in per.get(str(o.on_event), set()) for per in after.values()):
-            return (
+            text = (
                 head
                 + f"无法被想定覆盖：外部事件 {o.on_event} 之后进入的状态（及其后的状态）都不运行 "
                 f"{o.action}；在响应这个事件的状态树里加入它（或含有它的战术）"
             )
+            subs = sorted(
+                tid
+                for tid, t in (getattr(contracts, "tactics", None) or {}).items()
+                if t.section == "subtrees" and f'"{o.action}"' in json.dumps(t.raw)
+            )
+            targets = [
+                (role, str(t.get("to")))
+                for role, r in ((model or {}).get("roles") or {}).items()
+                for t in ((r.get("mission") or {}).get("transitions") or [])
+                + ((r.get("mission") or {}).get("global") or [])
+                if str(t.get("on")) == str(o.on_event)
+            ]
+            if subs and targets:
+                role, state = targets[0]
+                text += (
+                    f'，例如 attach_subtree {{"role": "{role}", "state": "{state}", '
+                    f'"subtree": "{subs[0]}", "position": "start"}}'
+                    + (f"（含 {o.action} 的子树：{', '.join(subs[:4])}）" if len(subs) > 1 else "")
+                )
+            return text
     return (
         head
         + "没有被任何想定覆盖：在 verification 中加一个会出现它的前提的想定"
@@ -480,6 +503,7 @@ class Drafter:
                         "states": {k: [list(x) for x in v] for k, v in res.states.items()},
                         "transitions": res.transitions,
                         "failures": {k: [list(x) for x in v] for k, v in res.failures.items()},
+                        "code_notes": dict(res.code_notes),
                         "duration_s": float(
                             ((raw.get("environment") or {}).get("duration_s")) or 0.0
                         ),
@@ -535,7 +559,7 @@ class Drafter:
                         "id": "obligation_coverage",
                         "passed": False,
                         "render": "obligation_coverage: FAIL\n"
-                        + "\n".join(_uncovered(o, after) for o in missing),
+                        + "\n".join(_uncovered(o, after, self.c, model) for o in missing),
                         "obligations": [],
                         "states": {},
                         "transitions": {},

@@ -143,6 +143,10 @@ async def run_one(
             "edits": len(outcome.edits),
             "actions": dict(acts),
             "parse_errors": acts.get("error", 0),
+            # the model has fewer vehicles than its states need (often hidden behind the first
+            # L1 problem): a drafting error, reported apart from the repair rate
+            "role_count": any("ROLE_COUNT 模型只有" in str(r.get("result")) for r in outcome.log)
+            or any(getattr(p, "code", "") == "ROLE_COUNT" for p in end.problems),
             "first_error": next(
                 (r["result"][:160] for r in outcome.log if r["action"] == "error"), ""
             ),
@@ -174,6 +178,8 @@ def summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "afsim_first": _rate([r for r in ok if "afsim_rounds" in r], "afsim_first"),
         "afsim_final": _rate([r for r in ok if "afsim_rounds" in r], "afsim_final"),
         "solved_with_afsim": _rate(ok, "afsim_final"),
+        "role_count": sum(bool(r.get("role_count")) for r in ok),
+        "solved_without_role_count": _rate([r for r in ok if not r.get("role_count")], "solved"),
         "actions": dict(sum((Counter(r["actions"]) for r in ok), Counter())),
     }
 
