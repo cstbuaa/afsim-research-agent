@@ -834,8 +834,23 @@ def _set_test(
 def _use_tree_event(fixer: Any, a: dict[str, Any]) -> dict[str, str] | str:
     """declare_event (a tree event of the source state) and set_trigger on its transition in
     one step, for one transition or several (``items``): the usual ENTRY_TRUE fix took two
-    steps per state, and sheets with many such states ran out of steps (r116, 11-12)."""
+    steps per state, and sheets with many such states ran out of steps (r116, 11-12).
+    Only for L1's ENTRY_TRUE problems: once L1 passes, it was still the most used tool on 17
+    of the sheets one L3 item short (6+ calls each) and broke judging-state tests."""
     from afsim_research_agent.falcon.v3.fixer import _rebuild
+
+    last = fixer.last
+    if getattr(last, "l1_ok", False) and not any(
+        "ENTRY_TRUE" in p.message for p in getattr(last, "problems", None) or []
+    ):
+        first = first_failure(fixer)
+        return (
+            "use_tree_event 只用于 L1 的 ENTRY_TRUE 问题；L1 已经通过，现在的失败项要按原因改："
+            "缺出口用 add_transition，缺动作用 attach_subtree / set_state_tree，期望或想定不对用 "
+            "set_expectation / set_scenario / set_test。确实要让一条转换等树结束，用 declare_event 再 "
+            "set_trigger。"
+            + (f"\n第一个未通过项的解释：\n{explain_check(fixer, first)}" if first else "")
+        )
 
     items = a.get("items") if isinstance(a.get("items"), list) else [a]
     saved = fixer.d.blocks
@@ -883,11 +898,6 @@ def _use_tree_event(fixer: Any, a: dict[str, Any]) -> dict[str, str] | str:
     finally:
         fixer.d.blocks = saved
     out["_note"] = "；".join(done)
-    if getattr(fixer.last, "l1_ok", False):
-        out["_note"] += (
-            "。注意：L1 已经通过；把条件换成树事件常会让判断类 L2 测试失败，L2 / L3 的失败先用 "
-            "explain_check 看原因"
-        )
     return out
 
 

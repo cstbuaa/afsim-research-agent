@@ -248,7 +248,11 @@ class V3Result:
 
 
 def _uncovered(
-    o: Any, after: dict[str, dict[str, set[str]]], contracts: Any = None, model: Any = None
+    o: Any,
+    after: dict[str, dict[str, set[str]]],
+    contracts: Any = None,
+    model: Any = None,
+    capable: dict[str, set[str]] | None = None,
 ) -> str:
     """The coverage note of an obligation no scenario judged. A response whose action no
     state after the event runs cannot be covered by a scenario: the response states must
@@ -263,10 +267,20 @@ def _uncovered(
                 f"{o.action}；在响应这个事件的状态树里加入它（或含有它的战术）"
             )
             subs = sorted(
-                tid
-                for tid, t in (getattr(contracts, "tactics", None) or {}).items()
-                if t.section == "subtrees" and f'"{o.action}"' in json.dumps(t.raw)
+                (
+                    tid
+                    for tid, t in (getattr(contracts, "tactics", None) or {}).items()
+                    if t.section == "subtrees" and f'"{o.action}"' in json.dumps(t.raw)
+                ),
+                # a shutdown / cease-fire subtree first, then the smallest (r172: the first
+                # by name was a re-attack subtree)
+                key=lambda tid: (
+                    not any(w in tid for w in ("shutdown", "cease", "safe", "stop", "hold")),
+                    len(json.dumps(contracts.tactics[tid].raw)),
+                    tid,
+                ),
             )
+            family = str(o.action).split(".", 1)[0] + "."
             targets = [
                 (role, str(t.get("to")))
                 for role, r in ((model or {}).get("roles") or {}).items()
@@ -274,6 +288,9 @@ def _uncovered(
                 + ((r.get("mission") or {}).get("global") or [])
                 if str(t.get("on")) == str(o.on_event)
             ]
+            # the role that runs the action's slice (the members fire, not the leader)
+            runs = {n.rsplit("_", 1)[0]: acts for n, acts in (capable or {}).items()}
+            targets.sort(key=lambda rt: not any(a.startswith(family) for a in runs.get(rt[0], ())))
             if subs and targets:
                 role, state = targets[0]
                 text += (
@@ -564,7 +581,7 @@ class Drafter:
                         "id": "obligation_coverage",
                         "passed": False,
                         "render": "obligation_coverage: FAIL\n"
-                        + "\n".join(_uncovered(o, after, self.c, model) for o in missing),
+                        + "\n".join(_uncovered(o, after, self.c, model, capable) for o in missing),
                         "obligations": [],
                         "states": {},
                         "transitions": {},

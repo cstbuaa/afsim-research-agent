@@ -246,7 +246,20 @@ def test_hints_in_the_check_result_and_the_prompt(contracts: Contracts):
 
 
 def test_use_tree_event_declares_and_switches_in_one_step(contracts: Contracts):
+    import dataclasses
+
+    from afsim_research_agent.falcon.sheet.blocks import SheetProblem
+
     fixer = _fixer(contracts)
+    # L1 passes: only for ENTRY_TRUE problems, refused with the way forward
+    refused = T.structured(
+        fixer, "use_tree_event", {"role": "scout", "from": "SHUTDOWN", "to": "DONE"}
+    )
+    assert isinstance(refused, str) and "只用于 L1 的 ENTRY_TRUE" in refused
+    fixer.last = dataclasses.replace(
+        fixer.last,
+        problems=[SheetProblem("mermaid:scout", None, "ENTRY_TRUE x", code="ENTRY_TRUE")],
+    )
     texts = T.structured(
         fixer, "use_tree_event", {"role": "scout", "from": "SHUTDOWN", "to": "DONE"}
     )
@@ -465,3 +478,22 @@ def test_role_total_needs_as_many_own_vehicles_as_the_requirement():
     assert not R("发现敌方三辆坦克后报告", one)
     assert not R("敌方 3 辆车组成编队，我车观察", one)
     assert not R("单车前出观察，发现目标编队后报告", one)
+
+
+def test_the_loop_drafts_a_missing_verification_block_once_l1_passes(contracts: Contracts):
+    from afsim_research_agent.falcon.llm import ModelRunner, ScriptedModel
+
+    body = SHEET.split("```yaml verification\n", 1)[1].split("```", 1)[0]
+    bare = SHEET.replace("```yaml verification\n" + body + "```", "")
+    drafter = _fix_drafter(contracts, bare)
+    model = ScriptedModel(
+        {
+            "v3:verification": [{"text": "```yaml verification\n" + body + "```"}],
+            "v3": [{"text": "```yaml verification\n" + body + "```"}],
+            "fix:v3:step": [{"action": "finish", "args": {"summary": "ok"}}],
+        }
+    )
+    outcome = asyncio.run(fix_sheet(drafter, ModelRunner(model), max_steps=4))
+    assert outcome.log[0]["action"] == "draft_verification", outcome.log[0]
+    assert "已按验证阶段补写" in outcome.log[0]["result"]
+    assert any(b.kind == "verification" for b in drafter.blocks)

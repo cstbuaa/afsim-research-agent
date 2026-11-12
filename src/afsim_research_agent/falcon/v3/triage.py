@@ -70,7 +70,7 @@ MANUAL: dict[str, Symptom] = {
             "停在非终止状态直到结束",
             "离开它的触发在运行中从未成立：条件读的字段没有被本角色的动作写入，或猜错了字段取值",
             "让 {state} 的出口条件改读本状态动作写入的字段（who_writes 查谁写它），"
-            "或在本状态的树真正会结束时改用树完成事件（use_tree_event）；出口条件：{exits}",
+            "或在本状态的树真正会结束时让出口等树完成事件（declare_event 再 set_trigger）；出口条件：{exits}",
         ),
         Symptom(
             "STUCK_ACTION_FAILED",
@@ -78,8 +78,8 @@ MANUAL: dict[str, Symptom] = {
             "停在非终止状态直到结束，状态树里的动作一直失败",
             "动作的前提不满足：{fails}{hints}",
             "不要改出口条件或换成树完成事件：让前提成立（在前一个状态先做检查、改想定站位等），"
-            '或给 {state} 加一条失败出口（use_tree_event {{"role": "{role}", "from": "{state}", '
-            '"to": 保持/等待状态, "result": "failure"}}，需先 add_transition 加这条转换）',
+            "或给 {state} 加一条失败出口：declare_event 声明 {state} 的树失败事件，再 add_transition "
+            '{{"role": "{role}", "from": "{state}", "to": 保持/等待状态, "trigger": 这个事件}}',
         ),
         Symptom(
             "STUCK_UNWRITTEN",

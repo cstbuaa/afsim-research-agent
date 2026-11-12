@@ -253,6 +253,7 @@ class SheetFixer:
         self.refused_basis: tuple[Any, ...] | None = None  # the last change refused for a basis
         self.auto_basis = False
         self.failed_calls: dict[str, int] = {}
+        self.wrote_verification = False
         self.shown: dict[tuple[Any, ...], tuple[str, int]] = {}
         self.reads = 0  # consecutive show calls
         self.diagnosis: dict[str, Any] | None = None  # the plan edits must follow
@@ -316,7 +317,7 @@ class SheetFixer:
                     lines += ["    " + x for x in _never_entered(s, spec or {})]
             lines += self._triage_lines(check)
             if not check.l2 and not check.l3 and not self.l1_only:
-                lines.append("还没有可运行的测试或想定（verification 块）")
+                lines.append("还没有可运行的测试或想定（verification 块）：L1 通过后会自动补写")
         if self.solved and self.l1_only:
             lines.append("L1 已通过，可以 finish；测试和想定由之后的验证阶段编写。")
         elif self.solved:
@@ -442,11 +443,45 @@ class SheetFixer:
                 )
         elif self.looks >= LOOKS:
             self.refused += 1
-            return (
+            text = (
                 f"{action} 被拒绝：已经连续查看 {self.looks} 次。照检查结果里的"
                 '"定位与改法"带上 because 修改，或写 diagnose（标为稿件的问题）、classify（其余问题）'
             )
+            if self.looks > LOOKS:  # refused before (r169 / r179: 15 shows in a row)
+                first = T.first_failure(self)
+                if first:
+                    text += (
+                        "\n下一步必须是修改、diagnose 或 classify。第一个未通过项的解释：\n"
+                        + T.explain_check(self, first)
+                    )
+            return text
         return None
+
+    async def draft_verification(self, run: Any) -> str:
+        """The sheet has no tests or scenarios (its drafting stopped before the verification
+        stage): once L1 passes, the drafter's verification stage writes them, and the loop
+        goes on with L2 / L3. The repair rules keep the loop itself off that block, so 14 of
+        the 31 sheets one L3 item short (11-12) ended with "no verification block"."""
+        saved = getattr(self.d, "run", None)
+        self.d.run = run
+        try:
+            await self.d.verification_stage(self.d.check(verify=True))
+        except Exception as exc:  # noqa: BLE001 - the loop goes on without it
+            return f"补写 verification 块失败（{type(exc).__name__}: {str(exc)[:200]}）"
+        finally:
+            self.d.run = saved
+        before = self.score(self.last)
+        self.last = self.d.check(verify=True)
+        # the sheet with tests is the base from now on: an empty verification must not win
+        self.best = (self.score(self.last), _copy(self.d.blocks), self.last)
+        block = next((b for b in self.d.blocks if b.kind == "verification"), None)
+        self.edits.append(
+            EditRecord(
+                self.step, "verification", "", block.text if block else "", "验证阶段补写",
+                before, self.score(self.last),
+            )
+        )  # fmt: skip
+        return "L1 已通过、还没有测试和想定：已按验证阶段补写 verification 块。\n" + self.check()
 
     def _conditions(self) -> dict[str, str]:
         """Condition id → its expression, compact (for diagnostics)."""
@@ -889,12 +924,25 @@ class SheetFixer:
 
     def apply(self, op: str, args: dict[str, Any], reason: str) -> str:
         """A structured edit (tools.structured) committed like an edit."""
+        if (
+            op in ("set_expectation", "set_scenario", "set_test")
+            and reason
+            and not args.get("because")
+        ):
+            # the step's thought stands for the because (r159: refused 10 times for it)
+            args = args | {"because": reason}
         got = T.structured(self, op, args)
         if isinstance(got, str):
             key = f"{op} {json.dumps(args, ensure_ascii=False, sort_keys=True, default=str)}"
             n = self.failed_calls[key] = self.failed_calls.get(key, 0) + 1
             if n > 1:  # the same call again gets the same answer (r145: set_test x5)
-                got += f"\n（这个调用已经第 {n} 次得到同样的结果：不要再重复，按上面的说明换一种做法）"
+                got += (
+                    f"\n（这个调用已经第 {n} 次得到同样的结果：不要再重复，按上面的说明换一种做法）"
+                )
+            if n >= 3:
+                first = T.first_failure(self)
+                if first:
+                    got += "\n当前第一个未通过项的解释：\n" + T.explain_check(self, first)
             return self._refuse(f"{op} {json.dumps(args, ensure_ascii=False)[:200]}", got)
         return self.commit(got, reason, args)
 
@@ -1284,6 +1332,16 @@ async def fix_sheet(
             break
         fixer.step = step
         started = time.perf_counter()
+        last = fixer.last
+        if not l1_only and last.l1_ok and not (last.l2 or last.l3) and not fixer.wrote_verification:
+            fixer.wrote_verification = True
+            result = await fixer.draft_verification(run)
+            records.append(
+                {"step": step, "action": "draft_verification", "args": {}, "thought": "",
+                 "result": _clip(result), "seconds": round(time.perf_counter() - started, 2)}
+            )  # fmt: skip
+            fixer.best_step = step
+            continue
         try:
             action = await run(
                 "fix:v3:step", _prompt(fixer, records, max_steps - step + 1), FixStep
