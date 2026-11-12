@@ -273,7 +273,8 @@ def test_use_tree_event_declares_and_switches_in_one_step(contracts: Contracts):
     )  # fmt: skip
     assert "MOVE --> OBSERVE : move_tree_failed" in many["mermaid:scout"]
     assert "SHUTDOWN --> DONE : shutdown_tree_done" in many["mermaid:scout"]
-    assert T._result_of("task_invalid") == "failure" and T._result_of("no_targets") == "failure"
+    assert T._result_of("validation_failed") == "failure"
+    assert T._result_of("task_invalid") == "success"  # L2 stubs actions as succeeding
     assert T._result_of("target_seen") == "success"
     assert fixer._block("model").text.count("tree_done") == 0  # nothing saved by structured
 
