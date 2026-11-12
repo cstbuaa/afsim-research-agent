@@ -243,3 +243,88 @@ def test_hints_in_the_check_result_and_the_prompt(contracts: Contracts):
     guarded = _fixer(contracts, GUARDED)
     prompt = _prompt(guarded, [], 5)
     assert "第一个未通过项的解释" in prompt and "决定结果的项" in prompt
+
+
+def test_use_tree_event_declares_and_switches_in_one_step(contracts: Contracts):
+    fixer = _fixer(contracts)
+    texts = T.structured(
+        fixer, "use_tree_event", {"role": "scout", "from": "SHUTDOWN", "to": "DONE"}
+    )
+    assert "  shutdown_tree_done: {result: success, source: tree}" in texts["model"].splitlines()
+    assert "SHUTDOWN --> DONE : shutdown_tree_done" in texts["mermaid:scout"]
+    assert "改由树事件 shutdown_tree_done" in texts["_note"]
+    # a negative condition name leaves when the tree fails; several in one call
+    many = T.structured(
+        fixer,
+        "use_tree_event",
+        {"items": [
+            {"role": "scout", "from": "MOVE", "to": "OBSERVE", "old_trigger": "no_target"},
+            {"role": "scout", "from": "SHUTDOWN", "to": "DONE"},
+        ]},
+    )  # fmt: skip
+    assert isinstance(many, str) and "MOVE → OBSERVE" in many  # no_target is not its trigger
+    many = T.structured(
+        fixer,
+        "use_tree_event",
+        {"items": [
+            {"role": "scout", "from": "MOVE", "to": "OBSERVE", "result": "failure"},
+            {"role": "scout", "from": "SHUTDOWN", "to": "DONE"},
+        ]},
+    )  # fmt: skip
+    assert "MOVE --> OBSERVE : move_tree_failed" in many["mermaid:scout"]
+    assert "SHUTDOWN --> DONE : shutdown_tree_done" in many["mermaid:scout"]
+    assert T._result_of("task_invalid") == "failure" and T._result_of("no_targets") == "failure"
+    assert T._result_of("target_seen") == "success"
+    assert fixer._block("model").text.count("tree_done") == 0  # nothing saved by structured
+
+
+def test_a_change_refused_for_a_basis_goes_through_when_repeated(contracts: Contracts):
+    fixer = _fixer(contracts, GUARDED)
+    fixer.step = 1
+    fix = {"name": "target_seen", "expr": "sense.target.valid"}
+    assert "先读下面的解释" in fixer.apply("set_condition", fix, "去掉等待")
+    fixer.step = 2
+    done = fixer.apply("set_condition", dict(fix), "去掉等待，再试")
+    assert done.startswith("已修改") and "同一修改第二次提交" in done
+
+
+def test_problems_unmasked_by_a_fix_are_not_called_worse():
+    from types import SimpleNamespace as N
+
+    from afsim_research_agent.falcon.v3.fixer import _unmasked
+
+    before = N(problems=[N(message="树事件 target_acquired 要等 SEARCH 第 3 行")])
+    after = N(problems=[N(message=f"ROLE_COUNT 模型只有 1 辆车 {i}") for i in range(5)])
+    assert "不要撤销" in _unmasked(before, after)
+    assert _unmasked(before, N(problems=before.problems + after.problems)) == ""
+
+
+def test_triage_stuck_on_failing_actions_and_tree_events_are_not_enter_leave():
+    from afsim_research_agent.falcon.v3 import triage
+
+    model = {
+        "roles": {"member": {"mission": {"terminal": ["DONE"], "transitions": [], "global": []}}},
+        "events": {"validating_tree_done": {"source": "tree", "result": "success"}},
+    }
+    entry = {
+        "id": "main",
+        "passed": False,
+        "duration_s": 30,
+        "states": {"member_0": [[0, "WAIT"], [2, "VALIDATING"], [2, "SELECTING"]]},
+        "transitions": {
+            "member_0": [
+                {"t": 2, "from": "WAIT", "to": "VALIDATING", "on": "task_received"},
+                {"t": 2, "from": "VALIDATING", "to": "SELECTING", "on": "validating_tree_done"},
+            ]
+        },
+        "failures": {
+            "member_0": [
+                [2, "VALIDATING", "engagement.evaluate_fire_safety", "FRIENDLY_IN_LINE_OF_FIRE"],
+                [2, "SELECTING", "engagement.score_weapon_candidates", "INVALID_PARAMETER"],
+            ]
+        },
+    }
+    found = triage.from_scenario(entry, model, {"scenarios": [{"id": "main"}]})
+    assert [f.symptom for f in found] == ["STUCK_ACTION_FAILED"]
+    text = found[0].render()
+    assert "FRIENDLY_IN_LINE_OF_FIRE" in text and "side by side" in text

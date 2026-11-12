@@ -109,19 +109,18 @@ async def run_one(
     logs = _brief(outcome.log)
     extra: dict[str, Any] = {}
     if afsim is not None and outcome.solved:
-        from afsim_research_agent.falcon.v3.afsim_loop import sheet_hash
         from afsim_research_agent.falcon.v3.draft import _afsim_rounds
 
         fixes: list[Any] = []
         assert staging is not None
         staging.mkdir(parents=True, exist_ok=True)
         _check, history = await _afsim_rounds(d, run, d.check(verify=True), fixes, afsim, staging)
-        note = d.afsim_verdicts.get(sheet_hash(d.sheet))
-        rounds = [r.passed for r in history.rounds]
+        rounds = [bool(r.passed) for r in history.rounds]
         extra = {
             "afsim_rounds": rounds,
             "afsim_first": bool(rounds and rounds[0]),
-            "afsim_final": bool(note is not None and note.passed and d.check(verify=True).verified),
+            # the last AFSIM round passed and the sheet it ran still passes the 2D checks
+            "afsim_final": bool(rounds and rounds[-1] and d.check(verify=True).verified),
             "afsim_fix_steps": sum(f.steps for f in fixes),
         }
         for f in fixes:

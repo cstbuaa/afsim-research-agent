@@ -167,11 +167,7 @@ class SimResult:
             # failures in the last state and in the state before it (a tree that failed
             # there let a guard pass into the state the instance is stuck in)
             keep = {last} | ({seq[-2][1]} if len(seq) > 1 else set())
-            fails = [
-                f
-                for f in self.failures.get(name, [])
-                if f[1] in keep and f[0] >= (seq[-2][0] if len(seq) > 1 else 0.0)
-            ]
+            fails = [f for f in self.failures.get(name, []) if f[1] in keep]
             if not fails:
                 continue
             seen, parts, hints = set(), [], []
@@ -280,9 +276,12 @@ class SimHost:
         if status == SUCCESS:
             self.completions.append((now, inst.name, action))
         if status == FAILURE and (new or self._last.get(key) != (status, code)):
-            self.failures.setdefault(inst.name, []).append(
-                (now, inst.state, action, str(code or "FAILURE"))
-            )
+            rows = self.failures.setdefault(inst.name, [])
+            row = (inst.state, action, str(code or "FAILURE"))
+            # a tree that restarts every update fails the same way each time: keep the
+            # first of a run, so earlier causes are not pushed out of the window
+            if not any(r[1:] == row for r in rows[-12:]):
+                rows.append((now, *row))
         self._last[key] = (status, code)
         return status, code
 

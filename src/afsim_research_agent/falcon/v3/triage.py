@@ -72,6 +72,15 @@ MANUAL: dict[str, Symptom] = {
             " result: success}}`），或改读本状态动作写入的字段；出口条件：{exits}",
         ),
         Symptom(
+            "STUCK_ACTION_FAILED",
+            MODEL,
+            "停在非终止状态直到结束，状态树里的动作一直失败",
+            "动作的前提不满足：{fails}{hints}",
+            "不要改出口条件或换成树完成事件：让前提成立（在前一个状态先做检查、改想定站位等），"
+            '或给 {state} 加一条失败出口（use_tree_event {{"role": "{role}", "from": "{state}", '
+            '"to": 保持/等待状态, "result": "failure"}}，需先 add_transition 加这条转换）',
+        ),
+        Symptom(
             "STUCK_NO_EXIT",
             MODEL,
             "停在非终止状态直到结束，这个状态在状态图里没有自己的出口转换",
@@ -360,6 +369,8 @@ def from_scenario(entry: dict[str, Any], model: dict[str, Any] | None, spec: dic
         role, _ = _role_of(name)
         for a, b in zip(moves, moves[1:], strict=False):
             if a.get("t") == b.get("t") and a.get("to") == b.get("from"):
+                if _is_event(model, str(b.get("on"))):
+                    continue  # a tree / timer event: the state did its work in that update
                 out.append(
                     Finding(
                         "ENTER_LEAVE", sid, role, str(a["to"]),
@@ -377,6 +388,21 @@ def from_scenario(entry: dict[str, Any], model: dict[str, Any] | None, spec: dic
             continue
         if duration and t > duration / 2:
             continue
+        fails = _failed_leaves(entry, name, seq)
+        if fails:
+            from afsim_research_agent.ir.v2.sim.team import CODE_HINTS
+
+            hints = [CODE_HINTS[c] for c in dict.fromkeys(f[3] for f in fails) if c in CODE_HINTS]
+            out.append(
+                Finding(
+                    "STUCK_ACTION_FAILED", sid, role, state, f"{t:g} s 起一直停在 {state}",
+                    [f"mermaid:{role}", f"pytree:{role}", "verification"],
+                    {"role": role,
+                     "fails": "、".join(f"{f[2]} 失败 {f[3]}（{f[1]}，{f[0]:g} s）" for f in fails[:4]),
+                     "hints": ("；" + "；".join(hints)) if hints else ""},
+                )
+            )  # fmt: skip
+            continue
         out.append(_stuck(sid, role, state, float(t), model, sent, optional_unsent=False))
     for v in entry.get("obligations") or []:
         if v.get("judged", True) and not v.get("passed", True):
@@ -385,6 +411,18 @@ def from_scenario(entry: dict[str, Any], model: dict[str, Any] | None, spec: dic
                         values={"detail": str(v.get("detail") or "")[:200]})
             )  # fmt: skip
     return _dedupe(out)
+
+
+def _failed_leaves(entry: dict[str, Any], name: str, seq: list[Any]) -> list[Any]:
+    """Distinct failed action leaves (time, state, action, code) of an instance in the state
+    it stayed in and the one before it (the team models' failure codes, 2D only)."""
+    keep = {seq[-1][1]} | ({seq[-2][1]} if len(seq) > 1 else set())
+    out, seen = [], set()
+    for f in (entry.get("failures") or {}).get(name) or []:
+        if len(f) == 4 and f[1] in keep and tuple(f[1:]) not in seen:
+            seen.add(tuple(f[1:]))
+            out.append(f)
+    return out
 
 
 def from_check(check: Any) -> list[Finding]:

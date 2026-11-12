@@ -479,6 +479,7 @@ class Drafter:
                         "unresolved": sorted(res.unresolved),
                         "states": {k: [list(x) for x in v] for k, v in res.states.items()},
                         "transitions": res.transitions,
+                        "failures": {k: [list(x) for x in v] for k, v in res.failures.items()},
                         "duration_s": float(
                             ((raw.get("environment") or {}).get("duration_s")) or 0.0
                         ),

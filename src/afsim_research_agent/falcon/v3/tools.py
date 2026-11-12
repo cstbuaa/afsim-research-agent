@@ -40,6 +40,7 @@ WRITE_TOOLS = (
     "set_state_tree",
     "attach_subtree",
     "rename",
+    "use_tree_event",
 )
 READ_TOOLS = ("explain_check", "eval_condition", "who_writes", "history")
 
@@ -248,7 +249,9 @@ def _l3(fixer: Any, sid: str) -> str:
     spec = check.compiled.spec or {}
     lines = [f"L3 想定 {sid}：{'通过' if entry['passed'] else '未通过'}"]
     render = entry["render"].split("  定位与改法", 1)[0].splitlines()
-    lines += ["  " + x for x in render[1:] if "FAIL" in x or "未判定" in x][:10]
+    lines += ["  " + x for x in render[1:] if "FAIL" in x or "未判定" in x or " stayed in " in x][
+        :12
+    ]
     broken = [o for o in entry.get("obligations") or [] if o.get("judged") and not o.get("passed")]
     for o in broken[:6]:
         lines.append(f"  义务 {o.get('id')} 未满足：{str(o.get('detail'))[:300]}")
@@ -329,17 +332,54 @@ def entry_true_hint(fixer: Any, message: str) -> str:
     )
     if where:
         role, src, dst, cond = where
-        name = f"{src.lower()}_tree_{'failed' if 'fail' in cond else 'done'}"
-        result = "failure" if "fail" in cond else "success"
+        result = _result_of(cond)
+        name = f"{src.lower()}_tree_{'failed' if result == 'failure' else 'done'}"
         head += (
-            f'declare_event {{"name": "{name}", "source": "tree", "result": "{result}"}}，'
-            f'再 set_trigger {{"role": "{role}", "from": "{src}", "to": "{dst}", '
-            f'"trigger": "{name}", "old_trigger": "{cond}"}}（树事件在 {src} 的树以该结果结束时'
-            "触发；事件只能作转换的触发，不能写进 conditions）"
+            f'一步完成：use_tree_event {{"role": "{role}", "from": "{src}", "to": "{dst}", '
+            f'"result": "{result}", "old_trigger": "{cond}"}}（声明树事件 {name} 并改用它；'
+            f"树事件在 {src} 的树以该结果结束时触发；等同于 declare_event 再 set_trigger）"
         )
+        more = _other_entry_true(fixer, (role, src, dst))
+        if more:
+            head += (
+                "；同类问题还有 "
+                + str(len(more))
+                + ' 处，可用 items 一次改完：use_tree_event {"items": ['
+                + ", ".join(
+                    json.dumps(
+                        {"role": r, "from": f, "to": t, "result": _result_of(c), "old_trigger": c},
+                        ensure_ascii=False,
+                    )
+                    for r, f, t, c in [(role, src, dst, cond), *more][:8]
+                )
+                + "]}"
+            )
     else:
         head += "declare_event 声明 source: tree 的事件，再用 set_trigger 把这条转换的触发改成它"
     return head + "。只追加 time_in_state() 等待只是推迟出口，测试期望立即转出时会失败"
+
+
+NEGATIVE = re.compile(
+    r"fail|invalid|expire|lost|loss|abort|error|timeout|unsafe|blocked|(^|_)no_|(^|_)not_"
+)
+
+
+def _result_of(cond: str) -> str:
+    """The tree result a condition's exit stands for: a negative name (task_invalid,
+    no_targets, …) leaves when the state's tree fails, the rest when it succeeds."""
+    return "failure" if NEGATIVE.search(cond) else "success"
+
+
+def _other_entry_true(fixer: Any, skip: tuple[str, str, str]) -> list[tuple[str, str, str, str]]:
+    """The other ENTRY_TRUE problems of the last check, as (role, from, to, condition)."""
+    out = []
+    for p in getattr(fixer.last, "problems", None) or []:
+        if "ENTRY_TRUE" not in p.message:
+            continue
+        where = _transition_of(fixer, p.message)
+        if where and where[:3] != skip and where not in out:
+            out.append(where)
+    return out
 
 
 def _role_of(fixer: Any, src: str, trig: str) -> str | None:
@@ -569,6 +609,61 @@ def _cond_span(lines: list[str], name: str) -> tuple[int, int] | None:
     return None
 
 
+def _use_tree_event(fixer: Any, a: dict[str, Any]) -> dict[str, str] | str:
+    """declare_event (a tree event of the source state) and set_trigger on its transition in
+    one step, for one transition or several (``items``): the usual ENTRY_TRUE fix took two
+    steps per state, and sheets with many such states ran out of steps (r116, 11-12)."""
+    from afsim_research_agent.falcon.v3.fixer import _rebuild
+
+    items = a.get("items") if isinstance(a.get("items"), list) else [a]
+    saved = fixer.d.blocks
+    done = []
+    try:
+        for it in items:
+            if not isinstance(it, dict):
+                return 'use_tree_event 的 items 每项写 {"role", "from", "to"}'
+            role, src, dst = (str(it.get(k) or "").strip() for k in ("role", "from", "to"))
+            if not (role and src and dst):
+                return 'use_tree_event 要写 {"role", "from", "to"}（可选 "result": success|failure, "old_trigger"）'
+            result = str(it.get("result") or "")
+            if not result:  # from the name of the condition it replaces
+                got = _mermaid(fixer, role)
+                cur = (
+                    [t[3] for t in _transitions(got[1]) if t[1] == src and t[2] == dst]
+                    if isinstance(got, tuple)
+                    else []
+                )
+                result = _result_of(str(it.get("old_trigger") or (cur[0] if len(cur) == 1 else "")))
+            if result not in ("success", "failure"):
+                return 'result 写 "success"（树成功时）或 "failure"（树失败时）'
+            name = str(it.get("name") or "").strip() or (
+                f"{src.lower()}_tree_{'done' if result == 'success' else 'failed'}"
+            )
+            texts = structured(
+                fixer, "declare_event", {"name": name, "source": "tree", "result": result}
+            )
+            if isinstance(texts, str):
+                return texts
+            texts.pop("_note", None)
+            fixer.d.blocks = _rebuild(fixer.d.blocks, texts)
+            args = {"role": role, "from": src, "to": dst, "trigger": name}
+            if it.get("old_trigger"):
+                args["old_trigger"] = it["old_trigger"]
+            texts = structured(fixer, "set_trigger", args)
+            if isinstance(texts, str):
+                return f"{src} → {dst}：{texts}"
+            texts.pop("_note", None)
+            fixer.d.blocks = _rebuild(fixer.d.blocks, texts)
+            done.append(
+                f"{role} {src} → {dst} 改由树事件 {name}（{src} 的树{'成功' if result == 'success' else '失败'}时）触发"
+            )
+        out = {b.key: b.text for b in fixer.d.blocks}
+    finally:
+        fixer.d.blocks = saved
+    out["_note"] = "；".join(done)
+    return out
+
+
 def _mermaid(fixer: Any, role: str) -> tuple[str, str] | str:
     key = f"mermaid:{role}"
     b = fixer._block(key)
@@ -737,6 +832,8 @@ def structured(fixer: Any, op: str, a: dict[str, Any]) -> dict[str, str] | str:
             f'转换改过来，如 set_trigger {{"role", "from", "to", "trigger": "{name}", "old_trigger": 原触发}}'
         )
         return texts
+    if op == "use_tree_event":
+        return _use_tree_event(fixer, a)
     if op in ("set_state_tree", "attach_subtree"):
         role, state = str(a.get("role") or "").strip(), str(a.get("state") or "").strip()
         key = f"pytree:{role}"

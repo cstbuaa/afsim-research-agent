@@ -107,6 +107,7 @@ class FixStep(BaseModel):
         "set_state_tree",
         "attach_subtree",
         "rename",
+        "use_tree_event",
     ]
     args: dict[str, Any] = Field(default_factory=dict)
 
@@ -196,6 +197,8 @@ RULES = """你在修正一份战术稿（v3）。每一步调用一个工具，�
 - set_state_tree {"role", "state", "code": "def STATE():\n    …"}：整体替换一个状态的树；
   attach_subtree {"role", "state", "subtree": 战术集子树 ID, "position": "start"|"end"}：在状态树里引用子树。
 - rename {"kind": "trigger"|"condition"|"event"|"state", "old", "new"}：一次改完所有引用处。
+- use_tree_event {"role", "from", "to", "result": "success"|"failure", "old_trigger"} 或 {"items": [同上, …]}：
+  一步完成"声明 from 状态的树事件 + 把这条转换改由它触发"（ENTRY_TRUE 的常用改法；items 一次改多处）。
 - edit {"changes": [{"block", "old": "原文片段", "new": "新文本"} 或 {"block", "text": "整块新内容"}]}：文本替换（兜底）；old 必须唯一。
 - try_edit {"op": 上面任一修改工具名, "args": {…}}：试改，只返回得分变化，不保存。
 - revert {"block": 块名} 或 {"step": 步数}：恢复一个块的初始内容，或撤销某一步及之后的修改。
@@ -233,6 +236,8 @@ class SheetFixer:
         self.last = drafter.check(verify=True)
         self.best = (self.score(self.last), _copy(drafter.blocks), self.last)
         self.refused = 0
+        self.refused_basis: tuple[Any, ...] | None = None  # the last change refused for a basis
+        self.auto_basis = False
         self.shown: dict[tuple[Any, ...], tuple[str, int]] = {}
         self.reads = 0  # consecutive show calls
         self.diagnosis: dict[str, Any] | None = None  # the plan edits must follow
@@ -739,13 +744,36 @@ class SheetFixer:
             return None
         if self.diagnosis is None:
             first = T.first_failure(self)
+            sig = (
+                tuple(sorted(keys)),
+                json.dumps(
+                    {k: v for k, v in extra.items() if k != "because"},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    default=str,
+                ),
+            )
+            if sig == self.refused_basis and first:
+                # the same change again after the refusal: take the explanation it was
+                # shown as its basis instead of refusing until the steps run out (r139)
+                self.diagnosis = {
+                    "step": self.step, "issue": f"（自动）第一个未通过项 {first}",
+                    "where": sorted(set(keys)), "cause": "见上一步附带的 explain_check",
+                    "plan": reason[:600],
+                }  # fmt: skip
+                self.diagnoses.append(dict(self.diagnosis))
+                self.edited_since_diagnosis = False
+                self.auto_basis = True
+                return None
+            self.refused_basis = sig
             hint = (
                 ("\n当前第一个未通过项的解释：\n" + T.explain_check(self, first)) if first else ""
             )
             return self._refuse(
                 f"修改 {keys}",
                 "修改被拒绝：L1 已通过，修改要有依据：在修改里带上 because（引用 explain_check 的"
-                "结论），或先用 diagnose 写出诊断（问题原文、所在块、原因、改法）" + hint,
+                "结论），或先用 diagnose 写出诊断（问题原文、所在块、原因、改法）。先读下面的解释："
+                "它指向的问题如果和这次修改无关，换成针对它的修改" + hint,
             )
         outside = [k for k in keys if not self._allowed(k)]
         if outside:
@@ -905,7 +933,13 @@ class SheetFixer:
         self.no_gain = 0 if after < before_score else self.no_gain + 1
         trend = "变好" if after < before_score else ("变差" if after > before_score else "不变")
         lines = [f"已修改（得分 {before_score} → {after}，{trend}）"]
-        if after > before_score:
+        if self.auto_basis:
+            lines.append("（同一修改第二次提交：以上一步附带的解释作为依据，已执行）")
+            self.auto_basis = False
+        unmasked = _unmasked(before_check, check)
+        if unmasked:
+            lines.append(unmasked)
+        elif after > before_score:
             lines.append(f'（变差了：可以 revert {{"step": {self.step}}} 撤销这一步）')
         lines += warnings + ([note] if note else [])
         lines += self._expectation(extra.get("expect"), check)
@@ -1066,6 +1100,24 @@ def _strip_fence(text: str) -> str:
     text = text.strip("\n")
     m = re.match(r"^```[^\n]*\n(.*?)\n?```\s*$", text, re.S)
     return m.group(1) if m else text
+
+
+def _problem_sig(p: Any) -> str:
+    return re.sub(r"\d+", "#", str(getattr(p, "message", p)))[:80]
+
+
+def _unmasked(before: Any, after: Any) -> str:
+    """When the problems before a change are all gone and new ones of other kinds appear:
+    they come from checks the old problems held back (ROLE_COUNT after a tree-event fix,
+    r017–r091), not from the change, which should not be reverted for them."""
+    old = [_problem_sig(p) for p in getattr(before, "problems", None) or []]
+    new = [_problem_sig(p) for p in getattr(after, "problems", None) or []]
+    if not old or set(old) & set(new) or len(new) <= len(old):
+        return ""
+    return (
+        f"（原来的 {len(old)} 个 L1 问题都已解决；新出现的 {len(new)} 个是之前被它们挡住的后续检查，"
+        "不是这一步改坏的：不要撤销，接着修新问题）"
+    )
 
 
 def _rebuild(blocks: list[Block], texts: dict[str, str]) -> list[Block]:
