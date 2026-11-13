@@ -257,7 +257,14 @@ def main() -> None:
                 (dst / "tactic_sheet.md").write_text(d.sheet, encoding="utf-8")
                 res["fixed"] = dst.name
         except Exception as exc:  # noqa: BLE001 - one bad sheet does not stop the run
-            res = {"error": f"{type(exc).__name__}: {str(exc)[:200]}"}
+            import traceback
+
+            frames = traceback.extract_tb(exc.__traceback__)[-6:]
+            res = {
+                "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+                # where it was raised (file:line function), for a local look
+                "where": [f"{Path(f.filename).name}:{f.lineno} {f.name}" for f in frames],
+            }
         rows.append({"index": i, "split": split_of(row), "requirement": row["requirement"]} | res)
         a.out.write_text(
             json.dumps({"model": a.model, "summary": summary(rows), "rows": rows},

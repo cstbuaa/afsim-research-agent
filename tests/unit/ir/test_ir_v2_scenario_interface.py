@@ -208,6 +208,13 @@ def test_both_runs_are_laid_out_from_one_binding(contracts: Contracts) -> None:
     }
     res = simulate(model, contracts, raw, b)
     assert res.error is None and res.passed, res.render()
+    # vehicles written as a list naming each role (drafts do, r128) are grouped by role
+    listed = raw | {"vehicles": [{"role": "car", "position_m": [0, 0]}]}
+    res = simulate(model, contracts, listed, b)
+    assert res.error is None and res.passed, res.render()
+    # a shape the binding cannot lay out is a scenario error, not a crash
+    res = simulate(model, contracts, raw | {"vehicles": [["car", 0, 0]]}, b)
+    assert res.error and res.error.startswith("scenario structure")
 
 
 def test_the_interface_is_shown_to_the_drafter() -> None:

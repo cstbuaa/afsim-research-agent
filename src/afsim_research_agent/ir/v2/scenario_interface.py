@@ -568,7 +568,11 @@ def bind_scenario(raw: dict[str, Any], model: dict[str, Any], binding: Binding) 
     env["routes"] = routes
     env.setdefault("duration_s", binding.end_s + 40.0)
     sc["environment"] = env
-    vehicles = dict(sc.get("vehicles") or {})
+    from afsim_research_agent.ir.v2.sim.run import vehicles_by_role
+
+    vehicles = vehicles_by_role(sc.get("vehicles") or {})
+    if not isinstance(vehicles, dict):
+        return sc  # left for the scenario's validation to report
     roles = model.get("roles") or {}
     h = math.radians(binding.heading_deg)
     across = h + math.pi / 2

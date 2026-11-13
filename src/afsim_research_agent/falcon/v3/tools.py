@@ -772,7 +772,13 @@ def _verification_edit(
         try:
             Scenario.model_validate(new)
         except Exception as exc:  # noqa: BLE001
-            return f"想定写法不对：{str(exc)[:400]}"
+            hint = (
+                "\nvehicles 的写法：{角色名: [{position_m: [x, y]}, ...]}，角色名是 roles 里的名字"
+                "（如 leader / member），不是车辆实例名；不写 vehicles 时按想定绑定摆放"
+                if "vehicles" in changes
+                else ""
+            )
+            return f"想定写法不对：{str(exc)[:400]}{hint}"
         sc.clear()
         sc.update(new)
         what = f"想定 {sid} 的 {', '.join(changes)} 已修改"

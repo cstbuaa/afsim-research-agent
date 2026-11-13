@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from afsim_research_agent.ir.v2.contracts import Contracts
 from afsim_research_agent.ir.v2.from_tactic import event_id
@@ -109,6 +109,25 @@ class Scenario(_Strict):
     events: list[RaiseEvent] = Field(default_factory=list)
     faults: list[Fault] = Field(default_factory=list)
     expect: list[Expectation] = Field(default_factory=list)
+
+    @field_validator("vehicles", mode="before")
+    @classmethod
+    def _vehicles(cls, value: Any) -> Any:
+        return vehicles_by_role(value)
+
+
+def vehicles_by_role(value: Any) -> Any:
+    """``vehicles`` is role → list of vehicles; a list of vehicles that each name their
+    ``role`` (the way drafts write it, r128 / r177) is grouped into that form, and a single
+    vehicle under a role becomes a one-item list. Anything else is left for validation."""
+    if isinstance(value, list) and all(isinstance(v, dict) and v.get("role") for v in value):
+        out: dict[str, list[Any]] = {}
+        for v in value:
+            out.setdefault(str(v["role"]), []).append({k: x for k, x in v.items() if k != "role"})
+        return out
+    if isinstance(value, dict):
+        return {k: [v] if isinstance(v, dict) else v for k, v in value.items()}
+    return value
 
 
 @dataclass
@@ -321,7 +340,10 @@ def simulate(
     if binding is not None:
         from afsim_research_agent.ir.v2.scenario_interface import apply, bind_scenario
 
-        raw = bind_scenario(raw, model, binding)
+        try:
+            raw = bind_scenario(raw, model, binding)
+        except (TypeError, ValueError) as exc:  # a malformed part the binding cannot lay out
+            return SimResult(str(raw.get("id", "?")), error=f"scenario structure: {exc}")
         model = apply(model, binding)
     try:
         sc = Scenario.model_validate(raw)
