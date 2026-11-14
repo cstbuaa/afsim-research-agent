@@ -1101,3 +1101,18 @@ def test_with_until_pass_waits_for_the_condition(contracts: Contracts) -> None:
     root = next(s["root"] for s in out.spec["subtrees"] if s["id"] == "scout_observe")
     assert "selector" not in json.dumps(root)
     assert root["children"][1]["type"] == "failure_as_running"
+
+
+def test_coarse_granularity_adds_the_phase_rules_to_both_drafting_prompts() -> None:
+    from afsim_research_agent.falcon.v3 import prompts as P
+    from afsim_research_agent.falcon.v3.draft import V3Request
+
+    kw = dict(roles={}, scenario={}, allow_mission_ref=False)
+    fine = P.structure_prompt("需求", [], "索引", **kw)
+    coarse = P.structure_prompt("需求", [], "索引", **kw, coarse=True)
+    assert "粗粒度" not in fine and P.COARSE_STRUCTURE in coarse
+    args = ("需求", [], "稿", "详情", ["member"], {"member": ["WAITING"]})
+    assert "粗粒度" not in P.control_prompt(*args)
+    assert P.COARSE_CONTROL in P.control_prompt(*args, coarse=True)
+    assert V3Request(model_id="m").granularity == "fine"
+    assert V3Request(model_id="m", granularity="coarse").granularity == "coarse"

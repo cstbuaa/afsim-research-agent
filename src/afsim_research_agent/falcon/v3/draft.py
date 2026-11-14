@@ -101,6 +101,9 @@ class V3Request(BaseModel):
     reference_policy: Literal["subtrees", "all"] = "subtrees"
     # state names to use per role (e.g. to line up with an evaluation scenario)
     state_names: dict[str, list[str]] = Field(default_factory=dict)
+    # "coarse": one state per phase (wait / work / decide / hold / shut down), phase exits by
+    # tree events; "fine": the drafter may split a phase into a state per step
+    granularity: Literal["fine", "coarse"] = "fine"
     # external events the scenario raises: id → description (names line up with the run)
     scenario_events: dict[str, str] = Field(default_factory=dict)
     slices: list[str] | None = None  # override the slices the structure names
@@ -973,6 +976,7 @@ class Drafter:
             policy=self.r.reference_policy,
             obligations=self.obligations_text,
             interface=self.scenario_text(),
+            coarse=self.r.granularity == "coarse",
         )
         await self.ask("v3:structure", prompt, STRUCTURE_KINDS)
         check = self.check(pending=True)
@@ -1033,6 +1037,7 @@ class Drafter:
                 for r, m in ((structure.compiled.spec or {}).get("missions") or {}).items()
                 if "tactic" in m
             ],
+            coarse=self.r.granularity == "coarse",
         )
         await self.ask("v3:control", prompt, CONTROL_KINDS)
         check = self.check()
@@ -1671,6 +1676,7 @@ async def run_draft3(
     fix_steps: int | None = None,
     candidates: int | None = None,
     afsim: AfsimConfig | None = None,
+    granularity: str | None = None,
 ) -> V3Result:
     import asyncio
 
@@ -1681,6 +1687,8 @@ async def run_draft3(
         request = request.model_copy(update={"allow_mission_ref": allow_mission_ref})
     if candidates is not None:
         request = request.model_copy(update={"candidates": candidates})
+    if granularity is not None:
+        request = request.model_copy(update={"granularity": granularity})
     contracts = Contracts.load(request.capability_set)
     run = ModelRunner(model)
     tactic, bridge_notes, simplified = None, [], None

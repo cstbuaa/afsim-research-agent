@@ -38,6 +38,30 @@ RULES_SUBTREES = """你在为作战仿真编写战术行为模型。模型分七
 只用目录中出现的动作 ID、战术集 ID 和黑板字段，不要编造。"""
 
 
+COARSE_STRUCTURE = """## 状态划分（本次要求粗粒度）
+- 一个状态是一个阶段（等待、执行、判断、保持、收尾），不是一个动作。能由一棵树依次做完的连续步骤
+  （如 校验 → 选择 → 准备 → 执行 → 观察结果）放进同一个状态的树里依次调用，不要每一步设一个状态；
+- 只有这些情况才另设状态：要等外部事件、计时或其他车辆的消息；行为不同（执行 / 保持 / 收尾）；
+  要按结果走不同去向（判断）；周期性重复的起点；
+- 每个角色一般 4–7 个状态（含 SHUTDOWN 和结束状态）。战术集任务把阶段切得更细，只参照它的阶段先后
+  和触发含义，不要照搬它的状态；
+- 阶段的出口用树事件：在 model events 声明 `<名字>: {source: tree, result: success}`（树做完）和
+  `<名字>: {source: tree, result: failure}`（树失败，如校验不通过），状态图用它们作转换；
+- 判断（如是否再次攻击）单设一个状态，树里只放判断动作：动作成功 / 失败分别用 success / failure 树事件
+  转往两个去向；要重复执行时转回执行状态，不要用上一轮留下的字段（开火次数、毁伤时刻、分配数、
+  任务有效）做出口；
+- 字段条件只用于等待类状态的出口（如"收到有效任务""发现目标"）和全局转换。
+例（虚构能力集）：WAITING --task_ok--> WORK（树：校验 → 选择 → 执行 → 观察）；WORK --work_done--> REVIEW；
+WORK --work_failed--> HOLD；REVIEW（树：判断是否再做）--again--> WORK；REVIEW --enough--> HOLD；
+HOLD --task_ok--> WORK；* --> SHUTDOWN : cancelled。"""
+
+COARSE_CONTROL = """## 状态树的写法（本次要求粗粒度）
+- 执行类状态的树把这一阶段的步骤按顺序写在一个函数里（依次调用战术集子树 / 动作），这样树做完 =
+  阶段完成，状态图用树事件转出；
+- 判断类状态的树只放判断动作（成功 = 走一路，失败 = 走另一路），不要再包 selector 把失败变成成功；
+- 等待类状态的树只做等待期间要持续做的事（如保持、感知），出口用字段条件。"""
+
+
 def rules(policy: str) -> str:
     return RULES_SUBTREES if policy == "subtrees" else RULES
 
@@ -274,6 +298,7 @@ def structure_prompt(
     policy: str = "all",
     obligations: str = "",
     interface: str = "",
+    coarse: bool = False,
 ) -> str:
     names = ""
     if scenario_events and not interface:
@@ -301,7 +326,7 @@ def structure_prompt(
 
 ## 本步只写 yaml model 和各角色的 mermaid 状态图
 {MODEL_GUIDE}
-
+{chr(10) + COARSE_STRUCTURE + chr(10) if coarse else ""}
 {EXAMPLE}
 
 只输出代码块，不要解释。"""
@@ -319,6 +344,7 @@ def control_prompt(
     policy: str = "all",
     obligations: str = "",
     interface: str = "",
+    coarse: bool = False,
 ) -> str:
     need = "；".join(f"{r}: {', '.join(states.get(r, []))}" for r in roles_needing_trees)
     if pending:
@@ -350,7 +376,7 @@ def control_prompt(
 ## 本步写 python conditions、每个角色的 python 树块，以及需要时的 yaml gaps
 需要状态树的状态（结束状态不写）：{need or "（无；引用战术集任务的角色可只写要替换的状态）"}
 {CONTROL_GUIDE}
-
+{chr(10) + COARSE_CONTROL + chr(10) if coarse else ""}
 {EXAMPLE}
 
 只输出这几个代码块，不要重复已写好的块，不要解释。"""
