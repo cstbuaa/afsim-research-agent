@@ -71,6 +71,25 @@ class Vehicle:
     cmd_speed: float = 0.0
     cmd_heading: float | None = None
     sensor: Sensor | None = field(default_factory=Sensor)
+    # a follower of a formation: the vehicle whose formation steps move it (its station
+    # command, refreshed every update the step runs; see ``World.step``)
+    commanded_by: str | None = None
+    command: dict[str, Any] | None = None
+
+    def steer(self, leader: Vehicle | None, now: float) -> None:
+        """Drive towards the commanded station: at it, keep the leader's speed and heading;
+        away from it, head for it at up to the step's speed (faster the further behind)."""
+        cmd = self.command or {}
+        sx, sy = cmd["station"]
+        dx, dy = sx - self.x, sy - self.y
+        dist = math.hypot(dx, dy)
+        lead_speed = leader.speed if leader is not None else 0.0
+        if dist <= float(cmd.get("stop_m", 5.0)):
+            self.cmd_speed = lead_speed
+            self.cmd_heading = leader.heading if leader is not None and lead_speed > 0.1 else None
+        else:
+            self.cmd_heading = bearing_deg(dx, dy)
+            self.cmd_speed = min(float(cmd.get("speed_mps", 10.0)), lead_speed + 0.5 * dist)
 
     def step(self, dt: float) -> None:
         if not self.mobility_available:
@@ -179,7 +198,24 @@ class World:
     team: Team = field(default_factory=Team)
     hits_to_kill: int = 2
 
+    def followers(self, leader: str) -> list[Vehicle]:
+        """The vehicles a leader's formation steps command, in their order (the first takes
+        the first column slot and the left line slot)."""
+        return sorted(
+            (v for v in self.vehicles.values() if v.commanded_by == leader), key=lambda v: v.name
+        )
+
     def step(self, dt: float) -> None:
+        for v in self.vehicles.values():
+            if v.command is not None:
+                # the station command of this update wins over the follower's own driving
+                # (the step claims the followers' locomotion); a step that stopped running
+                # leaves its followers standing
+                if float(v.command.get("at", -1.0)) >= self.now - 1e-9:
+                    v.steer(self.vehicles.get(str(v.command.get("leader"))), self.now)
+                else:
+                    v.command = None
+                    v.cmd_speed = 0.0
         for v in self.vehicles.values():
             v.step(dt)
         for h in self.hostiles:

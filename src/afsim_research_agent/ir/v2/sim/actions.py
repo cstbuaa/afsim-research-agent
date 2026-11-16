@@ -339,31 +339,98 @@ class ClearSelected(ActionModel):
 
 # ---------------------------------------------------------------------- formation
 class FormationSlots(ActionModel):
-    """Followers taking the slots of a formation shape (``mode`` option): their error to
-    the shape's slots starts at ``initial_error_m`` when the shape changes and shrinks at
-    ``converge_mps`` to ``floor_m``. With ``success_within_m`` the step succeeds once the
-    error is within it (as the platform's formation steps do); without it, it keeps
-    running. The followers are not simulated vehicles, only their slot errors are; which
-    fields receive the error is decided by the contract (a shape whose step writes no
-    error field leaves them as they are); ``keys`` names the generic keys written (default:
-    the left / right slot errors)."""
+    """A leader's formation step (``mode`` option ``COLUMN`` / ``TARGET_LINE``) moving its
+    followers — the vehicles of the commanded roles (``World.followers``) — to their slots:
+
+    * column: behind the leader along its heading, at ``spacing_m`` and twice that;
+    * target line: abreast of the leader across the bearing to the selected target, at
+      ``wing_offset_m`` on the left (first follower) and the right (second); without a
+      valid target the followers stay where they are and the step keeps running.
+
+    Every update it commands each follower to its slot at ``speed_mps`` (the follower
+    drives there in ``World.step``) and writes the slot errors: one key (the column error)
+    gets the largest, two keys (left / right) one follower each. It succeeds once every
+    error is within ``ready_tolerance_m`` for ``ready_samples`` consecutive updates (as the
+    platform's steps do); run again it keeps commanding them.
+
+    A leader without followers (a model with a single vehicle) keeps the earlier stand-in:
+    the slot error starts at ``initial_error_m`` and shrinks at ``converge_mps``."""
 
     KEYS = ("formation.left_error", "formation.right_error")
 
     def start(self, ctx: ActionContext) -> Status:
+        if ctx.options.get("write_mode"):
+            # only when the real platform is known to write the shape this way: a field the
+            # simulation sets but the platform does not would let a guessed condition pass
+            ctx.write("formation.mode", str(ctx.options.get("mode", "FORMATION")))
+        if not ctx.world.followers(ctx.vehicle.name):
+            return self._stand_in_start(ctx)
+        return self.update(ctx)
+
+    def update(self, ctx: ActionContext) -> Status:
+        followers = ctx.world.followers(ctx.vehicle.name)
+        if not followers:
+            return self._stand_in(ctx)
+        mode = str(ctx.options.get("mode", "COLUMN")).upper()
+        lead = ctx.vehicle
+        if "LINE" in mode:
+            if not ctx.read("selected.valid") or not isinstance(
+                ctx.read("selected.bearing"), int | float
+            ):
+                return RUNNING, None  # no target to face: the followers stay where they are
+            bearing = float(ctx.read("selected.bearing"))
+            offset = float(ctx.params.get("wing_offset_m") or ctx.options.get("wing_m", 60.0))
+            # first follower left, second right (further pairs further out)
+            slots = [
+                _ahead(
+                    lead.x,
+                    lead.y,
+                    (bearing + (-90.0 if k % 2 == 0 else 90.0)) % 360.0,
+                    offset * (k // 2 + 1),
+                )
+                for k in range(len(followers))
+            ]
+        else:
+            spacing = float(ctx.params.get("spacing_m") or ctx.options.get("spacing_m", 60.0))
+            back = (lead.heading + 180.0) % 360.0
+            slots = [_ahead(lead.x, lead.y, back, spacing * (k + 1)) for k in range(len(followers))]
+        speed = float(ctx.params.get("speed_mps") or ctx.options.get("speed_mps", 10.0))
+        stop = float(ctx.params.get("stop_tolerance_m") or ctx.options.get("stop_m", 5.0))
+        errors = []
+        for v, (sx, sy) in zip(followers, slots, strict=True):
+            errors.append(math.hypot(sx - v.x, sy - v.y))
+            if v.mobility_available:
+                v.command = {
+                    "leader": lead.name,
+                    "station": (sx, sy),
+                    "speed_mps": speed,
+                    "stop_m": stop,
+                    "at": ctx.now,
+                }
+        keys = list(ctx.options.get("keys") or self.KEYS)
+        if len(keys) == 1:
+            ctx.write(keys[0], round(max(errors), 2))
+        else:
+            for key, err in zip(keys, errors, strict=False):
+                ctx.write(key, round(err, 2))
+        ready = ctx.params.get("ready_tolerance_m")
+        if not isinstance(ready, int | float):
+            ready = ctx.options.get("success_within_m", 20.0)
+        need = int(ctx.params.get("ready_samples") or ctx.options.get("ready_samples", 2))
+        ctx.memory["ok"] = ctx.memory.get("ok", 0) + 1 if max(errors) <= float(ready) else 0
+        return (SUCCESS, None) if ctx.memory["ok"] >= need else (RUNNING, None)
+
+    # a single vehicle: no followers to move, only their slot error
+    def _stand_in_start(self, ctx: ActionContext) -> Status:
         state = ctx.shared.setdefault("formation", {})
         mode = str(ctx.options.get("mode", "FORMATION"))
         if state.get("mode") != mode:
             state.update(
                 mode=mode, error=float(ctx.options.get("initial_error_m", 60.0)), at=ctx.now
             )
-        if ctx.options.get("write_mode"):
-            # only when the real platform is known to write the shape this way: a field the
-            # simulation sets but the platform does not would let a guessed condition pass
-            ctx.write("formation.mode", mode)
-        return self.update(ctx)
+        return self._stand_in(ctx)
 
-    def update(self, ctx: ActionContext) -> Status:
+    def _stand_in(self, ctx: ActionContext) -> Status:
         state = ctx.shared.setdefault("formation", {"error": 0.0, "at": ctx.now})
         dt = max(0.0, ctx.now - float(state.get("at", ctx.now)))
         floor = float(ctx.options.get("floor_m", 2.0))
@@ -381,6 +448,11 @@ class FormationSlots(ActionModel):
         if done is not None and state["error"] <= float(done):
             return SUCCESS, None
         return RUNNING, None
+
+
+def _ahead(x: float, y: float, bearing: float, dist: float) -> tuple[float, float]:
+    rad = math.radians(bearing)
+    return x + dist * math.sin(rad), y + dist * math.cos(rad)
 
 
 class StandoffCommand(ActionModel):
@@ -410,6 +482,21 @@ class StandoffCommand(ActionModel):
             return FAILURE, "NO_TARGET"
         mode = {"TOO_FAR": "APPROACH", "TOO_CLOSE": "WITHDRAW"}.get(zone, "HOLD")
         ctx.write("formation.command_mode", mode)
+        # the command moves the leader: towards / away from the target at the step's speed,
+        # or stops it in the band (the command stands until the next one)
+        bearing = ctx.read("selected.bearing")
+        v = ctx.vehicle
+        if v.mobility_available and isinstance(bearing, int | float):
+            speed = float(ctx.params.get("speed_mps") or ctx.options.get("speed_mps", 8.0))
+            if mode == "HOLD":
+                v.cmd_speed = 0.0
+            else:
+                v.cmd_heading = (
+                    float(bearing) % 360.0
+                    if mode == "APPROACH"
+                    else (float(bearing) + 180.0) % 360.0
+                )
+                v.cmd_speed = speed
         return SUCCESS, None
 
 

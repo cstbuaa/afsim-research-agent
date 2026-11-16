@@ -395,6 +395,16 @@ def simulate(
             return result
     # the vehicle the team models treat as the leader (task and target authority)
     world.team.leader = next((i.name for i in instances if "lead" in i.role.lower()), None)
+    # the followers of a formation are real vehicles: the members are commanded by the
+    # single leader's formation steps (as the platform's kit assigns formation roles)
+    from afsim_research_agent.ir.v2.afsim.scenario import role_kinds
+
+    kinds = role_kinds(model)
+    leads = [i.name for i in instances if kinds.get(i.role) == "leader"]
+    if len(leads) == 1:
+        for inst in instances:
+            if kinds.get(inst.role) == "member":
+                world.vehicles[inst.name].commanded_by = leads[0]
     from afsim_research_agent.ir.v2.effects import Sample, Tracks
 
     tracks = Tracks()
