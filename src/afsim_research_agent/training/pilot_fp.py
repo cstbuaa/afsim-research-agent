@@ -484,12 +484,12 @@ def l2_tests(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[str,
                 }
             )
         first = mac.states[0]
-        for ev in s.stop_events:
+        for stop in s.stop_events:  # (``ev`` is the event table above)
             out.append(
                 {
-                    "id": f"t_{role}_{ev}",
+                    "id": f"t_{role}_{stop}",
                     "given": {"role": role, "state": first, "time_in_state_s": 1,
-                              "blackboard": {}, "events": [ev]},
+                              "blackboard": {}, "events": [stop]},
                     "expect": {"next_state": "SHUTDOWN"},
                 }
             )  # fmt: skip

@@ -102,7 +102,8 @@ def test_each_formation_choice_builds_a_valid_model(tmp_path: Path, name: str) -
     from afsim_research_agent.falcon.v3.draft import compile_package
 
     text, _, request = build(CHOICES[name], events=EVENTS)
-    request["scenario_events"] = {k: v for k, v in EVENTS.items() if k != "fire_order"}
+    used = {"cancelled", *CHOICES[name].stop_events}
+    request["scenario_events"] = {k: v for k, v in EVENTS.items() if k in used}
     (tmp_path / "tactic_sheet.md").write_text(text, encoding="utf-8")
     (tmp_path / "falcon_request.yaml").write_text(
         yaml.safe_dump(request, allow_unicode=True), encoding="utf-8"
@@ -162,3 +163,10 @@ def test_run_draft3_drafts_from_the_skeleton_without_structure_or_control(
     sheet = (pkg / "tactic_sheet.md").read_text(encoding="utf-8")
     assert "```mermaid leader" in sheet and "```python wingman" in sheet  # unknown name → role
     assert "assemble: true" in (pkg / "skeleton_choice.yaml").read_text(encoding="utf-8")
+
+
+def test_stop_events_leave_the_timer_tests_of_later_roles_alone():
+    text, _, _ = build(CHOICES["withdraw_order"], events=EVENTS)
+    ver = yaml.safe_load(re.search(r"```yaml verification\n(.*?)```", text, re.S).group(1))
+    t = next(t for t in ver["tests"] if t["id"] == "t_member_03_reacquire_search")
+    assert t["given"]["events"] == ["reacquire_time_up"] and t["given"]["time_in_state_s"] == 31
