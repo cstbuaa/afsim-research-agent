@@ -104,6 +104,9 @@ class V3Request(BaseModel):
     # "coarse": one state per phase (wait / work / decide / hold / shut down), phase exits by
     # tree events; "fine": the drafter may split a phase into a state per step
     granularity: Literal["fine", "coarse"] = "fine"
+    # skeleton: choose a verified skeleton (falcon.v3.skeleton) and let the program write the
+    # sheet; free: the model writes roles, state diagrams, events and parameters itself
+    drafting: Literal["free", "skeleton"] = "free"
     # external events the scenario raises: id → description (names line up with the run)
     scenario_events: dict[str, str] = Field(default_factory=dict)
     slices: list[str] | None = None  # override the slices the structure names
@@ -962,6 +965,44 @@ class Drafter:
         out = {k: v for k, v in item.items() if k not in ("action", "after", "min_s", "kind")}
         return {**out, "kind": "precedes", "first": item.get("after"), "then": item.get("action")}
 
+    async def skeleton_stage(self) -> bool:
+        """Draft from a verified skeleton (``falcon.v3.skeleton``): the model only chooses;
+        the program writes the sheet. False when no skeleton fits (draft from scratch)."""
+        from afsim_research_agent.falcon.v3 import skeleton as SK
+
+        events = {k: str(v) for k, v in self.r.scenario_events.items()}
+        hint = {k: v.model_dump() for k, v in self.r.roles.items()}
+        choice = await self.run(
+            "v3:skeleton",
+            SK.prompt(self.r.requirement, self.clauses, hint, events),
+            SK.SkeletonChoice,
+        )
+        self.skeleton_choice = choice
+        if not choice.applicable:
+            self.notes.append(f"没有适用的骨架，从零起草：{choice.reason}")
+            return False
+        roles = self.r.roles
+        if roles:
+            single = [k for k, v in roles.items() if v.count == 1]
+            many = [k for k, v in roles.items() if v.count > 1]
+            if choice.leader_role not in roles and single:
+                choice.leader_role = single[0]
+            if choice.formation and choice.member_role not in roles and many:
+                choice.member_role = many[0]
+        text, notes, _ = SK.build(
+            choice,
+            events=events,
+            display_name=self.r.display_name or self.r.model_id,
+            clauses=[c["id"] for c in self.clauses],
+        )
+        self.notes.append(f"按已验证骨架起草：{choice.reason}")
+        self.notes += notes
+        self.blocks = []
+        self.notes += merge(self.blocks, text, (*STRUCTURE_KINDS, *CONTROL_KINDS, "verification"))
+        check = self.check(pending=True)
+        self.slices = self._slices(check.compiled)
+        return True
+
     async def structure_stage(self) -> Check:
         classes = {v.capability_class for v in self.r.roles.values()} or None
         prompt = P.structure_prompt(
@@ -1584,6 +1625,18 @@ async def _draft(
     return check, fixes
 
 
+async def _skeleton_draft(drafter: Drafter, run: ModelRunner) -> tuple[Check, list[Any]]:
+    """A sheet written from a skeleton: checked as it is, then the repair budget on what
+    the skeleton did not cover."""
+    report("起草：按骨架生成，检查 L1–L3")
+    check = drafter.autofix(drafter.check(verify=True))
+    fixes: list[Any] = []
+    if not check.verified and drafter.r.fix_steps > 0:
+        fixes.append(await fix_sheet(drafter, run, drafter.r.fix_steps))
+        check = drafter.check(verify=True)
+    return check, fixes
+
+
 NEEDS_CAPABILITY = "needs_capability"
 NEEDS_BINDING = "needs_binding"
 
@@ -1677,6 +1730,7 @@ async def run_draft3(
     candidates: int | None = None,
     afsim: AfsimConfig | None = None,
     granularity: str | None = None,
+    drafting: str | None = None,
 ) -> V3Result:
     import asyncio
 
@@ -1689,6 +1743,8 @@ async def run_draft3(
         request = request.model_copy(update={"candidates": candidates})
     if granularity is not None:
         request = request.model_copy(update={"granularity": granularity})
+    if drafting is not None:
+        request = request.model_copy(update={"drafting": drafting})
     contracts = Contracts.load(request.capability_set)
     run = ModelRunner(model)
     tactic, bridge_notes, simplified = None, [], None
@@ -1765,10 +1821,11 @@ async def run_draft3(
                     update={"requirement": request.requirement + "\n\n" + text}
                 )
                 lead.r = request
+        skeleton = request.drafting == "skeleton" and await lead.skeleton_stage()
         # the obligations are written once the structure has chosen the slices
-        structure = await lead.structure_stage()
+        structure = None if skeleton else await lead.structure_stage()
         await lead.obligations_stage()
-        for _ in range(request.candidates - 1):
+        for _ in range(0 if skeleton else request.candidates - 1):
             d = Drafter(request, contracts, run)
             d.clauses, d.obligations, d.notes = list(lead.clauses), list(lead.obligations), []
             d.tactic, d.crow_caps, d.simplified = tactic, caps, simplified
@@ -1776,7 +1833,8 @@ async def run_draft3(
             d.kit = kit
             drafters.append(d)
         outcomes = await asyncio.gather(
-            _draft(lead, run, structure), *(_draft(d, run) for d in drafters[1:])
+            _skeleton_draft(lead, run) if skeleton else _draft(lead, run, structure),
+            *(_draft(d, run) for d in drafters[1:]),
         )
         ranked = sorted(range(len(drafters)), key=lambda i: _score(outcomes[i][0]))
         best = ranked[0]
@@ -1806,6 +1864,11 @@ async def run_draft3(
             # the model is fine, the scenario cannot give it what it names
             status = NEEDS_BINDING
         write_package(staging, request, drafter, check, status, fixes)
+        choice = getattr(lead, "skeleton_choice", None)
+        if choice is not None:
+            from afsim_research_agent.falcon.v3.skeleton import describe
+
+            (staging / "skeleton_choice.yaml").write_text(describe(choice), encoding="utf-8")
         if history is not None:
             (staging / "afsim_rounds.md").write_text(_afsim_report(history), encoding="utf-8")
     except BaseException:

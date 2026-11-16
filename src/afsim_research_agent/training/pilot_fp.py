@@ -24,6 +24,13 @@ from typing import Any
 import yaml
 
 SKELETONS = ("K1", "K2", "K3", "K4", "K5", "K6")
+MODULE_DEFAULTS: dict[str, Any] = {
+    "search_delay_s": None,
+    "share_target": False,
+    "stop_events": [],
+    "names": {},
+    "event_text": {},
+}
 ROUTE = "approach"  # the scenario interface's advance route (post → ahead)
 
 
@@ -52,11 +59,24 @@ class Spec:
     column_spacing_m: float = 60.0
     ready_tolerance_m: float = 20.0
     stated: list[str] = field(default_factory=list)  # parameters the requirement will state
+    # modules for drafting from a skeleton (falcon.v3.skeleton); off in the pilot sampling
+    search_delay_s: float | None = None  # advance this long before the search starts
+    share_target: bool = False  # the leader publishes the selected target to the members
+    stop_events: list[str] = field(default_factory=list)  # other external requests → SHUTDOWN
+    names: dict[str, str] = field(default_factory=dict)  # leader / member / observer → role
+    event_text: dict[str, str] = field(default_factory=dict)  # external event → description
 
     @property
     def model_id(self) -> str:
-        h = hashlib.sha1(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()[:8]
+        d = asdict(self)
+        for k, v in MODULE_DEFAULTS.items():  # ids of the pilot data stay as they were
+            if d.get(k) == v:
+                d.pop(k)
+        h = hashlib.sha1(json.dumps(d, sort_keys=True).encode()).hexdigest()[:8]
         return f"fp_{self.skeleton.lower()}_{h}"
+
+    def name(self, role: str) -> str:
+        return self.names.get(role, role)
 
     @property
     def formation(self) -> bool:
@@ -162,6 +182,16 @@ def leader_machine(s: Spec) -> Machine:
     if s.assemble:
         states.append("ASSEMBLE")
         trees["ASSEMBLE"] = f"    {col}"
+    if s.search_delay_s:
+        # advance first, the search starts after the delay (a timer on the advance state:
+        # the search's first start is then the delay after the route's first start)
+        states.append("ADVANCE")
+        trees["ADVANCE"] = (
+            '    with parallel("all"):\n'
+            "        with repeat(until_done=True):\n"
+            f"            movement.follow_route(route={ROUTE})\n"
+            f"        {col}"
+        )
     states += ["SEARCH_ADVANCE", "CONTACT_DEPLOY", "STANDOFF_TRACK"]
     trees["SEARCH_ADVANCE"] = (
         '    with parallel("all"):\n'
@@ -180,6 +210,13 @@ def leader_machine(s: Spec) -> Machine:
         f"range_tolerance_m={_fmt(s.range_tolerance_m)}, "
         f"wing_offset_m={_fmt(s.wing_offset_m)}, ready_tolerance_m={_fmt(m)})"
     )
+    if s.share_target:  # publish the selected target while deploying and tracking
+        for st in ("CONTACT_DEPLOY", "STANDOFF_TRACK"):
+            trees[st] = (
+                '    with parallel("all"):\n'
+                + "\n".join("    " + ln for ln in trees[st].splitlines())
+                + '\n        tactic("target_sharing.leader_publish_shared_target")'
+            )
     if s.lost_hold:
         states.append("TARGET_LOST_HOLD")
         trees["TARGET_LOST_HOLD"] = '    tactic("formation_standoff.formation_target_lost_hold")'
@@ -200,10 +237,13 @@ def leader_machine(s: Spec) -> Machine:
     states += ["SHUTDOWN", "COMPLETE"]
     trees["SHUTDOWN"] = '    tactic("formation_standoff.formation_safe_shutdown")'
 
+    go = "ADVANCE" if s.search_delay_s else "SEARCH_ADVANCE"
     if s.wait_start:
-        T.append(("WAIT_START", "ASSEMBLE" if s.assemble else "SEARCH_ADVANCE", "start_order"))
+        T.append(("WAIT_START", "ASSEMBLE" if s.assemble else go, "start_order"))
     if s.assemble:
-        T.append(("ASSEMBLE", "SEARCH_ADVANCE", "column_ready"))
+        T.append(("ASSEMBLE", go, "column_ready"))
+    if s.search_delay_s:
+        T.append(("ADVANCE", "SEARCH_ADVANCE", "search_delay_up"))
     T.append(("SEARCH_ADVANCE", "CONTACT_DEPLOY", "target_detected"))
     if s.search_limit_s:
         T.append(("SEARCH_ADVANCE", "SHUTDOWN", "search_time_up"))
@@ -296,10 +336,10 @@ def observer_machine(s: Spec) -> Machine:
 
 def roles(s: Spec) -> dict[str, tuple[int, Machine, str]]:
     if not s.formation:
-        return {"observer": (1, observer_machine(s), "观察车")}
+        return {s.name("observer"): (1, observer_machine(s), "观察车")}
     return {
-        "leader": (1, leader_machine(s), "长车；执行编队指挥动作，指挥两辆僚车"),
-        "member": (2, member_machine(s), "僚车；只负责本车搜索与跟踪，站位由长车指挥"),
+        s.name("leader"): (1, leader_machine(s), "长车；执行编队指挥动作，指挥两辆僚车"),
+        s.name("member"): (2, member_machine(s), "僚车；只负责本车搜索与跟踪，站位由长车指挥"),
     }
 
 
@@ -340,6 +380,13 @@ def events(s: Spec) -> dict[str, dict[str, Any]]:
             "after": f"{_fmt(s.reacquire_timeout_s)} s",
             "description": "失联后重新获取时限到",
         }
+    if s.search_delay_s:
+        e["search_delay_up"] = {
+            "after": f"{_fmt(s.search_delay_s)} s",
+            "description": "前出到时，开始搜索",
+        }
+    for ev in s.stop_events:
+        e[ev] = {"source": "external", "description": s.event_text.get(ev, "上级请求结束")}
     if s.search_limit_s:
         e["search_time_up"] = {
             "after": f"{_fmt(s.search_limit_s)} s",
@@ -359,11 +406,12 @@ def parameters(s: Spec) -> dict[str, dict[str, Any]]:
     return p
 
 
-def _mermaid(role: str, mac: Machine) -> str:
+def _mermaid(role: str, mac: Machine, stops: tuple[str, ...] = ()) -> str:
     lines = ["stateDiagram-v2", f"  [*] --> {mac.initial}"]
     for a, b, c in mac.transitions:
         lines.append(f"  {a} --> {b} : {c}")
-    lines.append("  * --> SHUTDOWN : cancelled")
+    for ev in ("cancelled", *stops):
+        lines.append(f"  * --> SHUTDOWN : {ev}")
     lines.append("  COMPLETE --> [*]")
     return f"```mermaid {role}\n" + "\n".join(lines) + "\n```"
 
@@ -436,6 +484,15 @@ def l2_tests(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[str,
                 }
             )
         first = mac.states[0]
+        for ev in s.stop_events:
+            out.append(
+                {
+                    "id": f"t_{role}_{ev}",
+                    "given": {"role": role, "state": first, "time_in_state_s": 1,
+                              "blackboard": {}, "events": [ev]},
+                    "expect": {"next_state": "SHUTDOWN"},
+                }
+            )  # fmt: skip
         out.append(
             {
                 "id": f"t_{role}_cancel",
@@ -458,7 +515,7 @@ SPEED = 8.0  # route speed (m/s)
 
 def l3_scenarios(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[str, Any]]:
     """Scenarios that drive every module (design §4.2), with feasible timings (§4.4)."""
-    lead = "leader" if s.formation else "observer"
+    lead = s.name("leader" if s.formation else "observer")
     mac = rl[lead][1]
     enemy_x = float(SENSOR_M - 1500) if s.formation else 2500.0
     t_start = 10.0 if s.wait_start else 0.0
@@ -470,15 +527,19 @@ def l3_scenarios(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[
     }
     vehicles: dict[str, Any] = {}
     if s.formation:
-        vehicles["leader"] = [{"position_m": [0, 0], "heading_deg": 90, "max_speed_mps": 10}]
-        vehicles["member"] = [
+        vehicles[s.name("leader")] = [
+            {"position_m": [0, 0], "heading_deg": 90, "max_speed_mps": 10}
+        ]
+        vehicles[s.name("member")] = [
             {"position_m": [-60, 0], "heading_deg": 90, "max_speed_mps": 10},
             {"position_m": [-120, 0], "heading_deg": 90, "max_speed_mps": 10},
         ]
     else:
-        vehicles["observer"] = [{"position_m": [0, 0], "heading_deg": 90, "max_speed_mps": 10}]
+        vehicles[s.name("observer")] = [
+            {"position_m": [0, 0], "heading_deg": 90, "max_speed_mps": 10}
+        ]
     start_ev = [{"at_s": t_start, "event": "start_order"}] if s.wait_start else []
-    head = [st for st in mac.states if st in ("WAIT_START", "ASSEMBLE")]
+    head = [st for st in mac.states if st in ("WAIT_START", "ASSEMBLE", "ADVANCE")]
     track = (
         ["SEARCH_ADVANCE", "CONTACT_DEPLOY", "STANDOFF_TRACK"]
         if s.formation
@@ -599,7 +660,7 @@ def l3_scenarios(s: Spec, rl: dict[str, tuple[int, Machine, str]]) -> list[dict[
         )
     if s.withdraw in ("stop", "back"):
         thr = s.withdraw_threshold_m or 0
-        speed = 6.0
+        speed = 15.0  # faster than the leader backs off (2D leader 10 m/s at most)
         start = 120.0
         stop_x = thr - 200 if s.withdraw == "stop" else thr - 100
         travel = (enemy_x - stop_x) / speed
@@ -677,13 +738,18 @@ def obligations(s: Spec) -> list[dict[str, Any]]:
     return out
 
 
-def sheet(s: Spec) -> tuple[str, dict[str, Any]]:
+def sheet(s: Spec, extra: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
+    """The tactic sheet and its request; ``extra`` replaces / adds model-block fields
+    (display name, implements, parameters: drafting from a skeleton)."""
     rl = roles(s)
+    slices = ["formation_standoff", "perception", "movement"] if s.formation else [
+        "perception", "movement"
+    ]  # fmt: skip
+    if s.share_target:
+        slices.append("communication_target_sharing")
     model = {
         "model": {"display_name": f"试点模型 {s.model_id}", "intent": "生成的编队/感知战术模型"},
-        "slices": ["formation_standoff", "perception", "movement"]
-        if s.formation
-        else ["perception", "movement"],
+        "slices": slices,
         "roles": {
             r: {"capability_class": "ground_vehicle", "count": n, "description": d}
             for r, (n, _, d) in rl.items()
@@ -693,13 +759,18 @@ def sheet(s: Spec) -> tuple[str, dict[str, Any]]:
     params = parameters(s)
     if params:
         model["parameters"] = params
+    for k, v in (extra or {}).items():
+        if k == "parameters":
+            model.setdefault("parameters", {}).update(v)
+        elif v is not None:
+            model[k] = v
     ver = {"tests": l2_tests(s, rl), "scenarios": l3_scenarios(s, rl)}
     parts = [
         f"# 战术稿：{s.model_id}",
         "```yaml model\n" + yaml.safe_dump(model, allow_unicode=True, sort_keys=False) + "```",
     ]
     for r, (_, mac, _) in rl.items():
-        parts.append(_mermaid(r, mac))
+        parts.append(_mermaid(r, mac, tuple(s.stop_events)))
     parts.append(
         "```python conditions\n"
         + "\n".join(f"{k} = {v}" for k, v in conditions(s).items())
