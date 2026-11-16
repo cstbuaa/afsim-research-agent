@@ -989,6 +989,27 @@ class Drafter:
                 choice.leader_role = single[0]
             if choice.formation and choice.member_role not in roles and many:
                 choice.member_role = many[0]
+        if choice.wait_start and "start_order" not in events:
+            choice.wait_start = False
+            self.notes.append("想定不会发出开始命令 start_order：骨架不等开始命令")
+        if choice.formation:
+            # every formation skeleton advances along the interface route ``approach``
+            iface = dict(self.r.scenario_interface or {})
+            routes = dict(iface.get("routes") or {})
+            if "approach" not in routes:
+                points = dict(iface.get("points") or {})
+                points.setdefault("post", {"anchor": "own_start", "description": "车辆出发位置"})
+                points.setdefault(
+                    "ahead", {"anchor": "ahead", "description": "前出到达的位置（向敌方方向）"}
+                )
+                routes["approach"] = {
+                    "start": "post",
+                    "end": "ahead",
+                    "description": "从出发位置前出到 ahead 的路线（骨架沿路线搜索前进）",
+                }
+                iface |= {"points": points, "routes": routes}
+                self.r = self.r.model_copy(update={"scenario_interface": iface})
+                self.notes.append("想定接口补上前出路线 approach（编队骨架沿它搜索前进）")
         text, notes, _ = SK.build(
             choice,
             events=events,
@@ -1822,6 +1843,8 @@ async def run_draft3(
                 )
                 lead.r = request
         skeleton = request.drafting == "skeleton" and await lead.skeleton_stage()
+        if skeleton:
+            request = lead.r  # the skeleton may have added the advance route to the interface
         # the obligations are written once the structure has chosen the slices
         structure = None if skeleton else await lead.structure_stage()
         await lead.obligations_stage()

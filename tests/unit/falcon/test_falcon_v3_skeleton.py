@@ -170,3 +170,45 @@ def test_stop_events_leave_the_timer_tests_of_later_roles_alone():
     ver = yaml.safe_load(re.search(r"```yaml verification\n(.*?)```", text, re.S).group(1))
     t = next(t for t in ver["tests"] if t["id"] == "t_member_03_reacquire_search")
     assert t["given"]["events"] == ["reacquire_time_up"] and t["given"]["time_in_state_s"] == 31
+
+
+def test_the_skeleton_adds_the_advance_route_and_drops_an_unknown_start_order(
+    set_root: Path, tmp_path: Path
+):
+    import asyncio
+
+    _stub_langchain()
+    from afsim_research_agent.falcon.llm import ScriptedModel
+    from afsim_research_agent.falcon.v3.draft import run_draft3
+
+    request = tmp_path / "req.yaml"
+    request.write_text(
+        yaml.safe_dump(
+            {
+                "requirement": "三车编队集结后原地展开警戒。",
+                "model_id": "sk_route",
+                "roles": {
+                    "leader": {"capability_class": "ground_vehicle", "count": 1},
+                    "wingman": {"capability_class": "ground_vehicle", "count": 2},
+                },
+                "capability_set": str(set_root),
+                "drafting": "skeleton",
+                "extract_obligations": False,
+                "scenario_events": {"cancelled": "上级结束任务"},
+                "scenario_interface": {"points": {"post": {"anchor": "own_start"}}},
+            },
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    choice = CHOICES["assemble_delay_reacquire"].model_dump() | {"wait_start": True}
+    script = {
+        "requirements": [{"clauses": [{"text": "三车编队集结后原地展开警戒", "kind": "behavior"}]}],
+        "v3:skeleton": [choice],
+    }
+    result = asyncio.run(run_draft3(request, ScriptedModel(script), out_dir=tmp_path / "out"))
+    pkg = result.package_dir
+    req = yaml.safe_load((pkg / "falcon_request.yaml").read_text(encoding="utf-8"))
+    assert req["scenario_interface"]["routes"]["approach"]["end"] == "ahead"
+    sheet = (pkg / "tactic_sheet.md").read_text(encoding="utf-8")
+    assert "WAIT_START" not in sheet and "start_order" not in sheet
