@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 ANCHORS = ("own_start", "ahead", "toward_enemy")
 POINT_PREFIX, ROUTE_PREFIX = "pt_", "rt_"
+FACT_ENEMY = "sc_enemy_range_m"
 DEFAULT_ORIGIN = (45.0, -121.0)
 DEFAULT_HEADING_DEG = 90.0
 DEFAULT_ENEMY_RANGE_M = 650.0
@@ -198,6 +199,17 @@ def interface_parameters(interface: ScenarioInterface) -> dict[str, dict[str, An
             "description": f"路线 {rid}（由想定布设）",
             "scenario": f"route:{rid}:{r.start}:{r.end}",
         }
+    stated = enemy_distance(interface.facts.get("enemy", ""))
+    if stated is not None:
+        # the requirement's enemy distance, so that a run laid out from the model alone (the
+        # AFSIM kit run) places the enemy where the 2D checks do
+        out[FACT_ENEMY] = {
+            "type": "distance",
+            "value": stated,
+            "unit": "m",
+            "description": f"需求中的敌方距离（{interface.facts['enemy']}；只读，由想定使用）",
+            "scenario": "fact:enemy_range_m",
+        }
     return out
 
 
@@ -259,9 +271,16 @@ def interface_of(model_or_spec: dict[str, Any]) -> ScenarioInterface:
     """The points and routes a model's scenario parameters name (anchors by name when the
     model alone is given: post → own_start, other points → ahead)."""
     out = ScenarioInterface()
-    for tag in scenario_tags(model_or_spec).values():
+    params = model_or_spec.get("parameters") or {}
+    for name, tag in scenario_tags(model_or_spec).items():
         parts = tag.split(":")
         kind, ident = parts[0], parts[1] if len(parts) > 1 else ""
+        if kind == "fact":
+            p = params.get(name)
+            value = p.get("value") if isinstance(p, dict) else None
+            if ident == "enemy_range_m" and isinstance(value, int | float):
+                out.facts.setdefault("enemy", f"约 {float(value):g} 米")
+            continue
         if kind == "point" and ident not in out.points:
             anchor = parts[3] if len(parts) > 3 and parts[3] in ANCHORS else None
             anchor = anchor or ("own_start" if ident == "post" else "ahead")
@@ -331,7 +350,14 @@ def model_thresholds(model: dict[str, Any]) -> dict[str, float]:
             for v in node:
                 walk(v)
 
-    walk(model.get("parameters") or {})
+    walk(
+        {
+            k: v
+            for k, v in (model.get("parameters") or {}).items()
+            # scenario values (the requirement's enemy distance, points) are not decisions
+            if not (isinstance(v, dict) and v.get("scenario"))
+        }
+    )
     walk(model.get("roles") or {})
     walk(model.get("subtrees") or {})
     return out
@@ -414,9 +440,12 @@ def bind(
     elif "range_m" not in enemy:
         defaults.append(f"敌方距离取默认 {rng:g} m")
     defaults += prof.notes
+    # the point ahead and the run length follow a distance the profile chose; a distance
+    # the kit (or the workbench's scenario override) states keeps the kit's own values
+    chosen = prof.enemy_range_m is not None
     if "ahead_m" in bkit:
         ahead_m = float(bkit["ahead_m"])
-    elif rng > sensor:
+    elif chosen and rng > sensor:
         # the enemy is beyond the radar: the route forward ends inside its range, so the
         # search advance can find the enemy before the route is driven to its end
         ahead_m = round(rng - sensor / 2.0, 1)
@@ -425,7 +454,7 @@ def bind(
         )
     else:
         ahead_m = float(meta.get("ahead_m", min(350.0, rng / 2)))
-    if rng > sensor:
+    if chosen and rng > sensor:
         # time to drive into radar range, then the phases after the contact
         need = math.ceil(((rng - sensor) / max(speed, 0.5) + 180.0) / 10.0) * 10.0
         if need > end_s:
@@ -505,7 +534,7 @@ def bind(
     if model is not None:
         # parameters the model tags as scenario values but the interface does not name
         for name, tag in scenario_tags(model).items():
-            if name not in out.parameters:
+            if name not in out.parameters and not tag.startswith("fact:"):
                 defaults.append(f"想定参数 {name}（{tag}）没有对应的接口项，保留模型中的值")
     out.defaults = defaults
     return out
@@ -535,6 +564,8 @@ def binding_for(
             iface.points.setdefault(k, v)
         for k, v in extra.routes.items():
             iface.routes.setdefault(k, v)
+        for k, v in extra.facts.items():
+            iface.facts.setdefault(k, v)
     return bind(iface, kit, model)
 
 
@@ -684,7 +715,7 @@ def check_binding(model: dict[str, Any], binding: Binding) -> list[str]:
     none at all, are the model's (or the kit's) business: ``interface_param_issues``."""
     out: list[str] = []
     for name, tag in scenario_tags(model).items():
-        if name not in binding.parameters:
+        if name not in binding.parameters and not tag.startswith("fact:"):
             out.append(
                 f"想定参数 {name}（{tag}）在想定绑定中没有取值：在想定设置的 [binding] 中给出"
             )
