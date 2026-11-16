@@ -255,10 +255,14 @@ def questions(found: list[Branch], baseline: dict[str, Any]) -> list[dict[str, A
             "id": "enemy_range_m",
             "question": f"敌方起始距离？（当前想定 {rng / 1000:g} km，雷达约 "
             f"{float(baseline.get('sensor_range_m') or 6000) / 1000:g} km）",
-            "options": [
-                _opt(f"保持当前 {rng / 1000:g} km", None, True),
-                _opt("6.5 km（刚出雷达范围，较快接敌）", 6500.0),
-                _opt("10 km", 10000.0),
+            "options": [_opt(f"保持当前 {rng / 1000:g} km", None, True)]
+            + [
+                _opt(text, value)
+                for text, value in (
+                    ("6.5 km（刚出雷达范围，较快接敌）", 6500.0),
+                    ("10 km", 10000.0),
+                )
+                if abs(value - rng) > 1.0
             ],
             "recommended": None,
         }
@@ -375,10 +379,10 @@ def variants(
     common: dict[str, Any] = {}
     if answers.get("enemy_range_m"):
         common.setdefault("enemy", {})["range_m"] = float(answers["enemy_range_m"])
-        if not phase_times:
-            t_track, source = track_start(
-                found, baseline | {"enemy_range_m": float(answers["enemy_range_m"])}, None
-            )
+        # another starting distance: the baseline run's times no longer hold
+        t_track, source = track_start(
+            found, baseline | {"enemy_range_m": float(answers["enemy_range_m"])}, None
+        )
     after_end = float(answers.get("end_after_s") or 60.0)
     out: list[dict[str, Any]] = []
 

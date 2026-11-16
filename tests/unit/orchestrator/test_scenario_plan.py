@@ -89,3 +89,15 @@ def test_a_short_lost_answer_runs_only_the_reacquire_case_and_paths_are_judged_i
     states = SP.parse_states("A@0 → STANDOFF_TRACK@100 → TARGET_LOST_HOLD@163 → STANDOFF_TRACK@178")
     assert SP.path_met(states, ["STANDOFF_TRACK", "TARGET_LOST_HOLD", "STANDOFF_TRACK"])
     assert not SP.path_met(states, ["TARGET_LOST_HOLD", "RESUME_SEARCH"])
+
+
+def test_another_starting_distance_drops_the_baseline_times_and_no_option_repeats():
+    found = SP.branches(_model(order=False))
+    vs = SP.variants(found, {"enemy_range_m": 6500.0}, BASE, {"STANDOFF_TRACK": 298.0})
+    assert all("按想定估计" in v["note"] for v in vs)
+    q = next(
+        q
+        for q in SP.questions(found, BASE | {"enemy_range_m": 10000.0})
+        if q["id"] == "enemy_range_m"
+    )
+    assert [o["value"] for o in q["options"]] == [None, 6500.0]
