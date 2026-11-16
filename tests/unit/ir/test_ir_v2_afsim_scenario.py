@@ -176,3 +176,35 @@ def test_a_delayed_enemy_approach_pauses_at_its_start() -> None:
     assert "speed 5 m/s pause_time 800 sec position" in red
     now = generate(_model(), {**KIT, "enemy": enemy}, _contracts())
     assert "pause_time" not in now.extra
+
+
+def test_a_gone_window_deletes_the_enemy_and_brings_a_copy_back() -> None:
+    import copy
+
+    kit = copy.deepcopy(KIT)
+    kit["enemy"] |= {"count": 1, "gone": [[100, 130], [200, None]]}
+    run = generate(_model(), kit, _contracts())
+    assert (
+        'execute at_time 100 sec absolute\n   WsfPlatform p = WsfSimulation.FindPlatform("red_1");'
+        in run.extra
+    )
+    assert "platform red_1_r1 TARGET side red" in run.extra
+    assert "creation_time 130 sec\nend_platform" in run.extra
+    assert 'FindPlatform("red_1_r1")' in run.extra and "at_time 200 sec" in run.extra
+    assert "red_1_r2" not in run.extra  # gone for good
+
+
+def test_gone_windows_split_the_2d_hostile_where_it_would_have_been() -> None:
+    from afsim_research_agent.ir.v2.scenario_interface import Binding, enemy_segments
+
+    b = Binding(origin=(45.0, -121.0), heading_deg=90.0, enemy_range_m=1000.0, end_s=300.0)
+    b.enemy_velocity = (-5.0, 0.0)
+    b.enemy_move_start_s, b.enemy_move_stop_s = 10.0, 110.0
+    b.enemy_gone = [(50.0, 70.0)]
+    segs = enemy_segments(b, 0, (1000.0, 0.0))
+    assert segs[0] == {
+        "id": "e1", "position_m": [1000.0, 0.0], "remove_s": 50.0,
+        "velocity_mps": [-5.0, 0.0], "move_start_s": 10.0, "move_stop_s": 110.0,
+    }  # fmt: skip
+    assert segs[1]["id"] == "e1_r1" and segs[1]["appear_s"] == 70.0
+    assert segs[1]["position_m"] == [700.0, 0.0] and segs[1]["move_start_s"] == 70.0

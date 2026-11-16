@@ -167,6 +167,21 @@ class ScenarioSetArgs(PackageArgs):
     base: str | None = Field(None, description="在这个已有想定文件的基础上修改")
 
 
+class ScenarioVariantsArgs(ScenarioArgs):
+    answers: dict[str, Any] = Field(
+        default_factory=dict,
+        description="scenario_plan 各题的回答 {题目 id: 选项 value}；没问到或用户没答的题用推荐值",
+    )
+    phase_times: dict[str, float] | None = Field(
+        None, description="基准 AFSIM 运行中各状态首次进入的时刻 {状态: 秒}，用来安排分支的时间"
+    )
+    name: str = Field("branch", description="想定文件名前缀（字母数字下划线）")
+
+
+class AfsimBranchesArgs(PackageArgs):
+    scenarios: list[str] = Field(description="scenario_variants 写出的想定文件（工作区路径）")
+
+
 class Simulate2dArgs(ScenarioArgs):
     only: str | None = Field(None, description="只跑某个想定 id（scenario_baseline 为基准想定）")
 
@@ -276,6 +291,32 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
         ScenarioSetArgs,
         "按用户要求写一个新的想定文件（改敌方距离与速度、运行时长、事件时间、点的位置），"
         "不改模型包。调用前会暂停等用户批准。",
+        "scenario",
+        needs_approval=True,
+    ),
+    ToolSpec(
+        "scenario_plan",
+        st3.scenario_plan,
+        ScenarioArgs,
+        "找出模型里需要专门想定才能触发的战术分支（目标丢失、重新获取超时、敌方逼近撤离、"
+        "上级命令），并给出要问用户的问题（带选项和推荐值）。之后用 ask_human 逐题提问。",
+        "scenario",
+    ),
+    ToolSpec(
+        "scenario_variants",
+        st3.scenario_variants,
+        ScenarioVariantsArgs,
+        "按用户对 scenario_plan 问题的回答，为每个分支写一个想定变体文件（不改模型包）。"
+        "调用前会暂停等用户批准。",
+        "scenario",
+        needs_approval=True,
+    ),
+    ToolSpec(
+        "afsim_branches",
+        st3.afsim_branches,
+        AfsimBranchesArgs,
+        "逐个运行分支想定（AFSIM），核对长车是否按期望经过该分支，并判定需求约束。"
+        "调用前会暂停等用户批准。",
         "scenario",
         needs_approval=True,
     ),

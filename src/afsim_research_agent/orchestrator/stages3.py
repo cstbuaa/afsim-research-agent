@@ -412,3 +412,146 @@ def afsim_run(
             "findings": [f.to_dict() for f in findings][:8],
         },
     )
+
+
+# ============================================================================ branch scenarios
+def _baseline(loaded: Loaded, kit: dict[str, Any]) -> dict[str, Any]:
+    b = loaded.binding(kit)
+    speed = next((r.speed_mps for r in b.routes.values()), None)
+    return {
+        "enemy_range_m": b.enemy_range_m,
+        "sensor_range_m": b.sensor_range_m,
+        "end_s": b.end_s,
+        "route_speed_mps": speed or float((kit.get("meta") or {}).get("route_speed_mps", 8.0)),
+    }
+
+
+@guarded("scenario_plan")
+def scenario_plan(ws: Workspace, package: str, *, scenario: str | None = None) -> StageResult:
+    """The branches of a package a scenario has to provoke, and the questions to put to the
+    user (with options and a recommended answer) before the variants are written."""
+    from afsim_research_agent.orchestrator import scenario_plan as SP
+
+    pkg = _package_dir(ws, package)
+    loaded = Loaded(pkg)
+    kit = merge(base_kit(), _overrides(ws, scenario))
+    found = SP.branches(loaded.model)
+    base = _baseline(loaded, kit)
+    qs = SP.questions(found, base)
+    if not found:
+        return StageResult("scenario_plan", "ok", "模型没有需要专门想定触发的分支（只有主流程）")
+    return StageResult(
+        "scenario_plan",
+        "ok",
+        f"找到 {len(found)} 个分支；先用 ask_human 逐题问用户（给出选项，用户不答就用推荐值），"
+        "再用 scenario_variants 生成想定变体",
+        data={
+            "branches": [{"id": b.id, "说明": b.text, "期望经过": b.path} for b in found],
+            "questions": qs,
+            "当前想定": base,
+        },
+        next_steps=[
+            "ask_human（每题一次，选项照抄）",
+            "scenario_variants answers={题目 id: 选项 value}",
+        ],
+    )
+
+
+@guarded("scenario_variants")
+def scenario_variants(
+    ws: Workspace,
+    package: str,
+    *,
+    answers: dict[str, Any] | None = None,
+    phase_times: dict[str, float] | None = None,
+    scenario: str | None = None,
+    name: str = "branch",
+) -> StageResult:
+    """Write one scenario file per branch case from the user's answers (unanswered
+    questions take the recommended value). The package is not changed."""
+    from afsim_research_agent.orchestrator import scenario_plan as SP
+
+    pkg = _package_dir(ws, package)
+    loaded = Loaded(pkg)
+    kit = merge(base_kit(), _overrides(ws, scenario))
+    found = SP.branches(loaded.model)
+    base = _baseline(loaded, kit)
+    qs = SP.questions(found, base)
+    given = SP.recommended(qs) | {k: v for k, v in (answers or {}).items() if v is not None}
+    known = {b.id for b in found}
+    bad = [b for b in given.get("branches") or [] if b not in known]
+    if bad:
+        return StageResult(
+            "scenario_variants", "blocked", f"没有这些分支：{bad}；可选 {sorted(known)}"
+        )
+    rows = SP.variants(found, given, base, phase_times)
+    label = "".join(ch for ch in name if ch.isalnum() or ch in "_-") or "branch"
+    out_rows, files = [], {}
+    for v in rows:
+        overrides = copy.deepcopy(_overrides(ws, scenario))
+        for section, values in v["overrides"].items():
+            overrides.setdefault(section, {}).update(values)
+        target = _runs_base(ws, pkg) / "scenarios" / f"{pkg.name}_{label}_{v['name']}.yaml"
+        path = ws.writable_file(ws.show(target))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        doc = {
+            "package": ws.show(pkg),
+            "created": datetime.now().isoformat(timespec="seconds"),
+            "branch": v["branch"],
+            "expect": v["expect"],
+            "answers": given,
+            "note": v["note"],
+            "overrides": overrides,
+        }
+        path.write_text(yaml.safe_dump(doc, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        files[v["branch"]] = ws.show(path)
+        out_rows.append({"分支": v["branch"], "想定": ws.show(path), "安排": v["note"]})
+    return StageResult(
+        "scenario_variants",
+        "ok",
+        f"已写入 {len(rows)} 个想定变体；用 afsim_branches 逐个运行并核对分支",
+        artifacts={"scenarios": files},
+        data={"variants": out_rows, "answers": given},
+        next_steps=["afsim_branches scenarios=[上面的想定文件]"],
+    )
+
+
+@guarded("afsim_branches")
+def afsim_branches(
+    ws: Workspace, package: str, *, scenarios: list[str], timeout_s: float = 900.0
+) -> StageResult:
+    """Run the package in AFSIM once per branch scenario and judge whether the leader went
+    through the branch (the state sequence the scenario file expects)."""
+    from afsim_research_agent.orchestrator import scenario_plan as SP
+
+    rows = []
+    for sc in scenarios:
+        path = ws.existing(sc, kind="想定文件")
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        expect = doc.get("expect") or {}
+        report(f"AFSIM 分支想定：{doc.get('branch') or path.stem}")
+        res = afsim_run(ws, package, scenario=sc, timeout_s=timeout_s)
+        states = (res.data or {}).get("states") or {}
+        label = f"{expect.get('role')} #1"
+        seq = SP.parse_states(states.get(label, ""))
+        wanted = list(expect.get("visits_in_order") or [])
+        hit = bool(seq) and SP.path_met(seq, wanted)
+        rows.append(
+            {
+                "分支": doc.get("branch"),
+                "触发": hit,
+                "运行通过": res.status == "ok",
+                "期望经过": " → ".join(wanted),
+                "实际": states.get(label, ""),
+                "回放": (res.artifacts or {}).get("replay"),
+                "问题": list(res.problems or [])[:4],
+            }
+        )
+    hit = sum(r["触发"] for r in rows)
+    ok = sum(r["触发"] and r["运行通过"] for r in rows)
+    return StageResult(
+        "afsim_branches",
+        "ok" if ok == len(rows) else "failed",
+        f"AFSIM 分支：{hit}/{len(rows)} 触发并按期望经过，{ok}/{len(rows)} 同时通过需求约束",
+        data={"branches": rows},
+    )

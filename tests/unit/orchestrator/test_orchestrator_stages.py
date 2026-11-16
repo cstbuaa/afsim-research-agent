@@ -332,6 +332,9 @@ def test_the_agent_gets_the_v3_toolset_by_default() -> None:
     assert {"falcon_draft3", "scenario_set", "simulate2d", "afsim_run", "ask_human"} <= v3
     assert not v3 & LEGACY_TOOLS
     assert {"falcon_check", "falcon_fix", "falcon_compile", "simulate"} <= toolset_names("all")
-    assert set(approval_tools(v3)) == {"select_tactic", "scenario_set", "afsim_run"}
+    assert set(approval_tools(v3)) == {
+        "select_tactic", "scenario_set", "afsim_run", "scenario_variants", "afsim_branches"
+    }  # fmt: skip
+    assert {"scenario_plan", "scenario_variants", "afsim_branches"} <= v3
     with pytest.raises(ValueError):
         toolset_names("v4")

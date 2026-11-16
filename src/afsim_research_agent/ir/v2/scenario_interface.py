@@ -240,6 +240,10 @@ class Binding(_Strict):
     # when the approach starts and ends (s); before the start the enemy stands still
     enemy_move_start_s: float = 0.0
     enemy_move_stop_s: float | None = None
+    # windows (s) in which the enemy is out of the scenario (kit ``[enemy] gone``): it is
+    # removed at the first time and back where it would have been at the second (None:
+    # it does not come back); a scenario variant that makes the target lost
+    enemy_gone: list[tuple[float, float | None]] = Field(default_factory=list)
     # search sensor range of our vehicles in the 2D simulation (kit ``[platform]
     # sensor_range_m``); AFSIM's lab radar reaches about 6 km
     sensor_range_m: float = DEFAULT_SENSOR_RANGE_M
@@ -525,6 +529,11 @@ def bind(
         out.enemy_move_stop_s = round(
             out.enemy_move_start_s + max(0.0, rng - out.enemy_stop_m) / approach, 3
         )
+    gone: list[tuple[float, float | None]] = []
+    for w in enemy.get("gone") or []:
+        a, b = (list(w) + [None])[:2]
+        gone.append((float(a), None if b is None else float(b)))
+    out.enemy_gone = sorted(gone, key=lambda w: w[0])
     for i in range(n):
         off = (i - (n - 1) / 2) * gap
         out.enemies_plane.append(
@@ -778,19 +787,55 @@ def bind_scenario(raw: dict[str, Any], model: dict[str, Any], binding: Binding) 
     sc["vehicles"] = vehicles
     if sc.get("hostiles") is None:  # omitted: the binding's; an empty list: no enemy
         sc["hostiles"] = [
-            {"id": f"e{i + 1}", "position_m": list(p)}
-            | (
-                {
-                    "velocity_mps": list(binding.enemy_velocity),
-                    "move_start_s": binding.enemy_move_start_s,
-                    "move_stop_s": binding.enemy_move_stop_s,
-                }
-                if any(binding.enemy_velocity)
-                else {}
-            )
-            for i, p in enumerate(binding.enemies_plane)
+            h for i, p in enumerate(binding.enemies_plane) for h in enemy_segments(binding, i, p)
         ]
     return sc
+
+
+def enemy_at(binding: Binding, p: tuple[float, float], t: float) -> tuple[float, float]:
+    """Where the binding's enemy that starts at ``p`` is at time ``t``."""
+    vx, vy = binding.enemy_velocity
+    if not (vx or vy):
+        return p
+    stop = binding.enemy_move_stop_s
+    moved = max(0.0, (min(t, stop) if stop is not None else t) - binding.enemy_move_start_s)
+    return (round(p[0] + vx * moved, 3), round(p[1] + vy * moved, 3))
+
+
+def enemy_segments(binding: Binding, i: int, p: tuple[float, float]) -> list[dict[str, Any]]:
+    """The 2D hostiles of the binding's enemy ``i``: one per stretch it is in the scenario
+    (``enemy_gone`` windows take it out and bring it back where it would have been)."""
+    moving = any(binding.enemy_velocity)
+    stretches: list[tuple[float, float | None]] = []
+    start = 0.0
+    for a, b in binding.enemy_gone:
+        stretches.append((start, a))
+        if b is None:
+            start = -1.0
+            break
+        start = b
+    if start >= 0:
+        stretches.append((start, None))
+    out = []
+    for k, (t0, t1) in enumerate(stretches):
+        h: dict[str, Any] = {
+            "id": f"e{i + 1}" if k == 0 else f"e{i + 1}_r{k}",
+            "position_m": list(enemy_at(binding, p, t0) if k else p),
+        }
+        if t0 > 0:
+            h["appear_s"] = t0
+        if t1 is not None:
+            h["remove_s"] = t1
+        if moving:
+            stop = binding.enemy_move_stop_s
+            if stop is None or t0 < stop:
+                h |= {
+                    "velocity_mps": list(binding.enemy_velocity),
+                    "move_start_s": max(t0, binding.enemy_move_start_s),
+                    "move_stop_s": stop,
+                }
+        out.append(h)
+    return out
 
 
 def summary(binding: Binding) -> str:

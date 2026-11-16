@@ -215,6 +215,57 @@ def _dedupe_aux(lines: list[str]) -> list[str]:
     return out
 
 
+def _gone(
+    bound: Any,
+    enemy: dict[str, Any],
+    name: str,
+    start_ne: tuple[float, float],
+    origin: tuple[float, float],
+    heading: float,
+) -> list[str]:
+    """``[enemy] gone`` windows: the enemy platform is deleted at the window's start and a
+    copy (``<name>_r<k>``, ``creation_time``) appears at the window's end where the enemy
+    would have been, driving on if it was approaching. AFSIM input lines."""
+    from afsim_research_agent.ir.v2.scenario_interface import enemy_at
+
+    out: list[str] = []
+    current = name
+    ahead = math.radians(heading)
+    speed = float(enemy.get("approach_speed_mps", 0.0) or 0.0)
+    stop_m = float(enemy.get("stop_range_m", 500.0))
+    side_off = start_ne  # (north, east) of the enemy's start
+    for k, (t0, t1) in enumerate(bound.enemy_gone, start=1):
+        out.append(
+            f"execute at_time {t0:g} sec absolute\n"
+            f'   WsfPlatform p = WsfSimulation.FindPlatform("{current}");\n'
+            "   if (p.IsValid()) { p.DeletePlatform(); }\n"
+            "end_execute"
+        )
+        if t1 is None:
+            break
+        # where it would have been: the 2D binding's motion, east / north from the origin
+        p_en = (side_off[1], side_off[0])
+        east, north = enemy_at(bound, p_en, t1)
+        lat, lon = _pos(*_offset(*origin, north, east))
+        current = f"{name}_r{k}"
+        text = _fill(enemy.get("platform", ""), {"name": current, "lat": lat, "lon": lon})
+        stop_t = bound.enemy_move_stop_s
+        if speed > 0 and f"position {lat} {lon}" in text and (stop_t is None or t1 < stop_t):
+            # still approaching: on to the stop point
+            lat_off = -side_off[0] * math.sin(ahead) + side_off[1] * math.cos(ahead)
+            n2 = stop_m * math.cos(ahead) + lat_off * math.cos(ahead + math.pi / 2)
+            e2 = stop_m * math.sin(ahead) + lat_off * math.sin(ahead + math.pi / 2)
+            lat2, lon2 = _pos(*_offset(*origin, n2, e2))
+            text = text.replace(
+                f"position {lat} {lon}",
+                f"heading {(heading + 180.0) % 360.0:g} deg route position {lat} {lon} speed "
+                f"{speed:g} m/s position {lat2} {lon2} speed {speed:g} m/s end_route",
+            )
+        head, sep, tail = text.rpartition("end_platform")
+        out.append(f"{head}creation_time {t1:g} sec\n{sep}{tail}" if sep else text)
+    return out
+
+
 def generate(
     model: dict[str, Any],
     kit: dict[str, Any],
@@ -363,6 +414,7 @@ def generate(
                 f"{speed:g} m/s{pause} position {lat2} {lon2} speed {speed:g} m/s end_route",
             )
         enemies.append(text)
+        enemies += _gone(bound, enemy, name, (north, east), (lat0, lon0), heading)
 
     end_s = max(float(meta.get("end_time_s", 80)), float(bound.end_s))
     events = []
