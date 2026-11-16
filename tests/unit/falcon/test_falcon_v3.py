@@ -1114,5 +1114,5 @@ def test_coarse_granularity_adds_the_phase_rules_to_both_drafting_prompts() -> N
     args = ("需求", [], "稿", "详情", ["member"], {"member": ["WAITING"]})
     assert "粗粒度" not in P.control_prompt(*args)
     assert P.COARSE_CONTROL in P.control_prompt(*args, coarse=True)
-    assert V3Request(model_id="m").granularity == "fine"
-    assert V3Request(model_id="m", granularity="coarse").granularity == "coarse"
+    assert V3Request(model_id="m", requirement="r").granularity == "fine"
+    assert V3Request(model_id="m", requirement="r", granularity="coarse").granularity == "coarse"

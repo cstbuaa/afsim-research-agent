@@ -505,6 +505,7 @@ def leader_actions(contracts: Any) -> set[str]:
     }
 
 
+ACTING = ("movement.", "nav.", "formation.", "engagement.", "weapon.", "threat_allocation.")
 TERMINAL = re.compile(r"^(COMPLETE|COMPLETED|DONE|END|FINISHED|MISSION_COMPLETE)$", re.I)
 
 
@@ -571,13 +572,28 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
                     )
         if kinds.get(role) == "member" and _commanded(spec, leaders, contracts, tactics):
             stages = [st for st in mission["states"] if not TERMINAL.search(str(st))]
-            if len(stages) > 2:
+            # perception-only phases (search / track / reacquire) are the follower's own
+            # business (the pilot skeletons K1-K5); phases that also move, deploy or engage
+            # are a second copy of the leader's plan, and drift out of step with it
+            own: set[str] = set()
+            for st in stages:
+                used = element_actions(spec, f"{role}.{st}", tactics) or set()
+                inside = set().union(
+                    *(
+                        element_actions(spec, t, tactics) or set()
+                        for t in used
+                        if str(t).startswith("perception.")
+                    )
+                )
+                own |= {a for a in used - inside if str(a).startswith(ACTING)}
+            if len(stages) > 2 and own:
                 out.append(
                     (
                         f"missions.{role}",
                         f"FOLLOWER_FSM 角色 {role} 由长车的编队指挥带动（长车的树里有编队站位"
-                        f"指挥），却写了自己的 {len(stages)} 个阶段（{'、'.join(map(str, stages[:6]))}）"
-                        "：僚车按自己的感知切换阶段会与长车不同步（长车已展开、僚车还在搜索，"
+                        f"指挥），却写了自己的 {len(stages)} 个阶段（{'、'.join(map(str, stages[:6]))}），"
+                        f"并在其中自己行驶或交战（{'、'.join(sorted(own)[:4])}）"
+                        "：僚车按自己的判断切换阶段会与长车不同步（长车已展开、僚车还在搜索，"
                         "或僚车自己判目标丢失后来回兜圈）。被指挥的僚车只要两个状态：FOLLOW"
                         "（只做感知）和 SHUTDOWN（结束请求后安全收尾）。用 "
                         f'simplify_follower {{"role": "{role}"}} 一步改好（同时改写该角色的测试和'
