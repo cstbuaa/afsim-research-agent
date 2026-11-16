@@ -404,6 +404,20 @@ def test_the_enemy_distance_follows_the_requirement_and_the_model() -> None:
     assert b.enemy_range_m == 8000.0
     assert b.ahead_m == 5000.0  # the route ends inside radar range of the enemy
     assert b.end_s >= (8000.0 - 6000.0) / 8.0 + 180.0  # long enough to reach the contact
+    # a route the kit lays out (no interface route) moves the model forward as well
+    kit_route = {
+        "roles": {
+            "leader": {
+                "states": {
+                    "S": [
+                        {"action": "movement.follow_route"},
+                        {"action": "perception.start_search"},
+                    ]
+                }
+            }
+        }
+    }
+    assert bind(derive("沿想定给定路线机动搜索"), {}, kit_route).enemy_range_m == 8000.0
     # an engaging model keeps the enemy within weapon range
     assert profile(advance, strike).enemy_range_m is None
     assert bind(advance, {}, strike).enemy_range_m == 650.0

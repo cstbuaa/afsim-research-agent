@@ -392,7 +392,9 @@ def profile(
         out.enemy_range_m = stated
         out.notes.append(f"敌方距离取 {stated:g} m（需求：{interface.facts['enemy']}）")
     elif not engaging:
-        searching = bool(interface.routes) and any(
+        # moving forward: a route of the interface, or a route the kit lays out for the model
+        moving = bool(interface.routes) or "movement.follow_route" in refs
+        searching = moving and any(
             r in SEARCH_ACTIONS or (r.startswith("perception.") and "search" in r) for r in refs
         )
         if searching:
