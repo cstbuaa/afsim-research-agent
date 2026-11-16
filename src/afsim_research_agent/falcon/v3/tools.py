@@ -44,6 +44,7 @@ WRITE_TOOLS = (
     "set_expectation",
     "set_scenario",
     "set_test",
+    "simplify_follower",
 )
 READ_TOOLS = ("explain_check", "eval_condition", "who_writes", "history")
 
@@ -1077,6 +1078,8 @@ def structured(fixer: Any, op: str, a: dict[str, Any]) -> dict[str, str] | str:
         return texts
     if op == "use_tree_event":
         return _use_tree_event(fixer, a)
+    if op == "simplify_follower":
+        return _simplify_follower(fixer, a)
     if op in ("set_expectation", "set_scenario", "set_test"):
         return _verification_edit(fixer, op, a, texts)
     if op in ("set_state_tree", "attach_subtree"):
@@ -1213,3 +1216,137 @@ def lint(fixer: Any, before: dict[str, str], after: dict[str, str]) -> tuple[str
                     "需求确实要求等待时可以保留，否则改为读本状态动作写入的字段或用树事件"
                 )
     return None, warnings
+
+
+FOLLOW_SUBTREES = ("perception.search_for_target", "perception.track_selected_target")
+SHUTDOWN_SUBTREES = ("perception.safe_sensor_shutdown",)
+
+
+def _simplify_follower(fixer: Any, a: dict[str, Any]) -> dict[str, str] | str:
+    """A follower the leader's formation steps drive gets two states: FOLLOW (its own
+    sensing only) and SHUTDOWN (safe sensor shutdown after the end request), then COMPLETE.
+    Its L2 tests become one cancel test, its L3 expectations "reaches FOLLOW" (or SHUTDOWN
+    after the end request), and the model's references to its old states point to FOLLOW.
+    The tests are rewritten because the states they named no longer exist (FOLLOWER_FSM)."""
+    from afsim_research_agent.falcon.v3.fixer import _rebuild
+
+    role = str(a.get("role") or "").strip()
+    got = _mermaid(fixer, role)
+    if isinstance(got, str):
+        return got
+    mkey, mtext = got
+    texts = {b.key: b.text for b in fixer.d.blocks}
+    try:
+        model = yaml.safe_load(texts.get("model") or "") or {}
+    except yaml.YAMLError:
+        model = {}
+    model = model if isinstance(model, dict) else {}
+    events = (model.get("events") or {}) if isinstance(model, dict) else {}
+    externals = [
+        k for k, v in events.items() if isinstance(v, dict) and v.get("source") == "external"
+    ]
+    cancel = "cancelled" if "cancelled" in externals else (externals[0] if externals else None)
+    if cancel is None:
+        return "model 的 events 里没有外部的结束请求（如 cancelled: {source: external}），先用 declare_event 声明"
+    roles = model.get("roles") or {}
+    if role not in roles:
+        return f"model 的 roles 里没有 {role}；现有：{list(roles)}"
+    tactics = fixer.d.c.tactics
+
+    def pick(names: tuple[str, ...], word: str) -> str:
+        subs = [k for k, t in tactics.items() if getattr(t, "section", "") == "subtrees"]
+        return next((t for t in names if t in tactics), "") or next(
+            (k for k in subs if word in k), ""
+        )
+
+    follow = str(a.get("follow") or pick(FOLLOW_SUBTREES, "search"))
+    shutdown = str(a.get("shutdown") or pick(SHUTDOWN_SUBTREES, "shutdown"))
+    if not follow or follow not in tactics:
+        return f"战术集里没有可用的感知子树（{', '.join(FOLLOW_SUBTREES)}）；用 follow 指定"
+    old_states = sorted(_states(mtext))
+    old_tree = (fixer._block(f"pytree:{role}") or type("B", (), {"text": ""})).text.splitlines()
+    shut_body: list[str] = []
+    if not shutdown:  # no shutdown subtree: keep the role's own shutdown state's body
+        for st in old_states:
+            span = _fn_span(old_tree, st) if re.search(r"SHUT|STOP|SAFE", st) else None
+            if span:
+                shut_body = old_tree[span[0] + 1 : span[1]]
+                break
+        if not shut_body:
+            return "战术集里没有安全关机子树，原状态里也没有关机状态；用 shutdown 指定一个子树"
+    done = f"{role}_shutdown_done"
+    saved = fixer.d.blocks
+    try:
+        texts = structured(
+            fixer, "declare_event", {"name": done, "source": "tree", "result": "success"}
+        )
+        if isinstance(texts, str):
+            return texts
+        texts.pop("_note", None)
+        texts[mkey] = "\n".join(
+            [
+                "stateDiagram-v2",
+                "  [*] --> FOLLOW",
+                f"  FOLLOW --> SHUTDOWN : {cancel}",
+                f"  SHUTDOWN --> COMPLETE : {done}",
+                "  COMPLETE --> [*]",
+            ]
+        )
+        shut = [f'    tactic("{shutdown}")'] if shutdown else shut_body
+        texts[f"pytree:{role}"] = "\n".join(
+            [
+                "def FOLLOW():",
+                "    # 由长车的编队动作带动行驶；本车只做感知",
+                f'    tactic("{follow}")',
+                "",
+                "def SHUTDOWN():",
+                *shut,
+            ]
+        )
+        # the model's clause / implements references to the old states
+        if texts.get("model"):
+            texts["model"] = re.sub(
+                rf"\b{re.escape(role)}\.(?!FOLLOW\b|SHUTDOWN\b|COMPLETE\b)[A-Z][A-Z0-9_]*\b",
+                f"{role}.FOLLOW",
+                texts["model"],
+            )
+        vb = texts.get("verification")
+        if vb:
+            try:
+                data = yaml.safe_load(vb) or {}
+            except yaml.YAMLError:
+                data = None
+            root = _vroot(data)
+            if root:
+                tests = [
+                    t for t in root.get("tests") or [] if (t.get("given") or {}).get("role") != role
+                ]
+                tests.append(
+                    {
+                        "id": f"{role}_cancel_shutdown",
+                        "given": {"role": role, "state": "FOLLOW", "events": [cancel]},
+                        "expect": {"next_state": "SHUTDOWN"},
+                    }
+                )
+                root["tests"] = tests
+                for sc in root.get("scenarios") or []:
+                    raised = any(
+                        isinstance(e, dict) and e.get("event") == cancel
+                        for e in sc.get("events") or []
+                    )
+                    for e in sc.get("expect") or []:
+                        if isinstance(e, dict) and e.get("role") == role:
+                            keep = {k: e[k] for k in ("id", "role", "instance") if k in e}
+                            e.clear()
+                            e.update(keep)
+                            e["reaches"] = "SHUTDOWN" if raised else "FOLLOW"
+                texts["verification"] = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+        fixer.d.blocks = _rebuild(fixer.d.blocks, texts)
+        out = {b.key: b.text for b in fixer.d.blocks}
+    finally:
+        fixer.d.blocks = saved
+    out["_note"] = (
+        f"{role} 改为 FOLLOW（{follow}）→ SHUTDOWN（{shutdown or '原关机动作'}）→ "
+        f"COMPLETE；原来的状态 {', '.join(old_states)} 已去掉，相关测试和期望已改写"
+    )
+    return out

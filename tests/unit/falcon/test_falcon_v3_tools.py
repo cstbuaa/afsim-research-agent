@@ -497,3 +497,40 @@ def test_the_loop_drafts_a_missing_verification_block_once_l1_passes(contracts: 
     assert outcome.log[0]["action"] == "draft_verification", outcome.log[0]
     assert "已按验证阶段补写" in outcome.log[0]["result"]
     assert any(b.kind == "verification" for b in drafter.blocks)
+
+
+def test_simplify_follower_rewrites_the_role_and_its_tests(contracts: Contracts):
+    fixer = _fixer(contracts)
+    texts = T.structured(fixer, "simplify_follower", {"role": "scout"})
+    assert isinstance(texts, dict), texts
+    mer = texts["mermaid:scout"]
+    assert "[*] --> FOLLOW" in mer and "FOLLOW --> SHUTDOWN : cancelled" in mer
+    assert "SHUTDOWN --> COMPLETE : scout_shutdown_done" in mer
+    tree = texts["pytree:scout"]
+    assert 'tactic("sense.search")' in tree and "sense.off()" in tree  # old shutdown body kept
+    assert "def MOVE" not in tree
+    assert "scout_shutdown_done: {result: success, source: tree}" in texts["model"]
+    assert "scout.FOLLOW" in texts["model"] and "scout.MOVE" not in texts["model"]
+    ver = texts["verification"]
+    assert "sees_target" not in ver and "scout_cancel_shutdown" in ver
+    assert "reaches: SHUTDOWN" in ver and "within_s" not in ver
+    assert "MOVE" in texts["_note"]
+    assert "没有角色" in T.structured(fixer, "simplify_follower", {"role": "nobody"})
+
+
+def test_a_show_loop_applies_the_call_the_check_result_wrote(contracts: Contracts, monkeypatch):
+    from afsim_research_agent.falcon.llm import ModelRunner, ScriptedModel
+    from afsim_research_agent.falcon.v3.fixer import ready_calls
+
+    text = 'x set_condition {"name": "a", "expr": "b"} y simplify_follower {"role": "<role>"}'
+    assert ready_calls(text) == [("set_condition", {"name": "a", "expr": "b"})]
+    explain = T.explain_check
+    fix = ' 改法：set_condition {"name": "target_seen", "expr": "sense.target.valid"}'
+    monkeypatch.setattr(T, "explain_check", lambda f, c: explain(f, c) + fix)
+    drafter = _fix_drafter(contracts, GUARDED)
+    look = {"thought": "再看看", "action": "show", "args": {"block": "conditions"}}
+    model = ScriptedModel({"fix:v3:step": [look] * 5 + [{"action": "finish", "args": {}}]})
+    outcome = asyncio.run(fix_sheet(drafter, ModelRunner(model), max_steps=8))
+    assert outcome.solved, [r["result"][-300:] for r in outcome.log]
+    auto = [r for r in outcome.log if "自动修改" in r["result"]]
+    assert len(auto) == 1 and "set_condition" in auto[0]["result"]

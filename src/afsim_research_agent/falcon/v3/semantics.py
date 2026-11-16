@@ -505,6 +505,25 @@ def leader_actions(contracts: Any) -> set[str]:
     }
 
 
+TERMINAL = re.compile(r"^(COMPLETE|COMPLETED|DONE|END|FINISHED|MISSION_COMPLETE)$", re.I)
+
+
+def _commanded(
+    spec: dict[str, Any], leaders: list[str], contracts: Any, tactics: dict[str, Any]
+) -> bool:
+    """Whether a leader's trees move other vehicles (a formation step claiming the
+    followers' locomotion): the members are then driven by the leader."""
+    cmd = commanding_actions(contracts)
+    if not cmd:
+        return False
+    for lead in leaders:
+        mission = (spec.get("missions") or {}).get(lead) or {}
+        for st in mission.get("states") or []:
+            if (element_actions(spec, f"{lead}.{st}", tactics) or set()) & cmd:
+                return True
+    return False
+
+
 def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any]) -> list[Problem]:
     """ROLE_FIELD, ENTRY_TRUE, NEXT_STATE_FIELD, ROLE_COUNT, COMMAND_ROLE (module doc)."""
     ENTRY_ITEMS.clear()
@@ -550,6 +569,22 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
                             "COMMAND_ROLE",
                         )
                     )
+        if kinds.get(role) == "member" and _commanded(spec, leaders, contracts, tactics):
+            stages = [st for st in mission["states"] if not TERMINAL.search(str(st))]
+            if len(stages) > 2:
+                out.append(
+                    (
+                        f"missions.{role}",
+                        f"FOLLOWER_FSM 角色 {role} 由长车的编队指挥带动（长车的树里有编队站位"
+                        f"指挥），却写了自己的 {len(stages)} 个阶段（{'、'.join(map(str, stages[:6]))}）"
+                        "：僚车按自己的感知切换阶段会与长车不同步（长车已展开、僚车还在搜索，"
+                        "或僚车自己判目标丢失后来回兜圈）。被指挥的僚车只要两个状态：FOLLOW"
+                        "（只做感知）和 SHUTDOWN（结束请求后安全收尾）。用 "
+                        f'simplify_follower {{"role": "{role}"}} 一步改好（同时改写该角色的测试和'
+                        "期望）；阶段由长车的状态图决定",
+                        "FOLLOWER_FSM",
+                    )
+                )
         # capability cards of the role's state trees: who can run them, whether they end
         cards: dict[str, Any] = {}
         for st in mission["states"]:

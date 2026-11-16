@@ -111,6 +111,7 @@ class FixStep(BaseModel):
         "set_expectation",
         "set_scenario",
         "set_test",
+        "simplify_follower",
     ]
     args: dict[str, Any] = Field(default_factory=dict)
 
@@ -210,6 +211,8 @@ RULES = """你在修正一份战术稿（v3）。每一步调用一个工具，�
 - set_test {"id": L2 测试 ID, "actions": {动作: "success"|"failure"}, "blackboard": {…}, "next_state": 状态, "because"}：
   改一个 L2 测试的给定（模拟的动作结果、黑板值）或期望的下一状态（例如判断状态改用树成功/失败事件后，
   “无效 → HOLDING”的测试要把检查动作模拟为失败）。
+- simplify_follower {"role": 僚车角色}：由长车编队指挥带动的僚车改成 FOLLOW（只做感知）+ SHUTDOWN 两个状态，
+  同时改写它的测试和期望（FOLLOWER_FSM 的改法）。
 - edit {"changes": [{"block", "old": "原文片段", "new": "新文本"} 或 {"block", "text": "整块新内容"}]}：文本替换（兜底）；old 必须唯一。
 - try_edit {"op": 上面任一修改工具名, "args": {…}}：试改，只返回得分变化，不保存。
 - revert {"block": 块名} 或 {"step": 步数}：恢复一个块的初始内容，或撤销某一步及之后的修改。
@@ -428,6 +431,26 @@ class SheetFixer:
         return f"已记录：{cid} 归为 {triage.CATEGORY_TEXT[category]}。" + (
             f"还要处理的失败项：{left}" if left else "其余失败项都不是稿件的问题，可以 finish。"
         )
+
+    def auto_apply(self, reason: str) -> str | None:
+        """Show loops (c332 / c333: the model kept reading after the check result had
+        already written the call that fixes the first failure): apply the first ready-made
+        call in the check result (and the first failure's explanation) that is accepted,
+        skipping calls tried before. Returns the apply result, or None if none went in."""
+        first = T.first_failure(self)
+        text = self.check() + ("\n" + T.explain_check(self, first) if first else "")
+        done = getattr(self, "auto_tried", set())
+        self.auto_tried = done
+        for op, args in ready_calls(text):
+            key = op + json.dumps(args, ensure_ascii=False, sort_keys=True)
+            if key in done:
+                continue
+            done.add(key)
+            before = len(self.edits)
+            got = self.apply(op, {**args, "because": "检查结果给出的改法"}, reason)
+            if len(self.edits) > before:
+                return f"{op} {json.dumps(args, ensure_ascii=False)[:300]}\n{got}"
+        return None
 
     def read_refused(self, action: str) -> str | None:
         """Reads stop once there is enough to act on (L2/L3/AFSIM stage)."""
@@ -1315,6 +1338,36 @@ def _prompt(fixer: SheetFixer, records: list[dict[str, Any]], remaining: int) ->
     return "\n\n".join(str(p) for p in parts if p)
 
 
+READY_OPS = (
+    "simplify_follower",
+    "use_tree_event",
+    "attach_subtree",
+    "set_trigger",
+    "add_transition",
+    "set_condition",
+    "declare_event",
+    "set_expectation",
+    "set_test",
+)
+READY_CALL = re.compile(rf"\b({'|'.join(READY_OPS)})\s+(?=\{{)")
+
+
+def ready_calls(text: str) -> list[tuple[str, dict[str, Any]]]:
+    """Tool calls written out in a check result (``op {json}``), in order, without repeats."""
+    dec = json.JSONDecoder()
+    out: list[tuple[str, dict[str, Any]]] = []
+    for m in READY_CALL.finditer(text):
+        try:
+            args, _ = dec.raw_decode(text, m.end())
+        except ValueError:
+            continue
+        if isinstance(args, dict) and args and (m.group(1), args) not in out:
+            if any(isinstance(v, str) and "<" in v for v in args.values()):
+                continue  # a template (<role>), not a call
+            out.append((m.group(1), args))
+    return out
+
+
 async def fix_sheet(
     drafter: Any, run: ModelRunner, max_steps: int = 20, l1_only: bool = False
 ) -> FixOutcome:
@@ -1486,6 +1539,14 @@ async def fix_sheet(
                 f"\n（已连续 {idle + 1} 步没有修改。信息已经够用：下一步{nxt}，"
                 "改错了可以 revert；不要再重复查看同一段）"
             )
+        if (
+            action.action not in quiet
+            and (refused_read is not None or idle >= 3)
+            and not fixer.solved
+        ):
+            auto = fixer.auto_apply(f"连续查看未修改，自动采用检查结果给出的改法（{reason[:100]}）")
+            if auto is not None:
+                result += "\n（连续查看没有修改：已按检查结果给出的改法自动修改）\n" + auto
         records.append(
             {
                 "step": step,
@@ -1505,7 +1566,7 @@ async def fix_sheet(
             best_step = step
         # progress also counts an applied edit or an AFSIM re-run (an edit that leaves the
         # 2D score unchanged may still fix what AFSIM showed)
-        applied = action.action in WRITES and len(fixer.edits) > edits_before
+        applied = len(fixer.edits) > edits_before  # a write, or an automatic one
         if applied or (
             action.action in ("run_afsim", "classify")
             and not str(result).startswith(("不接受", "check 写", "category", "写出"))
