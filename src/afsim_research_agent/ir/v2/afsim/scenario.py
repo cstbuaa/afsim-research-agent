@@ -248,8 +248,10 @@ def generate(
     ahead = math.radians(heading)
     across = math.radians(heading + 90.0)
     enemy = kit.get("enemy") or {}
-    rng = float(enemy.get("range_m", 650.0))
-    ahead_m = float(meta.get("ahead_m", rng / 2))
+    # the binding's distance: the requirement's or the model's when they need another one
+    # than the kit's (ir.v2.scenario_interface.profile)
+    rng = float(bound.enemy_range_m)
+    ahead_m = float(bound.ahead_m)
     a_lat, a_lon = _offset(lat0, lon0, ahead_m * math.cos(ahead), ahead_m * math.sin(ahead))
     if "ahead" in bound.points_geo:
         # the scenario's own "ahead" point (a scenario may move it): the kit's routes and
@@ -362,7 +364,7 @@ def generate(
             )
         enemies.append(text)
 
-    end_s = float(meta.get("end_time_s", 80))
+    end_s = max(float(meta.get("end_time_s", 80)), float(bound.end_s))
     events = []
     model_events = model.get("events") or {}
     for ev, at in (kit.get("events") or {}).items():

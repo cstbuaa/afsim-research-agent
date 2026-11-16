@@ -202,7 +202,8 @@ def main() -> None:
         "--afsim-run",
         action="append",
         default=[],
-        help="<word in the package path>=<run config>, e.g. strike=…/strike_allocation_v1.toml",
+        help="<word in the package path>=<run config> or =kit:<scenario kit> (a run laid out "
+        "from the model), e.g. strike=…/strike_allocation_v1.toml",
     )
     ap.add_argument("--afsim-rounds", type=int, default=3)
     ap.add_argument("--afsim-steps", type=int, default=8)
@@ -233,13 +234,22 @@ def main() -> None:
             if a.afsim_binding is not None and word is not None:
                 from afsim_research_agent.falcon.v3.afsim_loop import AfsimConfig
 
+                spec = runs[word]
+                # "kit:<path>": the run is laid out from the model and its scenario binding
+                # (the same values the 2D checks use), not a handwritten run
+                kit = Path(spec[4:]) if spec.startswith("kit:") else None
                 cfg = AfsimConfig(
                     binding=a.afsim_binding,
-                    runs=[Path(runs[word])],
+                    runs=[] if kit is not None else [Path(spec)],
                     mission=a.afsim_mission or "mission",
                     rounds=a.afsim_rounds,
                     steps=a.afsim_steps,
+                    kit=kit,
                 )
+                if kit is not None:
+                    from afsim_research_agent.ir.v2.afsim.scenario import load_kit
+
+                    d.kit = load_kit(kit)
             stage = (a.staging or a.out.parent / "afsim_work") / f"r{i:03d}"
             res = asyncio.run(run_one(d, model, a.max_steps, cfg, stage))
             log = res.pop("_log", [])

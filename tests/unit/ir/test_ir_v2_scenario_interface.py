@@ -55,7 +55,10 @@ def test_the_binding_gives_every_name_a_reasonable_value() -> None:
     b = bind(iface)  # no kit: every value is a default
     assert b.points_plane["post"] == (0.0, 0.0)
     east, north = b.points_plane["ahead"]
-    assert east == pytest.approx(325.0) and abs(north) < 1e-6  # half of 650 m, due east
+    # the requirement's enemy (about 1.5 km east) sets the distance; the point ahead stays
+    # within 350 m of the start
+    assert b.enemy_range_m == 1500.0
+    assert east == pytest.approx(350.0) and abs(north) < 1e-6
     assert b.parameters["rt_approach"] == "ir_route_approach"
     lat, lon = b.parameters["pt_ahead_lat"], b.parameters["pt_ahead_lon"]
     assert lat == pytest.approx(45.0) and lon > -121.0
@@ -76,7 +79,7 @@ def test_the_binding_gives_every_name_a_reasonable_value() -> None:
     b = bind(iface, kit)
     assert b.points_plane["ahead"][0] == pytest.approx(350.0)
     assert b.events["cancelled"] == 100.0 and b.events["fire_order"] is None
-    assert b.enemies_plane[0][0] == pytest.approx(1800.0)
+    assert b.enemies_plane[0][0] == pytest.approx(1500.0)  # the requirement's, not the kit's
 
 
 def test_a_model_carries_its_interface_in_its_parameters() -> None:
@@ -378,3 +381,38 @@ def test_the_2d_sensor_range_follows_the_kit_and_defaults_to_the_lab_radar() -> 
     kit = {"platform": {"sensor_range_m": 4500}}
     sc = bind_scenario({"id": "s"}, model, bind(iface, kit))
     assert sc["vehicles"]["car"][0]["sensor"]["range_m"] == 4500.0
+
+
+def test_the_enemy_distance_follows_the_requirement_and_the_model() -> None:
+    from afsim_research_agent.ir.v2.scenario_interface import (
+        bind,
+        derive,
+        enemy_distance,
+        model_thresholds,
+        profile,
+    )
+
+    assert enemy_distance("东方约10至20公里处") == 10_000.0
+    assert enemy_distance("北侧约 800 米") == 800.0
+    search = {"roles": {"leader": {"states": {"S": {"action": "perception.start_search"}}}}}
+    strike = {"roles": {"leader": {"states": {"S": {"action": "engagement.fire_selected_weapon"}}}}}
+    advance = derive("纵队沿路线搜索前进，发现敌方目标后展开横队")
+    # a searching advance without a stated distance: the enemy beyond the radar
+    p = profile(advance, search, sensor_m=6000.0)
+    assert p.enemy_range_m == 8000.0 and p.notes
+    b = bind(advance, {}, search)
+    assert b.enemy_range_m == 8000.0
+    assert b.ahead_m == 5000.0  # the route ends inside radar range of the enemy
+    assert b.end_s >= (8000.0 - 6000.0) / 8.0 + 180.0  # long enough to reach the contact
+    # an engaging model keeps the enemy within weapon range
+    assert profile(advance, strike).enemy_range_m is None
+    assert bind(advance, {}, strike).enemy_range_m == 650.0
+    # the requirement's distance wins; the model's decision distances must fit in the run
+    stated = derive("向东搜索前进，东方约10至20公里处可能有一辆敌方装甲车")
+    assert bind(stated, {}, search).enemy_range_m == 10_000.0
+    standoff = {
+        "parameters": {"withdraw_dist": {"value": 12_000, "unit": "m"}, "spacing_m": 60},
+        **search,
+    }
+    assert model_thresholds(standoff) == {"withdraw_dist": 12_000.0}
+    assert bind(stated, {}, standoff).enemy_range_m == 13_000.0

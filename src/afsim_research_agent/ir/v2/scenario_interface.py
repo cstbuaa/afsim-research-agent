@@ -231,6 +231,7 @@ class Binding(_Strict):
     # search sensor range of our vehicles in the 2D simulation (kit ``[platform]
     # sensor_range_m``); AFSIM's lab radar reaches about 6 km
     sensor_range_m: float = DEFAULT_SENSOR_RANGE_M
+    ahead_m: float = 350.0  # the "ahead" anchor's distance towards the enemy
     defaults: list[str] = Field(default_factory=list)  # values initialised by default
 
     def route_named(self, name: str) -> BoundRoute | None:
@@ -275,6 +276,118 @@ def interface_of(model_or_spec: dict[str, Any]) -> ScenarioInterface:
     return out
 
 
+# ------------------------------------------------------------------------------ profile
+_THRESHOLD_NAME = re.compile(r"dist|range|standoff|withdraw|monitor|detect|距离", re.I)
+_NOT_THRESHOLD = re.compile(r"spacing|offset|toleran|step|slot|band|error|speed|arriv", re.I)
+SEARCH_ACTIONS = {"perception.start_search", "perception.search_for_target"}
+
+
+class Profile(_Strict):
+    """The scenario values one behaviour model needs, with where each came from."""
+
+    enemy_range_m: float | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
+def enemy_distance(text: str) -> float | None:
+    """The nearest enemy distance a requirement's enemy phrase states, in metres ("东方约
+    10至20公里" → 10000): the lower end of a span (the harder case for the sensor)."""
+    m = re.search(r"([\d.]+)\s*(?:至|到|-|~|～)\s*([\d.]+)\s*(公里|千米|km|米|m)", text or "")
+    if m:
+        value, unit = float(m.group(1)), m.group(3)
+    else:
+        m = re.search(r"([\d.]+)\s*(公里|千米|km|米|m)", text or "")
+        if not m:
+            return None
+        value, unit = float(m.group(1)), m.group(2)
+    return value * (1000.0 if unit in ("公里", "千米", "km") else 1.0)
+
+
+def model_thresholds(model: dict[str, Any]) -> dict[str, float]:
+    """Distances the model decides on (standoff, withdraw, detection ranges, in metres):
+    its distance parameters and the distance arguments it gives to actions and tactics."""
+    out: dict[str, float] = {}
+
+    def metres(v: Any) -> float | None:
+        if isinstance(v, dict):
+            unit = str(v.get("unit") or v.get("units") or "m")
+            v = v.get("value")
+            if unit not in ("m", "metre", "meter", "km"):
+                return None
+            if isinstance(v, int | float) and unit == "km":
+                return float(v) * 1000.0
+        return float(v) if isinstance(v, int | float) and not isinstance(v, bool) else None
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for k, v in node.items():
+                key = str(k)
+                if _THRESHOLD_NAME.search(key) and not _NOT_THRESHOLD.search(key):
+                    value = metres(v)
+                    if value is not None and 50.0 <= value <= 100_000.0:
+                        out[key] = max(out.get(key, 0.0), value)
+                walk(v)
+        elif isinstance(node, list):
+            for v in node:
+                walk(v)
+
+    walk(model.get("parameters") or {})
+    walk(model.get("roles") or {})
+    walk(model.get("subtrees") or {})
+    return out
+
+
+def profile(
+    interface: ScenarioInterface,
+    model: dict[str, Any] | None,
+    *,
+    sensor_m: float = DEFAULT_SENSOR_RANGE_M,
+    speed_mps: float = DEFAULT_ROUTE_SPEED_MPS,
+) -> Profile:
+    """The enemy distance this model's scenarios need, by priority:
+
+    1. the requirement states it (the interface's enemy fact): that distance;
+    2. the model searches its way forward (a route forward and a search action) and does
+       not engage: beyond the radar (``sensor_m`` + 2 km), so the advance happens;
+    3. otherwise none (the kit's or the default distance: within radar and weapon range).
+
+    Then the model's own decision distances (standoff, withdraw, …) must lie inside the run:
+    the enemy starts at least 1 km beyond the largest one."""
+    out = Profile()
+    refs: set[str] = set()
+    if model is not None and model.get("roles"):
+        from afsim_research_agent.ir.v2.afsim.scenario import model_refs
+
+        refs = set().union(*model_refs(model).values())
+    # engaging models keep the enemy within weapon range (the kit's or default distance)
+    engaging = any(r.startswith(("engagement.", "threat_allocation.")) for r in refs)
+    stated = enemy_distance(interface.facts.get("enemy", ""))
+    if stated is not None:
+        out.enemy_range_m = stated
+        out.notes.append(f"敌方距离取 {stated:g} m（需求：{interface.facts['enemy']}）")
+    elif not engaging:
+        searching = bool(interface.routes) and any(
+            r in SEARCH_ACTIONS or (r.startswith("perception.") and "search" in r) for r in refs
+        )
+        if searching:
+            out.enemy_range_m = sensor_m + 2000.0
+            out.notes.append(
+                f"敌方距离取 {out.enemy_range_m:g} m"
+                f"（模型边前进边搜索：放在雷达 {sensor_m:g} m 之外）"
+            )
+    if model is not None and not engaging:
+        thresholds = model_thresholds(model)
+        if thresholds:
+            name, far = max(thresholds.items(), key=lambda kv: kv[1])
+            need = far + 1000.0
+            if (out.enemy_range_m or DEFAULT_ENEMY_RANGE_M) < need:
+                out.enemy_range_m = need
+                out.notes.append(
+                    f"敌方距离取 {need:g} m（模型的判定距离 {name} = {far:g} m，开局要在它之外）"
+                )
+    return out
+
+
 def bind(
     interface: ScenarioInterface,
     kit: dict[str, Any] | None = None,
@@ -293,21 +406,44 @@ def bind(
     end_s = float(meta.get("end_time_s", DEFAULT_END_S))
     if "origin" not in meta:
         defaults.append(f"出发位置取默认 {origin}")
-    if "range_m" not in enemy:
+    speed = float(bkit.get("route_speed_mps", meta.get("route_speed_mps", DEFAULT_ROUTE_SPEED_MPS)))
+    sensor = float((kit.get("platform") or {}).get("sensor_range_m", DEFAULT_SENSOR_RANGE_M))
+    prof = profile(interface, model, sensor_m=sensor, speed_mps=speed)
+    if prof.enemy_range_m is not None:
+        rng = prof.enemy_range_m
+    elif "range_m" not in enemy:
         defaults.append(f"敌方距离取默认 {rng:g} m")
-    ahead_m = float(bkit.get("ahead_m", meta.get("ahead_m", min(350.0, rng / 2))))
+    defaults += prof.notes
+    if "ahead_m" in bkit:
+        ahead_m = float(bkit["ahead_m"])
+    elif rng > sensor:
+        # the enemy is beyond the radar: the route forward ends inside its range, so the
+        # search advance can find the enemy before the route is driven to its end
+        ahead_m = round(rng - sensor / 2.0, 1)
+        defaults.append(
+            f"前方点取 {ahead_m:g} m（敌方在雷达 {sensor:g} m 外，路线要开到能发现敌方）"
+        )
+    else:
+        ahead_m = float(meta.get("ahead_m", min(350.0, rng / 2)))
+    if rng > sensor:
+        # time to drive into radar range, then the phases after the contact
+        need = math.ceil(((rng - sensor) / max(speed, 0.5) + 180.0) / 10.0) * 10.0
+        if need > end_s:
+            end_s = need
+            defaults.append(
+                f"运行时长取 {end_s:g} s（以 {speed:g} m/s 开进雷达范围约 "
+                f"{(rng - sensor) / max(speed, 0.5):.0f} s，再留 180 s 给接敌后的阶段）"
+            )
     toward_m = float(bkit.get("toward_enemy_m", rng / 2))
     tol = float(bkit.get("arrival_tolerance_m", DEFAULT_ARRIVAL_TOLERANCE_M))
-    speed = float(bkit.get("route_speed_mps", meta.get("route_speed_mps", DEFAULT_ROUTE_SPEED_MPS)))
     h = math.radians(heading)
 
     def along(d: float) -> tuple[float, float]:
         return d * math.sin(h), d * math.cos(h)  # east, north
 
     out = Binding(origin=origin, heading_deg=heading, enemy_range_m=rng, end_s=end_s)  # type: ignore[arg-type]
-    out.sensor_range_m = float(
-        (kit.get("platform") or {}).get("sensor_range_m", DEFAULT_SENSOR_RANGE_M)
-    )
+    out.sensor_range_m = sensor
+    out.ahead_m = ahead_m
     given_points = bkit.get("points") or {}
     for pid, p in interface.points.items():
         if pid in given_points:
@@ -567,6 +703,13 @@ def bind_scenario(raw: dict[str, Any], model: dict[str, Any], binding: Binding) 
     routes.update(environment(binding)["routes"])
     env["routes"] = routes
     env.setdefault("duration_s", binding.end_s + 40.0)
+    if sc.get("hostiles") is None and binding.enemy_range_m > binding.sensor_range_m:
+        # the binding's enemy starts beyond the radar: a scenario written for a nearer one
+        # would end before the contact
+        try:
+            env["duration_s"] = max(float(env["duration_s"]), binding.end_s + 40.0)
+        except (TypeError, ValueError):
+            pass
     sc["environment"] = env
     from afsim_research_agent.ir.v2.sim.run import vehicles_by_role
 
