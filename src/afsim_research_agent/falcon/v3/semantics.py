@@ -652,26 +652,6 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
             s: element_actions(spec, f"{role}.{s}", tactics) or set() for s in mission["states"]
         }
         runs = set().union(*states.values()) if states else set()
-        # the states from which each state can be reached (itself included): a field the
-        # condition reads must be written in one of them (blackboards persist), else the
-        # state waits forever — f3 11-18: a leader waited for formation.quality.in_position
-        # in FORM_COLUMN; the role-wide check let it pass because a later HOLD state ran a
-        # formation monitor
-        edges = [
-            (str(t.get("from")), str(t.get("to")))
-            for t in mission.get("transitions") or []
-            if t.get("from") not in ("*", None)
-        ]
-        before: dict[str, set[str]] = {}
-        for s in states:
-            seen, todo = {s}, [s]
-            while todo:
-                cur = todo.pop()
-                for a, b in edges:
-                    if b == cur and a not in seen:
-                        seen.add(a)
-                        todo.append(a)
-            before[s] = seen
         for t in mission.get("transitions") or []:
             cid = t.get("on")
             if cid not in conds:
@@ -682,22 +662,6 @@ def role_problems(spec: dict[str, Any], contracts: Any, tactics: dict[str, Any])
                 w = writers.get(f)
                 bf = static.get(f)
                 if not w or getattr(bf, "updated", None) in ("constant", "state_entry", "always"):
-                    continue
-                src = str(t.get("from"))
-                upto = set().union(*(states.get(x, set()) for x in before.get(src, {src})))
-                if (w & runs) and src in states and not (w & upto) and (role, f) not in reported:
-                    reported.add((role, f))
-                    out.append(
-                        (
-                            f"conditions.{cid}",
-                            f"ROLE_FIELD 角色 {role} 从 {src} 转出的条件 {cid} 读取 {f}，它只由 "
-                            f"{'、'.join(sorted(w)[:4])} 写入，而这些动作只在 {src} 之后的状态里运行："
-                            f"{src} 时这个字段还没人写，状态会卡住。改用 {src} 自己的树会写的字段、"
-                            "计时、树事件或外部事件（如排长下达队形后按计时变换，不要等 "
-                            "formation.quality.in_position）",
-                            "ROLE_FIELD",
-                        )
-                    )
                     continue
                 if not (w & runs) and (role, f) not in reported:
                     reported.add((role, f))
