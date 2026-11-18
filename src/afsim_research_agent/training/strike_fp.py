@@ -76,7 +76,18 @@ class StrikeSpec:
 
     @property
     def stops(self) -> tuple[str, ...]:
-        return ("cancelled",) + ((self.cease_order,) if self.cease_order else ())
+        """Events that end the task for every role (→ CEASE → COMPLETE)."""
+        return ("cancelled",)
+
+    @property
+    def holds(self) -> tuple[str, ...]:
+        """Events that stop the shooting for every role but keep the task (→ HOLD, until
+        the task ends): a cease-fire order."""
+        return (self.cease_order,) if self.cease_order else ()
+
+    @property
+    def has_hold(self) -> bool:
+        return bool(self.engage_limit_s or self.cease_order)
 
 
 def _seq(actions: tuple[str, ...]) -> str:
@@ -96,13 +107,16 @@ def leader_machine(s: StrikeSpec) -> Machine:
         states.append("WAIT_START")
         trees["WAIT_START"] = "    perception.start_search()"
         T.append(("WAIT_START", "PREPARE", "start_order"))
-    states += ["PREPARE", "ALLOCATING", "CEASE", "COMPLETE"]
+    states += ["PREPARE", "ALLOCATING"] + (["HOLD"] if s.has_hold else []) + ["CEASE", "COMPLETE"]
     trees["PREPARE"] = "    perception.start_search()"
     T.append(("PREPARE", "ALLOCATING", "leader_ready"))
     # the whole pipeline on every update: a fresh broadcast well within the task validity
     trees["ALLOCATING"] = _seq(ALLOCATE)
+    if s.has_hold:
+        # no more tasks, hold fire until the task ends (cancelled → CEASE → COMPLETE)
+        trees["HOLD"] = "    engagement.cease_fire()\n    threat_allocation.expire_assignment()"
     if s.engage_limit_s:
-        T.append(("ALLOCATING", "CEASE", "engage_time_up"))
+        T.append(("ALLOCATING", "HOLD", "engage_time_up"))
     trees["CEASE"] = "    engagement.cease_fire()\n    perception.stop_search()"
     T.append(("CEASE", "COMPLETE", "leader_ceased"))
     return Machine(states, T, trees)
@@ -110,7 +124,7 @@ def leader_machine(s: StrikeSpec) -> Machine:
 
 def member_machine(s: StrikeSpec) -> Machine:
     states = ["PREPARE", "WAITING_TASK", "VALIDATING", "SELECTING", "FIRING", "OBSERVING"]
-    states += ["CEASE", "COMPLETE"]
+    states += (["HOLD"] if s.cease_order else []) + ["CEASE", "COMPLETE"]
     trees = {
         "PREPARE": "    perception.start_search()",
         # hold fire while waiting; clears a task whose validity ran out
@@ -121,6 +135,8 @@ def member_machine(s: StrikeSpec) -> Machine:
         "OBSERVING": _seq(OBSERVE if s.reattack else OBSERVE_ONCE),
         "CEASE": "    engagement.cease_fire()\n    perception.stop_search()",
     }
+    if s.cease_order:
+        trees["HOLD"] = "    engagement.cease_fire()\n    threat_allocation.expire_assignment()"
     T = [
         ("PREPARE", "WAITING_TASK", "member_ready"),
         ("WAITING_TASK", "VALIDATING", "task_received"),
@@ -215,10 +231,11 @@ def events(s: StrikeSpec) -> dict[str, dict[str, Any]]:
     return e
 
 
-def _mermaid(role: str, mac: Machine, stops: tuple[str, ...]) -> str:
+def _mermaid(role: str, mac: Machine, s: StrikeSpec) -> str:
     lines = ["stateDiagram-v2", f"  [*] --> {mac.states[0]}"]
     lines += [f"  {a} --> {b} : {c}" for a, b, c in mac.transitions]
-    lines += [f"  * --> CEASE : {ev}" for ev in stops]
+    lines += [f"  * --> HOLD : {ev}" for ev in s.holds]
+    lines += [f"  * --> CEASE : {ev}" for ev in s.stops]
     lines.append("  COMPLETE --> [*]")
     return f"```mermaid {role}\n" + "\n".join(lines) + "\n```"
 
@@ -240,7 +257,9 @@ def l2_tests(s: StrikeSpec, rl: dict[str, tuple[int, Machine, str]]) -> list[dic
             if c == "task_received":
                 bb["allocation.received_assignment.valid"] = True
             elif spec.get("source") == "tree":
-                given["tree_status"] = spec["result"]
+                # "the tree ended that way" for the given state only: tree_status would be
+                # overwritten by the stubbed (successful) tick and the reattack cycle followed
+                evs.append(c)
             elif spec.get("source") == "external":
                 evs.append(c)
             elif "after" in spec:
@@ -255,13 +274,13 @@ def l2_tests(s: StrikeSpec, rl: dict[str, tuple[int, Machine, str]]) -> list[dic
                     "expect": {"next_state": b},
                 }
             )
-        for stop in s.stops:
+        for stop, to in [(x, "CEASE") for x in s.stops] + [(x, "HOLD") for x in s.holds]:
             out.append(
                 {
                     "id": f"t_{role}_{stop}",
                     "given": {"role": role, "state": mac.states[0], "time_in_state_s": 1,
                               "blackboard": {}, "events": [stop]},
-                    "expect": {"next_state": "CEASE"},
+                    "expect": {"next_state": to},
                 }
             )  # fmt: skip
     return out
@@ -343,12 +362,14 @@ def l3_scenarios(s: StrikeSpec) -> list[dict[str, Any]]:
         out.append(
             scen(
                 "engage_time_limit",
-                "交战时限到：排长停止分配并停火",
+                "交战时限到：排长停止分配、保持停火，上级结束后收尾",
                 hostiles,
                 [{"at_s": t0 + s.engage_limit_s + 30, "event": "cancelled"}],
                 [{"id": "leader_stops", "role": lead,
-                  "visits_in_order": ["ALLOCATING", "CEASE"],
-                  "within_s": t0 + s.engage_limit_s + 10}],
+                  "visits_in_order": ["ALLOCATING", "HOLD"],
+                  "within_s": t0 + s.engage_limit_s + 10},
+                 {"id": "leader_ends", "role": lead,
+                  "visits_in_order": ["HOLD", "CEASE", "COMPLETE"]}],
                 duration=int(t0 + s.engage_limit_s + 60),
             )
         )  # fmt: skip
@@ -356,13 +377,14 @@ def l3_scenarios(s: StrikeSpec) -> list[dict[str, Any]]:
         out.append(
             scen(
                 "cease_order",
-                "交战中收到停火命令：全部停火收尾",
+                "交战中收到停火命令：全部停火待命，上级结束后收尾",
                 hostiles,
-                [{"at_s": t0 + 25, "event": s.cease_order}],
+                [{"at_s": t0 + 25, "event": s.cease_order},
+                 {"at_s": t0 + 45, "event": "cancelled"}],
                 [{"id": "leader_ceases", "role": lead,
-                  "visits_in_order": ["ALLOCATING", "CEASE", "COMPLETE"]},
+                  "visits_in_order": ["ALLOCATING", "HOLD", "CEASE", "COMPLETE"]},
                  {"id": "member_ceases", "role": mem,
-                  "visits_in_order": ["FIRING", "CEASE", "COMPLETE"]}],
+                  "visits_in_order": ["FIRING", "HOLD", "CEASE", "COMPLETE"]}],
                 duration=int(t0 + 60),
             )
         )  # fmt: skip
@@ -424,7 +446,7 @@ def sheet(s: StrikeSpec, extra: dict[str, Any] | None = None) -> tuple[str, dict
         f"# 战术稿：{s.model_id}",
         "```yaml model\n" + yaml.safe_dump(model, allow_unicode=True, sort_keys=False) + "```",
     ]
-    parts += [_mermaid(r, mac, s.stops) for r, (_, mac, _) in rl.items()]
+    parts += [_mermaid(r, mac, s) for r, (_, mac, _) in rl.items()]
     parts.append(
         "```python conditions\n"
         + "\n".join(f"{k} = {v}" for k, v in conditions(s).items())

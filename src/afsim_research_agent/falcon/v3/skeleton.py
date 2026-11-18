@@ -114,13 +114,13 @@ CATALOG = """可选的骨架（已验证；状态、树、条件、事件、测�
 排长集中分配 + 成员车交战（family=strike；排长车 1 辆，成员车 2 辆）
 排长车：（wait_start：WAIT_START 等开始命令）→ PREPARE 开雷达 → ALLOCATING：每拍完成一次
   收集目标、评估威胁、检查成员车、筛选、建候选、一车一目标分配、电台下发（任务 3 s 有效，每拍重发）
-  （engage_limit_s：交战时限到 → CEASE）→ CEASE 停火、关雷达 → COMPLETE
+  （engage_limit_s：交战时限到 → HOLD 停止分配、停火待命，直到任务结束）→ CEASE 停火、关雷达 → COMPLETE
 成员车：PREPARE 开雷达 → WAITING_TASK（停火待命，清过期任务）→ 收到任务 → VALIDATING（采纳任务、
   校验有效、武器状态、射线友军检查）→ SELECTING（筛选、打分、选定武器）→ FIRING（瞄准、开火）→
   OBSERVING（观察毁伤；reattack：未摧毁且本任务开火不到 3 次 → VALIDATING 再攻击，否则 → WAITING_TASK）
   每一步失败（任务过期、射线上有友车、射程外、未装填、开火上限）→ WAITING_TASK 停火等待新任务
   CEASE 停火、关雷达 → COMPLETE
-任何状态收到 cancelled（及 cease_order 停火命令）→ CEASE
+任何状态收到 cancelled → CEASE；收到 cease_order 停火命令 → HOLD（全部停火待命，cancelled 后再收尾）
 """
 
 

@@ -28,8 +28,8 @@ def test_the_leader_allocates_and_broadcasts_on_every_update():
     text, request = sheet(StrikeSpec(engage_limit_s=40, cease_order="cease_fire_order"))
     tree = re.search(r"def ALLOCATING\(\):\n(.*?)\n\n", text, re.S).group(1)
     assert tree.strip().splitlines()[-1].strip() == "threat_allocation.broadcast_assignments()"
-    assert "ALLOCATING --> CEASE : engage_time_up" in text
-    assert "* --> CEASE : cease_fire_order" in text
+    assert "ALLOCATING --> HOLD : engage_time_up" in text
+    assert "* --> HOLD : cease_fire_order" in text and "* --> CEASE : cancelled" in text
     ver = yaml.safe_load(re.search(r"```yaml verification\n(.*?)```", text, re.S).group(1))
     ids = {sc["id"] for sc in ver["scenarios"]}
     assert {"engage_two_targets", "no_targets", "member_radio_lost", "engage_time_limit",
@@ -43,3 +43,17 @@ def test_the_leader_allocates_and_broadcasts_on_every_update():
 def test_the_catalog_ids_are_distinct():
     ids = [s.model_id for s in catalog()]
     assert len(ids) == len(set(ids)) == 6
+
+
+def test_failure_tests_name_the_tree_event_so_the_reattack_cycle_is_not_followed():
+    text, _ = sheet(StrikeSpec())
+    ver = yaml.safe_load(re.search(r"```yaml verification\n(.*?)```", text, re.S).group(1))
+    t = next(t for t in ver["tests"] if t["id"] == "t_member_03_validating_waiting_task")
+    assert t["given"]["events"] == ["task_rejected"] and "tree_status" not in t["given"]
+
+
+def test_without_a_limit_or_order_there_is_no_hold_state():
+    assert "HOLD" not in roles(StrikeSpec())["leader"][1].states
+    assert "HOLD" in roles(StrikeSpec(engage_limit_s=40))["leader"][1].states
+    assert "HOLD" not in roles(StrikeSpec(engage_limit_s=40))["member"][1].states
+    assert "HOLD" in roles(StrikeSpec(cease_order="x"))["member"][1].states
