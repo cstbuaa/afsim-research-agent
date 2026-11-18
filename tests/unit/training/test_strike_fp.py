@@ -57,3 +57,9 @@ def test_without_a_limit_or_order_there_is_no_hold_state():
     assert "HOLD" in roles(StrikeSpec(engage_limit_s=40))["leader"][1].states
     assert "HOLD" not in roles(StrikeSpec(engage_limit_s=40))["member"][1].states
     assert "HOLD" in roles(StrikeSpec(cease_order="x"))["member"][1].states
+
+
+def test_the_end_of_the_task_drops_the_assignment():
+    for r in ("leader", "member"):
+        tree = roles(StrikeSpec())[r][1].trees["CEASE"]
+        assert "threat_allocation.expire_assignment()" in tree and "cease_fire" in tree

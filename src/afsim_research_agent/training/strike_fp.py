@@ -53,6 +53,12 @@ SELECT = (
 FIRE = ("engagement.aim_selected_weapon", "engagement.fire_selected_weapon")
 OBSERVE = ("engagement.observe_weapon_effect", "engagement.evaluate_reattack")
 OBSERVE_ONCE = ("engagement.observe_weapon_effect",)
+# the task ends: stop shooting, drop the task (and stop assigning), switch the sensor off
+CEASE_TREE = (
+    "    engagement.cease_fire()\n"
+    "    threat_allocation.expire_assignment()\n"
+    "    perception.stop_search()"
+)
 
 
 @dataclass
@@ -117,7 +123,7 @@ def leader_machine(s: StrikeSpec) -> Machine:
         trees["HOLD"] = "    engagement.cease_fire()\n    threat_allocation.expire_assignment()"
     if s.engage_limit_s:
         T.append(("ALLOCATING", "HOLD", "engage_time_up"))
-    trees["CEASE"] = "    engagement.cease_fire()\n    perception.stop_search()"
+    trees["CEASE"] = CEASE_TREE
     T.append(("CEASE", "COMPLETE", "leader_ceased"))
     return Machine(states, T, trees)
 
@@ -133,7 +139,7 @@ def member_machine(s: StrikeSpec) -> Machine:
         "SELECTING": _seq(SELECT),
         "FIRING": _seq(FIRE),
         "OBSERVING": _seq(OBSERVE if s.reattack else OBSERVE_ONCE),
-        "CEASE": "    engagement.cease_fire()\n    perception.stop_search()",
+        "CEASE": CEASE_TREE,
     }
     if s.cease_order:
         trees["HOLD"] = "    engagement.cease_fire()\n    threat_allocation.expire_assignment()"

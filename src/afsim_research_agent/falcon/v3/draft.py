@@ -987,8 +987,14 @@ class Drafter:
             many = [k for k, v in roles.items() if v.count > 1]
             if choice.leader_role not in roles and single:
                 choice.leader_role = single[0]
-            if choice.formation and choice.member_role not in roles and many:
+            wingmen = choice.formation or choice.family == "strike"
+            if wingmen and choice.member_role not in roles and many:
                 choice.member_role = many[0]
+        # a role name the sheet cannot carry as an id (e.g. 成员车) → the skeleton's own name
+        for f, default in (("leader_role", "leader"), ("member_role", "member")):
+            if getattr(choice, f) and not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", getattr(choice, f)):
+                self.notes.append(f"角色名 {getattr(choice, f)} 不能作标识，按 {default} 处理")
+                setattr(choice, f, default)
         if choice.wait_start and "start_order" not in events:
             choice.wait_start = False
             self.notes.append("想定不会发出开始命令 start_order：骨架不等开始命令")

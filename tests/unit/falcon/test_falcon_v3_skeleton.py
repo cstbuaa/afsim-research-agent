@@ -237,3 +237,39 @@ def test_formation_implements_with_tactic_role_names_are_mapped_not_dropped():
     text, notes, _ = build(choice, events=EVENTS, clauses=["tc_02_s1"])
     model = yaml.safe_load(re.search(r"```yaml model\n(.*?)```", text, re.S).group(1))
     assert model["implements"] == {"tc_02_s1": ["leader.STANDOFF_TRACK", "member.TRACK"]}
+
+
+def test_a_strike_role_name_that_is_not_an_id_falls_back_to_the_skeleton_role(
+    set_root: Path, tmp_path: Path
+):
+    import asyncio
+
+    _stub_langchain()
+    from afsim_research_agent.falcon.llm import ScriptedModel
+    from afsim_research_agent.falcon.v3.draft import run_draft3
+
+    request = tmp_path / "req.yaml"
+    request.write_text(
+        yaml.safe_dump(
+            {
+                "requirement": "排长车分配目标，成员车交战。",
+                "model_id": "sk_strike",
+                "capability_set": str(set_root),
+                "drafting": "skeleton",
+                "extract_obligations": False,
+                "scenario_events": {"cancelled": "上级结束任务"},
+            },
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    choice = SkeletonChoice(
+        applicable=True, family="strike", leader_role="leader", member_role="成员车"
+    ).model_dump()
+    script = {
+        "requirements": [{"clauses": [{"text": "排长车分配目标，成员车交战", "kind": "behavior"}]}],
+        "v3:skeleton": [choice],
+    }
+    result = asyncio.run(run_draft3(request, ScriptedModel(script), out_dir=tmp_path / "out"))
+    sheet = (result.package_dir / "tactic_sheet.md").read_text(encoding="utf-8")
+    assert "```python member" in sheet and "成员车_" not in sheet
