@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from afsim_research_agent.config import Settings
-from afsim_research_agent.crow.cli import prepare_mission_profile
+from afsim_research_agent.crow.cli import aprepare_mission_profile, prepare_mission_profile
 from afsim_research_agent.crow.mission import (
     MissionDraft,
     MissionProfiler,
@@ -151,7 +151,10 @@ def test_cli_step_writes_profile_and_reloads_it(tmp_path: Path) -> None:
 
     # Re-using a saved profile skips the model entirely.
     again = prepare_mission_profile(
-        REQUIREMENT, settings=Settings.from_environment(), output_dir=tmp_path / "b", existing=path,
+        REQUIREMENT,
+        settings=Settings.from_environment(),
+        output_dir=tmp_path / "b",
+        existing=path,
         interactive=False,
     )
     assert again == profile
@@ -163,12 +166,40 @@ def test_cli_step_survives_model_failure(tmp_path: Path) -> None:
             raise RuntimeError("upstream timeout")
 
     profile = prepare_mission_profile(
-        REQUIREMENT, settings=Settings.from_environment(), output_dir=tmp_path, interactive=False,
+        REQUIREMENT,
+        settings=Settings.from_environment(),
+        output_dir=tmp_path,
+        interactive=False,
         profiler=MissionProfiler(model=Broken()),
     )
 
     assert profile is None
     assert not (tmp_path / "mission_profile.yaml").exists()
-    assert prepare_mission_profile(
-        REQUIREMENT, settings=Settings.from_environment(), output_dir=tmp_path, skip=True
-    ) is None
+    assert (
+        prepare_mission_profile(
+            REQUIREMENT, settings=Settings.from_environment(), output_dir=tmp_path, skip=True
+        )
+        is None
+    )
+
+
+def test_the_workbench_step_profiles_in_the_running_loop(tmp_path: Path) -> None:
+    model = FakeModel(draft())
+    profile = asyncio.run(
+        aprepare_mission_profile(
+            REQUIREMENT, settings=Settings.from_environment(), output_dir=tmp_path,
+            profiler=MissionProfiler(model=model),
+        )
+    )  # fmt: skip
+    assert profile is not None and (tmp_path / "mission_profile.yaml").is_file()
+
+    class Broken:
+        async def ainvoke(self, prompt: str) -> object:
+            raise RuntimeError("upstream timeout")
+
+    assert asyncio.run(
+        aprepare_mission_profile(
+            REQUIREMENT, settings=Settings.from_environment(), output_dir=tmp_path / "b",
+            profiler=MissionProfiler(model=Broken()),
+        )
+    ) is None  # fmt: skip

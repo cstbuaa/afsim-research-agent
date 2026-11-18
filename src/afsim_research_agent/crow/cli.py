@@ -216,9 +216,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     from afsim_research_agent.crow.propose import print_summary, run_proposal
 
-    print_summary(
-        asyncio.run(run_proposal(output_dir, settings=runtime_settings, profile=profile))
-    )
+    print_summary(asyncio.run(run_proposal(output_dir, settings=runtime_settings, profile=profile)))
 
 
 def prepare_mission_profile(
@@ -246,6 +244,30 @@ def prepare_mission_profile(
             return None
     _print_profile(profile, interactive)
     resolve_open_questions(profile, _ask if interactive else None)
+    path = write_profile(profile, output_dir / "mission_profile.yaml")
+    print(f"任务画像已保存：{path}\n")
+    return profile
+
+
+async def aprepare_mission_profile(
+    requirement: str,
+    *,
+    settings: Settings,
+    output_dir: Path,
+    profiler: MissionProfiler | None = None,
+) -> MissionProfile | None:
+    """C1 inside a running event loop (the workbench), not interactive. The model call runs
+    in the caller's loop: ``asyncio.run`` in a worker thread hung there — langchain-openai
+    reuses one cached async HTTP client, bound to the loop that first used it."""
+    print("正在理解需求、整理任务画像……")
+    try:
+        profiler = profiler or MissionProfiler(app_settings=settings)
+        profile = await profiler.profile(requirement)
+    except Exception as exc:  # noqa: BLE001 - the research run can continue without it
+        print(f"任务画像生成失败（{type(exc).__name__}: {str(exc)[:200]}），跳过此步。")
+        return None
+    _print_profile(profile, False)
+    resolve_open_questions(profile, None)
     path = write_profile(profile, output_dir / "mission_profile.yaml")
     print(f"任务画像已保存：{path}\n")
     return profile

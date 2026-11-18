@@ -279,24 +279,26 @@ def test_repair_loop_cannot_defer_tests(ws: Workspace) -> None:
     assert fixer.block("verification") == block
 
 
-def test_crow_research_builds_the_profile_outside_the_running_loop(
-    ws: Workspace, monkeypatch
-) -> None:
-    """The profiler calls asyncio.run; inside the stage's coroutine that needs a worker thread."""
+def test_crow_research_builds_the_profile_in_the_running_loop(ws: Workspace, monkeypatch) -> None:
+    """The profile's model call runs in the stage's own loop: asyncio.run in a worker thread
+    hung in the workbench (langchain-openai shares one async HTTP client across loops)."""
     from afsim_research_agent.crow import cli
 
     seen: dict[str, object] = {}
 
-    def profile(requirement, *, settings, output_dir, interactive):
-        return asyncio.run(asyncio.sleep(0, result="profile"))
+    async def profile(requirement, *, settings, output_dir):
+        seen["loop"] = asyncio.get_running_loop()
+        return "profile"
 
     async def research(requirement, *, mission_profile, **kwargs):
         seen["profile"] = mission_profile
+        seen["same_loop"] = asyncio.get_running_loop() is seen["loop"]
         raise RuntimeError("stop after the profile")
 
-    monkeypatch.setattr(cli, "prepare_mission_profile", profile)
+    monkeypatch.setattr(cli, "aprepare_mission_profile", profile)
     monkeypatch.setattr(cli, "run_research_with_result", research)
     result = asyncio.run(st.crow_research(ws, "需求", settings=object()))
+    assert seen["same_loop"] is True
     assert seen["profile"] == "profile"
     assert result.status == "blocked"
 

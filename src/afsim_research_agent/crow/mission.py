@@ -160,6 +160,8 @@ class MissionProfiler:
                 base_url=app_settings.dashscope_base_url,
                 temperature=0,
                 extra_body={"enable_thinking": False},
+                timeout=180,
+                max_retries=2,
             ).with_structured_output(MissionDraft, method="json_schema")
         self._model = model
 

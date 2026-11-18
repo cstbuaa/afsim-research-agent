@@ -183,7 +183,7 @@ async def crow_research(
 ) -> StageResult:
     """C1–C3: mission profile, research plan, retrieval, evidence and the Falcon gate."""
     from afsim_research_agent.config import Settings
-    from afsim_research_agent.crow.cli import prepare_mission_profile, run_research_with_result
+    from afsim_research_agent.crow.cli import aprepare_mission_profile, run_research_with_result
 
     if not requirement.strip():
         return StageResult("crow_research", "blocked", "需求为空")
@@ -194,14 +194,10 @@ async def crow_research(
     profile = None
     if pipeline is None:  # tests inject a pipeline and skip the model-backed profile
         report("任务画像：理解需求中的兵力、环境和约束")
-        # the profiler runs its own event loop (asyncio.run), which cannot start inside this
-        # coroutine's loop: run it in a worker thread
-        profile = await asyncio.to_thread(
-            prepare_mission_profile,
-            requirement,
-            settings=settings,
-            output_dir=out,
-            interactive=False,
+        # in this loop: a profiler in its own loop (asyncio.run in a worker thread) hung on
+        # the HTTP client langchain-openai shares between instances; a time limit as well
+        profile = await asyncio.wait_for(
+            aprepare_mission_profile(requirement, settings=settings, output_dir=out), 600
         )
     (md, js), result = await run_research_with_result(
         requirement,
