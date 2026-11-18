@@ -473,16 +473,19 @@ class Drafter:
             }
             after = {name: per_event.get(rid, {}) for name, rid in instances}
             # "advances" is judged on the 2D positions too (the binding gives both runs the
-            # same geometry): met when some scenario shows it
-            advances = [o for o in self.obligations if o.kind == "advances"]
+            # same geometry), "destroys" on the team models' shots: met when some scenario
+            # shows it
+            advances = [o for o in self.obligations if o.kind in ("advances", "destroys")]
             advanced: dict[str, str] = {}
             for raw in [*(spec.get("scenarios") or []), *self._auto_scenarios(spec, model)]:
                 res = simulate(model, self.c, raw, self.binding(model))
-                if advances and res.tracks and self.iface is not None:
+                if advances and res.tracks and (self.iface is not None or res.shots):
                     from afsim_research_agent.ir.v2.effects import judge
 
                     own = dict(instances)
-                    for v in judge(advances, res.tracks, own, res.activations, res.events):
+                    kills = [(t, who, tgt) for t, who, _w, tgt, r in res.shots if r == "DESTROYED"]
+                    use = [o for o in advances if o.kind == "destroys" or self.iface is not None]
+                    for v in judge(use, res.tracks, own, res.activations, res.events, None, kills):
                         if v.judged and (v.passed or v.id not in advanced):
                             advanced[v.id] = ("ok " if v.passed else "") + v.detail
                 verdicts = check_obligations(
@@ -537,7 +540,27 @@ class Drafter:
                         ),
                     }
                 )
-            short = [(k, d) for k, d in advanced.items() if not d.startswith("ok ")]
+            kinds = {o.id: o.kind for o in self.obligations}
+            unmet = [(k, d) for k, d in advanced.items() if not d.startswith("ok ")]
+            short = [(k, d) for k, d in unmet if kinds.get(k) == "advances"]
+            spared = [(k, d) for k, d in unmet if kinds.get(k) == "destroys"]
+            if spared:
+                out.l3.append(
+                    {
+                        "id": "effect_destroys",
+                        "passed": False,
+                        "render": "effect_destroys: FAIL\n"
+                        + "\n".join(
+                            f"  [FAIL] 需求约束 {k}：没有任何想定中敌方车辆被摧毁得够多（{d}）；"
+                            "检查成员车是否一直交战到目标被摧毁（重攻条件、开火失败后是否回到等待任务）"
+                            for k, d in spared
+                        ),
+                        "obligations": [],
+                        "states": {},
+                        "transitions": {},
+                        "duration_s": 0.0,
+                    }
+                )
             if short:
                 out.l3.append(
                     {

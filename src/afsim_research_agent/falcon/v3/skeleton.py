@@ -47,6 +47,11 @@ class SkeletonChoice(BaseModel):
     cease_order: str | None = Field(
         default=None, description="strike：上级停火命令对应的外部事件（取自想定事件）；没有就不填"
     )
+    destroy: bool = Field(
+        default=False,
+        description="strike：需求要求把敌方打掉（摧毁、歼灭、直至被摧毁）时为 true，验收时检查敌方全部被摧毁；"
+        "只说开火、射击时为 false",
+    )
     formation: bool = Field(
         default=True, description="三车编队（长车 1 + 僚车 2）为 true；单车定点观察为 false"
     )
@@ -120,6 +125,7 @@ CATALOG = """可选的骨架（已验证；状态、树、条件、事件、测�
   OBSERVING（观察毁伤；reattack：未摧毁且本任务开火不到 3 次 → VALIDATING 再攻击，否则 → WAITING_TASK）
   每一步失败（任务过期、射线上有友车、射程外、未装填、开火上限）→ WAITING_TASK 停火等待新任务
   CEASE 停火、关雷达 → COMPLETE
+destroy：需求要求打掉敌方时，验收检查敌方全部被摧毁
 任何状态收到 cancelled → CEASE；收到 cease_order 停火命令 → HOLD（全部停火待命，cancelled 后再收尾）
 """
 
@@ -326,6 +332,7 @@ def _build_strike(
         wait_start=choice.wait_start and "start_order" in events,
         engage_limit_s=choice.engage_limit_s or None,
         cease_order=order if order != "cancelled" else None,
+        destroy=choice.destroy,
         names=names,
         event_text=dict(events),
     )

@@ -454,6 +454,15 @@ roles 写角色 ID 列表（省略表示全部己方车辆）：
 - advances：这些车辆合计向敌方接近至少 min_m 米。例："前出""向东推进"
   min_m 取需求明确给出的前出距离；需求里"约 X 公里处有敌"是与敌的距离，不是要走的距离，
   未给出前出距离时取保守值（如 100 m），并且不得让车辆进入要求保持的安全距离以内
+- destroys：这些车辆（开火方）摧毁至少 min_count 辆敌方车辆（省略表示想定中全部敌方车辆），按武器命中
+  与毁伤事件判定；可选 within_s（从开始计的时限）。例："打击直至敌方被摧毁""歼灭来犯之敌" → {kind: destroys}
+  只在需求要求毁伤结果时写；只要求"开火""射击"时不写；
+- formation_shape：这些车辆以 leader_role 角色的车辆为基准排成 shape 队形（column 纵队、line_abreast
+  横队、wedge_forward 楔形（成员在后两侧）、wedge_rear 倒楔形（成员在前两侧）、echelon_left /
+  echelon_right 左 / 右梯队），纵向间距 spacing_m、横向间距 lateral_m（默认同 spacing_m），每个槽位
+  偏差不超过 tol_m（默认 15 m），在动作 action 开始（或外部事件 on_event）后 within_s 秒内成形并保持
+  hold_s 秒（默认 5）。例："接命令后成横队展开" → {kind: formation_shape, shape: line_abreast,
+  leader_role: <长车角色>, on_event: <命令事件>, within_s: 90}；间距用需求或能力参数给的值，没有就省略
 
 规则：
 - **每个战术条款（tc_ 开头）至少写一条约束**；涉及位置、距离、机动、停车、轮换的条款优先用效果约束：

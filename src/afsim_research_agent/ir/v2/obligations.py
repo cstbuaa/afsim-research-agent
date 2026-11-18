@@ -30,6 +30,15 @@ run's IR_POS lines, :mod:`afsim_research_agent.ir.v2.effects`); runs without pos
                     different vehicles (bounding overwatch)
 ``advances``        the vehicles (of ``roles``) together close at least ``min_m`` on the
                     enemy
+``destroys``        the vehicles (of ``roles``) destroy at least ``min_count`` enemy vehicles
+                    (default: every enemy vehicle of the run), within ``within_s`` of the
+                    start when given; judged on the run's weapon events (AFSIM's event
+                    output, the 2D team models' shots)
+``formation_shape`` the vehicles (of ``roles``) take up ``shape`` around the ``leader_role``
+                    vehicle (slots as the platform lays them out: ``spacing_m`` along the
+                    leader's heading, ``lateral_m`` across), every slot within ``tol_m``,
+                    held ``hold_s``, within ``within_s`` after ``action`` starts on the
+                    leader (or ``on_event``; else from the start)
 
 An obligation whose anchor never happens in a run is not judged there (vacuous). Times are
 compared with a tolerance of one update or 10 %, whichever is larger. ``precedes`` between
@@ -54,9 +63,27 @@ Kind = Literal[
     "not_all_moving",
     "moves_in_turn",
     "advances",
+    "destroys",
+    "formation_shape",
 ]
 SPATIAL = frozenset(
-    {"keeps_distance", "stays_still", "not_all_moving", "moves_in_turn", "advances"}
+    {
+        "keeps_distance",
+        "stays_still",
+        "not_all_moving",
+        "moves_in_turn",
+        "advances",
+        "destroys",
+        "formation_shape",
+    }
+)
+SHAPES = (
+    "column",
+    "line_abreast",
+    "wedge_forward",
+    "wedge_rear",
+    "echelon_left",
+    "echelon_right",
 )
 _COMMON = {"id", "kind", "description", "clause", "roles"}
 _USES = {
@@ -68,6 +95,18 @@ _USES = {
     "not_all_moving": {"speed_mps"},
     "moves_in_turn": {"min_bounds", "min_m"},
     "advances": {"min_m"},
+    "destroys": {"min_count", "within_s"},
+    "formation_shape": {
+        "shape",
+        "spacing_m",
+        "lateral_m",
+        "tol_m",
+        "hold_s",
+        "within_s",
+        "leader_role",
+        "action",
+        "on_event",
+    },
 }
 _NEED = {
     "not_before": ("action", "after", "min_s"),
@@ -78,6 +117,8 @@ _NEED = {
     "not_all_moving": (),
     "moves_in_turn": (),
     "advances": ("min_m",),
+    "destroys": (),
+    "formation_shape": ("shape", "leader_role"),
 }
 
 
@@ -100,6 +141,12 @@ class Obligation(BaseModel):
     duration_s: float | None = Field(default=None, gt=0)
     speed_mps: float | None = Field(default=None, ge=0)
     min_bounds: int | None = Field(default=None, ge=1)
+    min_count: int | None = Field(default=None, ge=1)  # destroys
+    shape: Literal[SHAPES] | None = None  # formation_shape  # type: ignore[valid-type]
+    spacing_m: float | None = Field(default=None, gt=0)
+    lateral_m: float | None = Field(default=None, gt=0)
+    hold_s: float | None = Field(default=None, ge=0)
+    leader_role: str | None = None
 
     @property
     def spatial(self) -> bool:

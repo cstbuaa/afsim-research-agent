@@ -380,8 +380,11 @@ def judge(
     for pattern in expect.get("markers") or []:
         if not re.search(pattern, console, re.M):
             j.add(Issue("MARKER", RUN, None, {"pattern": pattern, "note": notes.get(pattern)}))
+    kills: list[tuple[float, str, str]] | None = None
     if events_text is not None:
-        _judge_events(j, run, parse_events(events_text))
+        weapon_events = parse_events(events_text)
+        _judge_events(j, run, weapon_events)
+        kills = kills_of(weapon_events)
     ref = run.get("reference")
     if ref and reference_console is not None:
         j.reference = parse_reference(reference_console, ref["state_pattern"])
@@ -471,13 +474,31 @@ def judge(
             completions=done if ("IR_DONE|" in console or "IR_POS|" in console) else None,
         )
         verdicts += effects.judge(
-            obs, tracks, own, acts, events, float(run.get("end_time_s") or 0) or None
+            obs, tracks, own, acts, events, float(run.get("end_time_s") or 0) or None, kills
         )
         j.obligations = [asdict(v) for v in verdicts]
         for v in verdicts:
             if v.judged and not v.passed:
                 j.add(Issue("OBLIGATION", MODEL, None, {"id": v.id, "detail": v.detail}))
     return j
+
+
+def kills_of(events: list[dict[str, Any]]) -> list[tuple[float, str, str]]:
+    """(time, shooter, target) of each hit that destroyed its target (``Result: KILLED``),
+    and of each platform broken right after a hit on it (the effect may report DAMAGED first
+    and the target break on a later hit's update)."""
+    out: list[tuple[float, str, str]] = []
+    last_hit: dict[str, tuple[float, str]] = {}
+    for e in events:
+        if e["event"] == "WEAPON_HIT" and e.get("target"):
+            last_hit[e["target"]] = (e["t"], e["actor"])
+            if e.get("result") in ("KILLED", "DESTROYED"):
+                out.append((e["t"], e["actor"], e["target"]))
+        elif e["event"] == "PLATFORM_BROKEN" and e["actor"] in last_hit:
+            t, who = last_hit[e["actor"]]
+            if e["t"] - t <= 1.0 and not any(x[2] == e["actor"] for x in out):
+                out.append((e["t"], who, e["actor"]))
+    return out
 
 
 def _judge_events(j: RunJudgement, run: dict[str, Any], events: list[dict[str, Any]]) -> None:

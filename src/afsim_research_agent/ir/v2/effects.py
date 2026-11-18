@@ -7,7 +7,8 @@ controller. The AFSIM run samples every platform's position and speed (``IR_POS`
 tracks and judges:
 
 * the effect obligations (:data:`afsim_research_agent.ir.v2.obligations.SPATIAL`):
-  distance kept, standing still, not all moving at once, moving in turns, advancing;
+  distance kept, standing still, not all moving at once, moving in turns, advancing, the
+  formation's shape; and, on the run's weapon events, enemies destroyed;
 * two checks every run gets: a vehicle keeps moving after its ``movement.stop`` (and no
   movement action started after it), and a movement action starts but the vehicle does
   not move.
@@ -51,6 +52,7 @@ class Sample:
     x: float  # east, m
     y: float  # north, m
     speed: float
+    heading: float = 0.0  # degrees true (AFSIM; the 2D runs leave it 0)
 
 
 @dataclass
@@ -78,9 +80,11 @@ def parse(console: str) -> Tracks:
     lat0 = float(origin.group(1)) if origin else 0.0
     scale = math.cos(math.radians(lat0))
     out = Tracks()
-    for t, name, side, north, east, speed, _heading in POS.findall(console):
+    for t, name, side, north, east, speed, heading in POS.findall(console):
         try:
-            sample = Sample(float(t), float(east) * scale, float(north), float(speed))
+            sample = Sample(
+                float(t), float(east) * scale, float(north), float(speed), float(heading)
+            )
         except ValueError:
             continue
         out.by_platform.setdefault(name, []).append(sample)
@@ -111,11 +115,16 @@ def judge(
     acts: list[tuple[float, str, str]],  # (time, platform, action) starts
     events: list[tuple[float, str]],
     end_s: float | None = None,
+    kills: list[tuple[float, str, str]] | None = None,  # (time, shooter, enemy destroyed)
 ) -> list[Verdict]:
-    """Verdicts of the effect obligations (others are skipped)."""
+    """Verdicts of the effect obligations (others are skipped). ``kills``: the run's weapon
+    events (None: the run does not report them, ``destroys`` is not judged)."""
     out = []
     for ob in obligations:
         if not ob.spatial:
+            continue
+        if ob.kind == "destroys":
+            out.append(_destroys(ob, tracks, own, kills, end_s))
             continue
         if not tracks:
             out.append(Verdict(ob.id, True, "本次运行没有位置采样，未判定", judged=False))
@@ -130,6 +139,7 @@ def judge(
             "not_all_moving": _not_all_moving,
             "moves_in_turn": _moves_in_turn,
             "advances": _advances,
+            "formation_shape": _formation_shape,
         }[ob.kind]
         out.append(fn(ob, tracks, vehicles, own, acts, events, end_s))
     return out
@@ -337,3 +347,143 @@ def motion_issues(
                 out.append({"kind": "NO_MOTION", "platform": p, "t": t0, "action": a})
                 break
     return out
+
+
+def _destroys(
+    ob: Obligation,
+    tracks: Tracks,
+    own: dict[str, str],
+    kills: list[tuple[float, str, str]] | None,
+    end_s: float | None,
+) -> Verdict:
+    if kills is None:
+        return Verdict(ob.id, True, "本次运行没有武器事件记录，未判定", judged=False)
+    foes = set(enemies(tracks, own)) if tracks else set()
+    shooters = set(_vehicles(ob, own))
+    limit = float(ob.within_s) if ob.within_s else math.inf
+    done: dict[str, tuple[float, str]] = {}
+    for t, who, target in sorted(kills):
+        if who in shooters and t <= limit + 1e-6 and target not in own:
+            done.setdefault(target, (t, who))
+    total = len(foes | set(done)) if foes else None
+    need = int(ob.min_count) if ob.min_count else total
+    if not need:
+        return Verdict(ob.id, True, "运行中没有敌方车辆", judged=False)
+    got = sorted(done.items(), key=lambda x: x[1][0])
+    seq = (
+        "，".join(f"{tgt} 于 {t:.1f} s 被 {who} 摧毁" for tgt, (t, who) in got)
+        or "没有摧毁敌方车辆"
+    )
+    when = f"（{ob.within_s:g} s 内）" if ob.within_s else ""
+    ok = len(done) >= need
+    return Verdict(
+        ob.id,
+        ok,
+        f"摧毁 {len(done)}/{total if total is not None else '?'} 辆{when}：{seq}"
+        + ("" if ok else f"；要求至少 {need} 辆"),
+    )
+
+
+def slots(shape: str, n: int, spacing: float, lateral: float) -> list[tuple[float, float]]:
+    """(forward, right) offsets from the leader of members 1..n, as the platform lays out
+    the formation: wedges and the line alternate left (odd) and right (even) by layer;
+    the column and echelons step back one spacing per member; a forward wedge has its
+    members behind the leader, a rear wedge ahead of it."""
+    out = []
+    for k in range(1, n + 1):
+        layer = (k + 1) // 2
+        side = -1.0 if k == layer * 2 - 1 else 1.0
+        if shape == "column":
+            out.append((-k * spacing, 0.0))
+        elif shape == "line_abreast":
+            out.append((0.0, side * layer * lateral))
+        elif shape == "wedge_forward":
+            out.append((-layer * spacing, side * layer * lateral))
+        elif shape == "wedge_rear":
+            out.append((layer * spacing, side * layer * lateral))
+        elif shape == "echelon_left":
+            out.append((-k * spacing, -k * lateral))
+        else:  # echelon_right
+            out.append((-k * spacing, k * lateral))
+    return out
+
+
+def _fit(expected: list[tuple[float, float]], actual: list[tuple[float, float]]) -> float:
+    """The largest slot error of the best match of vehicles to slots (vehicles are few)."""
+    from itertools import permutations
+
+    best = math.inf
+    for perm in permutations(range(len(actual))):
+        err = max(
+            math.hypot(expected[i][0] - actual[j][0], expected[i][1] - actual[j][1])
+            for i, j in enumerate(perm)
+        )
+        best = min(best, err)
+    return best
+
+
+def _formation_shape(ob, tracks, vehicles, own, acts, events, end_s) -> Verdict:
+    leaders = [p for p, r in own.items() if r == ob.leader_role and p in tracks.by_platform]
+    if len(leaders) != 1:
+        return Verdict(ob.id, True, f"没有唯一的 {ob.leader_role} 车辆", judged=False)
+    lead = leaders[0]
+    members = [p for p in vehicles if p != lead]
+    if not members or len(members) > 7:
+        return Verdict(ob.id, True, "没有可判定的成员车辆", judged=False)
+    spacing = float(ob.spacing_m or 50.0)
+    lateral = float(ob.lateral_m or spacing)
+    tol = float(ob.tol_m if ob.tol_m is not None else max(15.0, 0.3 * min(spacing, lateral)))
+    hold = float(ob.hold_s if ob.hold_s is not None else 5.0)
+    if ob.on_event:
+        raised = [t for t, e in events if e == ob.on_event]
+        if not raised:
+            return Verdict(ob.id, True, f"事件 {ob.on_event} 没有发生", judged=False)
+        t0 = min(raised)
+    elif ob.action:
+        starts = [t for t, q, a in acts if q == lead and a == ob.action]
+        if not starts:
+            starts = [t for t, q, a in acts if q in members and a == ob.action]
+        if not starts:
+            return Verdict(ob.id, True, f"{ob.action} 没有执行", judged=False)
+        t0 = min(starts)
+    else:
+        t0 = 0.0
+    t1 = t0 + float(ob.within_s) if ob.within_s else (end_s or math.inf)
+    expected = slots(str(ob.shape), len(members), spacing, lateral)
+    times = sorted({s.t for s in tracks.by_platform[lead] if t0 <= s.t <= t1})
+    best = (math.inf, 0.0, [])
+    since = None
+    for t in times:
+        ls = tracks.at(lead, t)
+        h = math.radians(ls.heading)
+        fwd, right = (math.sin(h), math.cos(h)), (math.cos(h), -math.sin(h))
+        actual = []
+        for p in members:
+            s = tracks.at(p, t)
+            dx, dy = s.x - ls.x, s.y - ls.y
+            actual.append((dx * fwd[0] + dy * fwd[1], dx * right[0] + dy * right[1]))
+        err = _fit(expected, actual)
+        if err < best[0]:
+            best = (err, t, actual)
+        if err <= tol:
+            since = t if since is None else since
+            if t - since >= hold - 1e-6:
+                return Verdict(
+                    ob.id,
+                    True,
+                    f"{ob.shape} 于 {since:.1f} s 成形（槽位最大偏差 {err:.0f} m，"
+                    f"保持 {hold:g} s）",
+                )
+        else:
+            since = None
+    err, t, actual = best
+    pos = "，".join(f"前 {f:.0f} m 右 {r:.0f} m" for f, r in actual)
+    want = "，".join(f"前 {f:.0f} m 右 {r:.0f} m" for f, r in expected)
+    if not times:
+        return Verdict(ob.id, False, f"{t0:g}–{t1:g} s 内没有位置采样")
+    return Verdict(
+        ob.id,
+        False,
+        f"{ob.shape} 未成形：最接近时 {t:.1f} s 槽位最大偏差 {err:.0f} m（允许 {tol:g} m，"
+        f"需保持 {hold:g} s）；当时成员相对长车 {pos}；应为 {want}",
+    )

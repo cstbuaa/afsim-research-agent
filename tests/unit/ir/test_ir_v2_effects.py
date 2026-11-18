@@ -121,3 +121,86 @@ def test_the_afsim_judge_reports_motion_and_effects() -> None:
     assert j.motion["b1"]["path_m"] > 100 and j.motion["o2"]["path_m"] == 0
     assert any(v["id"] == "turns" and v["passed"] for v in j.obligations)
     assert "moved" in j.render()
+
+
+def test_destroys_counts_enemies_destroyed_by_the_named_roles() -> None:
+    own = {"l1": "leader", "m1": "member", "m2": "member"}
+    rows = [(t, p, "blue", 0, 0, 0.0) for t in range(0, 60) for p in own]
+    rows += [(t, f"red_{k}", "red", 0, 6000 - 15 * t, 15.0) for t in range(0, 60) for k in (1, 2)]
+    tracks = E.parse(_console(rows))
+    ob = Obligation(id="kill", kind="destroys", roles=["member"])
+    one = [(40.0, "m1", "red_1")]
+    v = E.judge([ob], tracks, own, [], [], 60, one)[0]
+    assert v.judged and not v.passed and "1/2" in v.detail
+    both = one + [(50.0, "m2", "red_2")]
+    assert E.judge([ob], tracks, own, [], [], 60, both)[0].passed
+    # a time limit, and a kill by a role the obligation does not name
+    late = Obligation(id="k45", kind="destroys", roles=["member"], within_s=45)
+    assert not E.judge([late], tracks, own, [], [], 60, both)[0].passed
+    lead = Obligation(id="kl", kind="destroys", roles=["leader"], min_count=1)
+    assert not E.judge([lead], tracks, own, [], [], 60, both)[0].passed
+    # no weapon events reported: not judged
+    assert not E.judge([ob], tracks, own, [], [], 60, None)[0].judged
+
+
+def _formation(offsets: dict[str, tuple[float, float]], heading: float, form_at: int) -> str:
+    """Leader at the origin heading ``heading``; members reach (forward, right) slots at
+    ``form_at`` s, before that they sit 200 m to the left."""
+    import math
+
+    h = math.radians(heading)
+    lines = ["IR_POS_ORIGIN|0|0"]
+    for t in range(0, 40):
+        lines.append(f"IR_POS|{t}|l1|blue|0|0|0|{heading}")
+        for p, (f, r) in offsets.items():
+            if t < form_at:
+                f, r = 0.0, -200.0
+            east = f * math.sin(h) + r * math.cos(h)
+            north = f * math.cos(h) - r * math.sin(h)
+            lines.append(f"IR_POS|{t}|{p}|blue|{north}|{east}|0|{heading}")
+    return "\n".join(lines)
+
+
+def test_formation_shape_matches_the_platform_slots_in_the_leader_frame() -> None:
+    own = {"l1": "leader", "m1": "member", "m2": "member"}
+    assert E.slots("wedge_forward", 2, 50, 40) == [(-50, -40), (-50, 40)]
+    assert E.slots("column", 2, 50, 50) == [(-50, 0), (-100, 0)]
+    # a wedge facing east, members matched to slots in either order
+    tracks = E.parse(_formation({"m1": (-50, 50), "m2": (-50, -50)}, 90.0, 10))
+    acts = [(5.0, "l1", "hierarchical_formation.platoon_plan_formation")]
+    ob = Obligation(
+        id="wedge", kind="formation_shape", shape="wedge_forward", leader_role="leader",
+        spacing_m=50, action="hierarchical_formation.platoon_plan_formation", within_s=30,
+    )  # fmt: skip
+    v = E.judge([ob], tracks, own, acts, [], 40)[0]
+    assert v.passed and "10.0 s" in v.detail, v.detail
+    # the same positions are not a line abreast, nor a column
+    line = ob.model_copy(update={"shape": "line_abreast"})
+    v = E.judge([line], tracks, own, acts, [], 40)[0]
+    assert not v.passed and "未成形" in v.detail
+    col = ob.model_copy(update={"shape": "column"})
+    assert not E.judge([col], tracks, own, acts, [], 40)[0].passed
+    # formed too late for within_s
+    slow = E.parse(_formation({"m1": (-50, 50), "m2": (-50, -50)}, 90.0, 38))
+    assert not E.judge([ob], slow, own, acts, [], 40)[0].passed
+    # no positions: not judged
+    assert not E.judge([ob], E.Tracks(), own, acts, [], 40)[0].judged
+
+
+def test_the_afsim_judge_credits_kills_from_the_event_output() -> None:
+    from afsim_research_agent.ir.v2.afsim.evaluate import kills_of, parse_events
+
+    evt = "\n".join(
+        [
+            "69.00000 WEAPON_FIRED m1 red_1 m1_atgm_1 Engagement: 1",
+            "89.25000 WEAPON_HIT m1 red_1 m1_atgm_1 Engagement: 1 \\",
+            "  Result: DAMAGED",
+            "90.15000 WEAPON_HIT m2 red_2 m2_atgm_1 Engagement: 2 \\",
+            "  Result: KILLED",
+            "90.15000 PLATFORM_BROKEN red_2 Type: X Side: red",
+            "110.25000 WEAPON_HIT m1 red_1 m1_atgm_2 Engagement: 3 \\",
+            "  Result: KILLED",
+            "110.25000 PLATFORM_BROKEN red_1 Type: X Side: red",
+        ]
+    )
+    assert kills_of(parse_events(evt)) == [(90.15, "m2", "red_2"), (110.25, "m1", "red_1")]

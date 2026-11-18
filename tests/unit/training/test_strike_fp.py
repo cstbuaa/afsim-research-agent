@@ -42,7 +42,8 @@ def test_the_leader_allocates_and_broadcasts_on_every_update():
 
 def test_the_catalog_ids_are_distinct():
     ids = [s.model_id for s in catalog()]
-    assert len(ids) == len(set(ids)) == 6
+    assert len(ids) == len(set(ids)) == 7
+    assert ids[0] == "st_s1_67a49833"  # adding a module keeps the earlier ids
 
 
 def test_failure_tests_name_the_tree_event_so_the_reattack_cycle_is_not_followed():
@@ -63,3 +64,11 @@ def test_the_end_of_the_task_drops_the_assignment():
     for r in ("leader", "member"):
         tree = roles(StrikeSpec())[r][1].trees["CEASE"]
         assert "threat_allocation.expire_assignment()" in tree and "cease_fire" in tree
+
+
+def test_destroy_adds_the_effect_obligation_on_the_members():
+    _, request = sheet(StrikeSpec(destroy=True))
+    ob = next(o for o in request["obligations"] if o["id"] == "enemy_destroyed")
+    assert ob["kind"] == "destroys" and ob["roles"] == ["member"]
+    _, plain = sheet(StrikeSpec())
+    assert "enemy_destroyed" not in {o["id"] for o in plain["obligations"]}

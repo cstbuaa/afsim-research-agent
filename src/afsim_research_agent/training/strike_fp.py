@@ -68,13 +68,17 @@ class StrikeSpec:
     wait_start: bool = False
     engage_limit_s: float | None = None
     cease_order: str | None = None  # external event id of a cease-fire order
+    destroy: bool = False  # the requirement asks for the enemy destroyed (effect obligation)
     names: dict[str, str] = field(default_factory=dict)  # leader / member → role
     event_text: dict[str, str] = field(default_factory=dict)
     members: int = 2
 
     @property
     def model_id(self) -> str:
-        h = hashlib.sha1(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()[:8]
+        data = asdict(self)
+        if not data["destroy"]:
+            del data["destroy"]  # ids of the specs from before the module stay as they were
+        h = hashlib.sha1(json.dumps(data, sort_keys=True).encode()).hexdigest()[:8]
         return f"st_{self.skeleton.lower()}_{h}"
 
     def name(self, role: str) -> str:
@@ -415,6 +419,15 @@ def obligations(s: StrikeSpec) -> list[dict[str, Any]]:
             "within_s": 10.0,
         },
     ]
+    if s.destroy:
+        out.append(
+            {
+                "id": "enemy_destroyed",
+                "kind": "destroys",
+                "description": "成员车交战直至敌方车辆全部被摧毁",
+                "roles": [s.name("member")],
+            }
+        )
     if s.cease_order:
         out.append(
             {
@@ -487,4 +500,5 @@ def catalog() -> list[StrikeSpec]:
         StrikeSpec("S1", engage_limit_s=40),
         StrikeSpec("S1", cease_order="cease_fire_order"),
         StrikeSpec("S1", wait_start=True, engage_limit_s=40, cease_order="cease_fire_order"),
+        StrikeSpec("S1", destroy=True),
     ]

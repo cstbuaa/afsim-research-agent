@@ -370,6 +370,13 @@ def from_scenario(entry: dict[str, Any], model: dict[str, Any] | None, spec: dic
             out.append(Finding("UNCOVERED", sid, detail=ob, blocks=["verification"],
                                values={"obligation": ob}))  # fmt: skip
         return out
+    if sid == "effect_destroys":
+        return [
+            Finding(
+                "OBLIGATION", sid, detail="敌方没有被摧毁", blocks=["model", "conditions"],
+                values={"detail": "成员车没有一直交战到目标被摧毁（重攻条件、开火失败后的去向）"},
+            )
+        ]  # fmt: skip
     if sid == "effect_advances":
         return [
             Finding(
