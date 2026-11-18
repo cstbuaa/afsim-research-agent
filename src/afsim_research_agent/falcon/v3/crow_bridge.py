@@ -586,6 +586,7 @@ def make_request(
     candidates: int = 3,
     base: Path | None = None,
     missing_capabilities: str = "block",
+    drafting: str = "free",
 ) -> dict[str, Any]:
     """A v3 request (as a dict to write next to the Crow run) that names the selection."""
     target = tactics_dir if base is None else Path(_relative(tactics_dir, base))
@@ -597,6 +598,8 @@ def make_request(
         "scenario_events": scenario_events or {"cancelled": "外部结束请求"},
         "missing_capabilities": missing_capabilities,
     }
+    if drafting != "free":
+        out["drafting"] = drafting
     if requirement:
         out["requirement"] = requirement
     if role_map:

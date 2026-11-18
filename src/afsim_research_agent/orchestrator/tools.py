@@ -77,6 +77,11 @@ class FalconDraft3Args(BaseModel):
         description="能力集实现不了的战术要素：block 核心要素缺能力时不起草（默认），"
         "skip 不实现并在模型包中声明，wait 写成缺口等待能力开发",
     )
+    drafting: Literal["skeleton", "free"] = Field(
+        "skeleton",
+        description="skeleton：先从已验证的骨架（编队搜索跟踪、集中分配交战）起草，没有适用骨架时自动从零起草"
+        "（默认）；free：直接从零起草",
+    )
 
 
 class FalconDraftArgs(BaseModel):

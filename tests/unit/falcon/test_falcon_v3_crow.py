@@ -199,6 +199,8 @@ def test_skipped_elements_leave_the_clauses_and_are_recorded(tmp_path: Path) -> 
     assert (
         B.make_request(tmp_path, "x", missing_capabilities="wait")["missing_capabilities"] == "wait"
     )
+    assert "drafting" not in B.make_request(tmp_path, "x")
+    assert B.make_request(tmp_path, "x", drafting="skeleton")["drafting"] == "skeleton"
 
 
 def test_a_real_crow_selection_loads(tmp_path: Path) -> None:
