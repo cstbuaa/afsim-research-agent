@@ -337,10 +337,15 @@ class Drafter:
         self.blocked: dict[str, str] = {}
         self.skeleton_left_out: list[dict[str, Any]] = []  # clauses a skeleton does not carry
         self.skeleton_obligations: list[dict[str, Any]] = []  # a skeleton's own obligations
+        self.skeleton_choice: Any = None
         self.crow_caps: list[dict[str, Any]] = []  # Crow's capability map of that selection
         self.kit: dict[str, Any] | None = None  # the scenario kit (binding values), if any
 
     # ------------------------------------------------------------------ helpers
+    @property
+    def from_skeleton(self) -> bool:
+        return self.skeleton_choice is not None and bool(self.skeleton_choice.applicable)
+
     @property
     def iface(self) -> Any:
         from afsim_research_agent.ir.v2.scenario_interface import ScenarioInterface
@@ -417,6 +422,12 @@ class Drafter:
             ):
                 if code == "UNUSED_PARAM" and not tactic:
                     continue  # checked for drafts of a selected tactic (Crow) only
+                if code == "IMPL_MISMATCH" and self.from_skeleton:
+                    # a verified skeleton implements the clause its own way; the pre-draft
+                    # mapping is a guess (f3 11-19: the repair swapped the skeleton's
+                    # platoon_plan_formation for a parameterless transition_formation to
+                    # satisfy it, and the line and wedge never formed)
+                    continue
                 block, line = compiled.locate(path)
                 problems.append(SheetProblem(block, line, message, code=code))
             for path, message, code in semantics.role_problems(
