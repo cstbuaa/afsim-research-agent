@@ -336,6 +336,7 @@ class Drafter:
         self.clause_map: dict[str, dict[str, Any]] = {}
         self.blocked: dict[str, str] = {}
         self.skeleton_left_out: list[dict[str, Any]] = []  # clauses a skeleton does not carry
+        self.skeleton_obligations: list[dict[str, Any]] = []  # a skeleton's own obligations
         self.crow_caps: list[dict[str, Any]] = []  # Crow's capability map of that selection
         self.kit: dict[str, Any] | None = None  # the scenario kit (binding values), if any
 
@@ -882,6 +883,8 @@ class Drafter:
                 if len(text) > 80:
                     item["description"] = text[:80].rstrip() + "…"
         seen: set[str] = set()
+        ids = {str(i.get("id")) for i in raw}
+        raw = raw + [dict(o) for o in self.skeleton_obligations if str(o.get("id")) not in ids]
         for item in raw:
             try:
                 ob = Obligation.model_validate({k: v for k, v in item.items() if v is not None})
@@ -1040,7 +1043,7 @@ class Drafter:
                 iface |= {"points": points, "routes": routes}
                 self.r = self.r.model_copy(update={"scenario_interface": iface})
                 self.notes.append("想定接口补上前出路线 approach（编队骨架沿它搜索前进）")
-        text, notes, _ = SK.build(
+        text, notes, sk_request = SK.build(
             choice,
             events=events,
             display_name=self.r.display_name or self.r.model_id,
@@ -1048,6 +1051,9 @@ class Drafter:
         )
         self.notes.append(f"按已验证骨架起草：{choice.reason}")
         self.notes += notes
+        # the skeleton's own obligations (verified with it: formation shapes, cease on the
+        # end request, …) join the extracted ones
+        self.skeleton_obligations = list(sk_request.get("obligations") or [])
         # tactic clauses the skeleton does not carry are left out and declared, as for
         # missing capabilities (they blocked L1 with IMPL_MISSING and the agent redrafted
         # from scratch, losing the verified structure)

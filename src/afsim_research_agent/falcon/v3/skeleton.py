@@ -33,9 +33,22 @@ class SkeletonChoice(BaseModel):
         description="有骨架能实现需求的主体时为 true；否则 false，退回从零起草"
     )
     reason: str = Field(default="", description="一句话：为什么选这个骨架，或为什么都不适用")
-    family: Literal["formation", "strike"] = Field(
+    family: Literal["formation", "strike", "reform"] = Field(
         default="formation",
-        description="formation：编队搜索跟踪/单车观察骨架；strike：排长集中分配、成员车交战骨架",
+        description="formation：编队搜索跟踪/单车观察骨架；strike：排长集中分配、成员车交战骨架；"
+        "reform：排长依次下达队形、僚车按槽位跟随的队形变换骨架",
+    )
+    formations: list[
+        Literal[
+            "column", "line_abreast", "wedge_forward", "wedge_rear", "echelon_left", "echelon_right"
+        ]
+    ] = Field(default_factory=list, description="reform：按需求顺序列出要排的队形")
+    hold_s: float | None = Field(default=None, description="reform：每种队形保持多少秒后变换下一个")
+    spacing_m: float | None = Field(
+        default=None, description="reform：纵向车间距（米），需求给出才填"
+    )
+    lateral_m: float | None = Field(
+        default=None, description="reform：横向车间距（米），需求给出才填"
     )
     reattack: bool = Field(
         default=True,
@@ -126,6 +139,13 @@ CATALOG = """可选的骨架（已验证；状态、树、条件、事件、测�
   每一步失败（任务过期、射线上有友车、射程外、未装填、开火上限）→ WAITING_TASK 停火等待新任务
   CEASE 停火、关雷达 → COMPLETE
 destroy：需求要求打掉敌方时，验收检查敌方全部被摧毁
+
+排长下达队形、僚车按槽位跟随的队形变换（family=reform；排长车 1 辆，僚车 2 辆，原地变换）
+排长车：INIT 编制初始化 → 按 formations 顺序每种队形一个状态（F_COLUMN 纵队、F_LINE 横队、
+  F_WEDGE_FWD 楔形（僚车在后两侧）、F_WEDGE_REAR 倒楔形、F_ECH_LEFT 左梯队、F_ECH_RIGHT 右梯队），
+  每种保持 hold_s 秒后变换下一个；最后一种保持到任务结束 → SHUTDOWN → COMPLETE
+僚车：INIT → FOLLOW（持续驶向并保持分配的槽位）→ SHUTDOWN → COMPLETE
+验收按 AFSIM 位置检查每种队形都排成（spacing_m / lateral_m 间距）
 任何状态收到 cancelled → CEASE；收到 cease_order 停火命令 → HOLD（全部停火待命，cancelled 后再收尾）
 """
 
@@ -158,7 +178,7 @@ def prompt(
 
 {CATALOG}
 回答要求：
-- 先定 family：编队搜索/跟踪/观察类选 formation；排长分配目标、成员车开火交战类选 strike。
+- 先定 family：编队搜索/跟踪/观察类选 formation；排长分配目标、成员车开火交战类选 strike；原地按顺序变换队形（纵队、横队、楔形、梯队）选 reform。
 - 选能覆盖需求主体（阶段顺序、队形、发现/丢失/撤离的处理）的骨架和开关；需求没提到的开关保持默认（关），不要为了"更完整"打开需求没要求的开关（如广播共享航迹）。
 - 数值只填需求明确给出的（如"保持 3 km"填 desired_range_m=3000，"约 10 秒后开始搜索"填 search_delay_s=10）；没给的不填，程序用默认值并标为待复核。
 - leader_role / member_role 填需求角色里的名字；需求把三辆车写成三个各 1 辆的角色时，长车那个填 leader_role，另两个里取一个填 member_role，并在 reason 里说明。
@@ -228,6 +248,9 @@ def build(
     skeleton generator's own request (its tests and offline checks use it)."""
     if choice.family == "strike":
         return _build_strike(choice, events=events, display_name=display_name,
+                             intent=intent, clauses=clauses)  # fmt: skip
+    if choice.family == "reform":
+        return _build_reform(choice, events=events, display_name=display_name,
                              intent=intent, clauses=clauses)  # fmt: skip
     s = to_spec(choice, events)
     notes: list[str] = []
@@ -356,6 +379,64 @@ def _build_strike(
     text = re.sub(
         r"^# 战术稿：.*$", f"# 战术稿：{display_name or spec.model_id}", text, count=1, flags=re.M
     )
+    for u in choice.uncovered:
+        notes.append(f"骨架未覆盖的条款 {u.clause}：{u.why}")
+    return text, notes, request
+
+
+def _build_reform(
+    choice: SkeletonChoice,
+    *,
+    events: dict[str, str],
+    display_name: str,
+    intent: str,
+    clauses: list[str] | None,
+) -> tuple[str, list[str], dict[str, Any]]:
+    from afsim_research_agent.training import reform_fp as RF
+
+    notes: list[str] = []
+    names = {}
+    if choice.leader_role:
+        names["leader"] = choice.leader_role
+    if choice.member_role:
+        names["member"] = choice.member_role
+    forms = list(choice.formations) or ["column", "line_abreast"]
+    if not choice.formations:
+        notes.append("需求没列出队形：按 纵队→横队 起草，待复核")
+    spec = RF.ReformSpec(
+        formations=forms,
+        hold_s=float(choice.hold_s or 60.0),
+        spacing_m=float(choice.spacing_m or 50.0),
+        lateral_m=float(choice.lateral_m) if choice.lateral_m else None,
+        names=names,
+        event_text=dict(events),
+    )
+    for key, label, default in (
+        ("hold_s", "每种队形保持时间", "60 s"),
+        ("spacing_m", "车间距", "50 m"),
+    ):
+        if not getattr(choice, key):
+            notes.append(f"{label}需求没给，取默认 {default}，待复核")
+    states = {
+        spec.name("leader"): set(RF.leader_states(spec)),
+        spec.name("member"): set(RF.member_states(spec)),
+    }
+    implements = _implements(
+        choice, states, spec.name("leader"), spec.name("member"), clauses, notes
+    )
+    extra: dict[str, Any] = {
+        "model": {
+            "display_name": display_name or "队形变换",
+            "intent": intent or choice.reason or "按已验证的队形变换骨架生成",
+        },
+        "implements": implements or None,
+        "assumptions": [f"按已验证的队形变换骨架生成（{choice.reason}）"]
+        if choice.reason
+        else None,
+    }
+    text, request = RF.sheet(spec, extra)
+    if display_name:
+        text = re.sub(r"^# 战术稿：.*$", f"# 战术稿：{display_name}", text, count=1, flags=re.M)
     for u in choice.uncovered:
         notes.append(f"骨架未覆盖的条款 {u.clause}：{u.why}")
     return text, notes, request

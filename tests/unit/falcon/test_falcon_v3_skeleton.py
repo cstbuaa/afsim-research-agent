@@ -317,3 +317,44 @@ def test_clauses_the_skeleton_does_not_carry_are_left_out_and_declared(
     assert not any("IMPL_MISSING" in p.render() for p in result.check.problems)
     doc = yaml.safe_load((result.package_dir / "skeleton_choice.yaml").read_text(encoding="utf-8"))
     assert [x["clause"] for x in doc["left_out"]] == ["rq_02"]
+
+
+REFORM = SkeletonChoice(
+    applicable=True, family="reform", formations=["column", "line_abreast", "wedge_forward"],
+    hold_s=60, spacing_m=50, leader_role="leader", member_role="member",
+    implements={"rq_01": ["leader.F_COLUMN", "leader.F_LINE", "member.FOLLOW"]},
+)  # fmt: skip
+
+
+def test_a_reform_choice_changes_formation_on_a_timer_and_checks_every_shape():
+    text, notes, request = build(REFORM, events=EVENTS, clauses=["rq_01"])
+    leader = re.search(r"```mermaid leader\n(.*?)```", text, re.S).group(1)
+    assert (
+        "F_COLUMN --> F_LINE : hold_up" in leader and "F_LINE --> F_WEDGE_FWD : hold_up" in leader
+    )
+    assert "in_position" not in text  # the leader never waits for the members' slot flag
+    assert 'formation="WEDGE_FORWARD", spacing_m=50' in text
+    follow = re.search(r"def FOLLOW\(\):\n(.*?)\n\n", text, re.S).group(1)
+    assert "member_follow_slot" in follow and "hold_position" not in follow
+    shapes = {o["shape"] for o in request["obligations"] if o["kind"] == "formation_shape"}
+    assert shapes == {"column", "line_abreast", "wedge_forward"}
+    model = yaml.safe_load(re.search(r"```yaml model\n(.*?)```", text, re.S).group(1))
+    assert model["implements"]["rq_01"] == ["leader.F_COLUMN", "leader.F_LINE", "member.FOLLOW"]
+
+
+@pytest.mark.skipif(not _capability_set(), reason="needs the capability set")
+def test_the_reform_choice_builds_a_valid_model(tmp_path: Path) -> None:
+    from afsim_research_agent.falcon.v3.draft import compile_package
+
+    text, _, request = build(REFORM, events=EVENTS)
+    request["scenario_events"] = {"cancelled": EVENTS["cancelled"]}
+    (tmp_path / "tactic_sheet.md").write_text(text, encoding="utf-8")
+    (tmp_path / "falcon_request.yaml").write_text(
+        yaml.safe_dump(request, allow_unicode=True), encoding="utf-8"
+    )
+    res = compile_package(
+        tmp_path / "tactic_sheet.md", tmp_path / "falcon_request.yaml", tmp_path / "pkg"
+    )
+    c = res.check
+    detail = [p.render() for p in c.problems][:6] + [t for t in c.l2 if not t["passed"]][:4]
+    assert c.l1_ok and all(t["passed"] for t in c.l2), detail
