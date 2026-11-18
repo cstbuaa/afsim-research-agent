@@ -340,3 +340,27 @@ def test_the_agent_gets_the_v3_toolset_by_default() -> None:
     assert {"scenario_plan", "scenario_variants", "afsim_branches"} <= v3
     with pytest.raises(ValueError):
         toolset_names("v4")
+
+
+def test_crow_research_reuses_a_finished_run_of_the_same_requirement(ws: Workspace) -> None:
+    import json
+
+    import yaml
+
+    run = ws.root / "runs" / "crow-research" / "20261118-175742"
+    run.mkdir(parents=True)
+    (run / "mission_profile.yaml").write_text(
+        yaml.safe_dump({"requirement": "三车 纵队\n搜索前进"}, allow_unicode=True), encoding="utf-8"
+    )
+    (run / "research_result.json").write_text(
+        json.dumps({"readiness": {"ready": False, "checks": [{"name": "question_coverage",
+                    "passed": False}]}, "collection": {"candidates": [1, 2], "sources": [1]}}),
+        encoding="utf-8",
+    )  # fmt: skip
+    res = asyncio.run(st.crow_research(ws, "三车纵队搜索前进", settings=object()))
+    assert res.status == "failed" and "复用" in res.summary and "question_coverage" in res.summary
+    assert res.artifacts["run_dir"].endswith("20261118-175742")
+    # another requirement is not reused (it would start the model-backed research)
+    from afsim_research_agent.orchestrator import stages
+
+    assert stages._finished_research(ws, "另一个需求") is None

@@ -178,15 +178,22 @@ async def crow_research(
     run_dir: str | None = None,
     max_sources: int | None = None,
     gap_rounds: int | None = None,
+    rerun: bool = False,
     pipeline=None,
     settings=None,
 ) -> StageResult:
-    """C1–C3: mission profile, research plan, retrieval, evidence and the Falcon gate."""
+    """C1–C3: mission profile, research plan, retrieval, evidence and the Falcon gate. A
+    finished research of the same requirement is reused unless ``rerun`` (the agent started
+    the hour-long research again after the gate failed, ignoring the user's "only once")."""
+    if not requirement.strip():
+        return StageResult("crow_research", "blocked", "需求为空")
+    if not rerun and run_dir is None:
+        done = _finished_research(ws, requirement)
+        if done is not None:
+            return done
     from afsim_research_agent.config import Settings
     from afsim_research_agent.crow.cli import aprepare_mission_profile, run_research_with_result
 
-    if not requirement.strip():
-        return StageResult("crow_research", "blocked", "需求为空")
     settings = settings or Settings.from_environment()
     run_dir = run_dir or f"runs/crow-research/{datetime.now():%Y%m%d-%H%M%S}"
     out = ws.new_dir(run_dir)
@@ -222,6 +229,41 @@ async def crow_research(
         if ready
         else ["检查报告中的缺口，必要时调整需求或增加检索轮数"],
     )
+
+
+def _squash(text: str) -> str:
+    return "".join(ch for ch in text if not ch.isspace())
+
+
+def _finished_research(ws: Workspace, requirement: str) -> StageResult | None:
+    """The newest finished research run (research_result.json) of the same requirement."""
+    base = ws.root / "runs" / "crow-research"
+    want = _squash(requirement)
+    for run in sorted(base.glob("*/research_result.json"), reverse=True) if base.is_dir() else []:
+        prof = run.parent / "mission_profile.yaml"
+        try:
+            doc = yaml.safe_load(prof.read_text(encoding="utf-8")) or {}
+            if _squash(str(doc.get("requirement") or "")) != want:
+                continue
+            result = json.loads(run.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - an unreadable run is not reused
+            continue
+        readiness = result.get("readiness") or {}
+        ready = bool(readiness.get("ready"))
+        failed = [c.get("name") for c in readiness.get("checks") or [] if not c.get("passed")]
+        col = result.get("collection") or {}
+        md = run.parent / "research_report.md"
+        return StageResult(
+            "crow_research",
+            "ok" if ready else "failed",
+            f"复用同一需求已完成的检索 {ws.show(run.parent)}（未重新检索）：候选来源 "
+            f"{len(col.get('candidates') or [])}，采用 {len(col.get('sources') or [])}；Falcon 输入门槛"
+            + ("通过" if ready else f"未通过（{', '.join(failed)}）"),
+            artifacts={"run_dir": ws.show(run.parent), "result": ws.show(run)}
+            | ({"report": ws.show(md)} if md.exists() else {}),
+            next_steps=["crow_propose（用这个运行目录）；用户明确要求重新检索时才用 rerun=true"],
+        )
+    return None
 
 
 @guarded("crow_propose")

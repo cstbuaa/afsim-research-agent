@@ -40,6 +40,10 @@ class CrowResearchArgs(BaseModel):
     run_dir: str | None = Field(None, description="输出目录（runs/ 下、尚不存在）；缺省自动命名")
     max_sources: int | None = Field(None, ge=1, le=60, description="最多采用的来源数")
     gap_rounds: int | None = Field(None, ge=0, le=3, description="证据不足时追加检索轮数")
+    rerun: bool = Field(
+        False,
+        description="同一需求已有完成的检索时默认直接复用；只有用户明确要求重新检索时才设为 true",
+    )
 
 
 class CrowProposeArgs(BaseModel):
