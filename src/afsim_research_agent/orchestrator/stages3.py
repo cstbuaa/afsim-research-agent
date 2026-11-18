@@ -348,7 +348,12 @@ def afsim_run(
     conditional = {o["id"] for o in extra if o.get("conditional")}
     plain = [{k: v for k, v in o.items() if k != "conditional"} for o in extra]
     # under _local: native input and output, readable by the workbench, not by the agent
-    out = _runs_base(ws, pkg) / "_local" / "afsim" / f"{pkg.name}_{datetime.now():%m%d_%H%M%S}"
+    stem = _runs_base(ws, pkg) / "_local" / "afsim" / f"{pkg.name}_{datetime.now():%m%d_%H%M%S}"
+    out = stem
+    for k in range(2, 100):  # two runs within the same second: never reuse a directory
+        if not out.exists():
+            break
+        out = stem.with_name(f"{stem.name}_{k}")
     if out.exists():
         return StageResult("afsim_run", "blocked", "输出目录已存在，稍后再试")
     out.parent.mkdir(parents=True, exist_ok=True)
