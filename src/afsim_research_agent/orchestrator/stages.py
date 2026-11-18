@@ -183,8 +183,9 @@ async def crow_research(
     settings=None,
 ) -> StageResult:
     """C1–C3: mission profile, research plan, retrieval, evidence and the Falcon gate. A
-    finished research of the same requirement is reused unless ``rerun`` (the agent started
-    the hour-long research again after the gate failed, ignoring the user's "only once")."""
+    finished research of the same requirement is reused (the agent started the hour-long
+    research again after the gate failed, ignoring the user's "only once", and asked for a
+    rerun when it could): ``rerun`` is not a tool argument, only the CLI and tests set it."""
     if not requirement.strip():
         return StageResult("crow_research", "blocked", "需求为空")
     if not rerun and run_dir is None:
@@ -261,7 +262,10 @@ def _finished_research(ws: Workspace, requirement: str) -> StageResult | None:
             + ("通过" if ready else f"未通过（{', '.join(failed)}）"),
             artifacts={"run_dir": ws.show(run.parent), "result": ws.show(run)}
             | ({"report": ws.show(md)} if md.exists() else {}),
-            next_steps=["crow_propose（用这个运行目录）；用户明确要求重新检索时才用 rerun=true"],
+            next_steps=[
+                "crow_propose（用这个运行目录）。同一需求不会再检索：门槛未通过时把缺口告诉用户，"
+                "用现有资料继续；用户要补充资料时改写需求（新的需求会重新检索）"
+            ],
         )
     return None
 
