@@ -70,6 +70,8 @@ def merge(kit: dict[str, Any], overrides: dict[str, Any] | None) -> dict[str, An
             out.setdefault("binding", {}).setdefault("points", {}).update(values or {})
         elif isinstance(values, dict):
             out.setdefault(section, {}).update(values)
+        elif section == "fixed":
+            out["fixed"] = sorted(set(out.get("fixed") or []) | set(values or []))
     return out
 
 
@@ -212,6 +214,11 @@ def scenario_set(
             problems.append(f"{section}.{key}={value} 超出范围 [{lo:g}, {hi:g}]")
             continue
         overrides.setdefault(section, {})[key] = int(value) if key == "count" else float(value)
+        if (section, key) in (("enemy", "range_m"), ("meta", "end_time_s")):
+            # the user's value: the binding keeps it instead of the model's own layout
+            fixed = overrides.setdefault("fixed", [])
+            if f"{section}.{key}" not in fixed:
+                fixed.append(f"{section}.{key}")
     model_events = set((loaded.model.get("events") or {}).keys())
     for ev, t in (events or {}).items():
         if ev not in model_events:
@@ -243,7 +250,15 @@ def scenario_set(
     return StageResult(
         "scenario_set",
         "ok",
-        f"已写入想定 {ws.show(path)}：运行 {binding.end_s:g} s，敌方起始 {binding.enemy_range_m:g} m",
+        f"已写入想定 {ws.show(path)}：运行 {binding.end_s:g} s，敌方起始 {binding.enemy_range_m:g} m"
+        + "".join(
+            f"（注意：要求的 {lbl} {v:g} 未采用）"
+            for lbl, v, got in (
+                ("运行时长 s", end_time_s, binding.end_s),
+                ("敌方距离 m", enemy_range_m, binding.enemy_range_m),
+            )
+            if v is not None and abs(float(v) - float(got)) > 1e-6
+        ),
         artifacts={"scenario": ws.show(path)},
         next_steps=["simulate2d 或 afsim_run 时传 scenario=<这个文件>"],
         data=data,

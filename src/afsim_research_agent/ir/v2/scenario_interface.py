@@ -440,15 +440,19 @@ def bind(
         defaults.append(f"出发位置取默认 {origin}")
     speed = float(bkit.get("route_speed_mps", meta.get("route_speed_mps", DEFAULT_ROUTE_SPEED_MPS)))
     sensor = float((kit.get("platform") or {}).get("sensor_range_m", DEFAULT_SENSOR_RANGE_M))
+    # values the user set for this scenario (scenario_set) win over the model's profile
+    fixed = set(kit.get("fixed") or [])
     prof = profile(interface, model, sensor_m=sensor, speed_mps=speed)
-    if prof.enemy_range_m is not None:
+    if "enemy.range_m" in fixed:
+        defaults.append(f"敌方距离取想定指定的 {rng:g} m")
+    elif prof.enemy_range_m is not None:
         rng = prof.enemy_range_m
+        defaults += prof.notes
     elif "range_m" not in enemy:
         defaults.append(f"敌方距离取默认 {rng:g} m")
-    defaults += prof.notes
-    # the point ahead and the run length follow a distance the profile chose; a distance
-    # the kit (or the workbench's scenario override) states keeps the kit's own values
-    chosen = prof.enemy_range_m is not None
+    # the point ahead and the run length follow a distance the profile chose (or the user
+    # set); a distance only the kit states keeps the kit's own values
+    chosen = prof.enemy_range_m is not None or "enemy.range_m" in fixed
     if "ahead_m" in bkit:
         ahead_m = float(bkit["ahead_m"])
     elif chosen and rng > sensor:
@@ -463,7 +467,12 @@ def bind(
     if chosen and rng > sensor:
         # time to drive into radar range, then the phases after the contact
         need = math.ceil(((rng - sensor) / max(speed, 0.5) + 180.0) / 10.0) * 10.0
-        if need > end_s:
+        if need > end_s and "meta.end_time_s" in fixed:
+            defaults.append(
+                f"运行时长按想定指定的 {end_s:g} s（开进雷达范围约需 "
+                f"{(rng - sensor) / max(speed, 0.5):.0f} s，接敌后的阶段可能来不及）"
+            )
+        elif need > end_s:
             end_s = need
             defaults.append(
                 f"运行时长取 {end_s:g} s（以 {speed:g} m/s 开进雷达范围约 "

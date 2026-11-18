@@ -430,3 +430,9 @@ def test_the_enemy_distance_follows_the_requirement_and_the_model() -> None:
     }
     assert model_thresholds(standoff) == {"withdraw_dist": 12_000.0}
     assert bind(stated, {}, standoff).enemy_range_m == 13_000.0
+    # values the user set for the scenario (scenario_set: "fixed") win over the profile
+    user = {"enemy": {"range_m": 6000.0}, "meta": {"end_time_s": 240.0},
+            "fixed": ["enemy.range_m", "meta.end_time_s"]}  # fmt: skip
+    b = bind(advance, user, search)
+    assert (b.enemy_range_m, b.end_s) == (6000.0, 240.0)
+    assert any("想定指定" in d for d in b.defaults)
