@@ -335,6 +335,7 @@ class Drafter:
         # capability set cannot carry (clause → missing capability)
         self.clause_map: dict[str, dict[str, Any]] = {}
         self.blocked: dict[str, str] = {}
+        self.skeleton_left_out: list[dict[str, Any]] = []  # clauses a skeleton does not carry
         self.crow_caps: list[dict[str, Any]] = []  # Crow's capability map of that selection
         self.kit: dict[str, Any] | None = None  # the scenario kit (binding values), if any
 
@@ -1047,6 +1048,21 @@ class Drafter:
         )
         self.notes.append(f"按已验证骨架起草：{choice.reason}")
         self.notes += notes
+        # tactic clauses the skeleton does not carry are left out and declared, as for
+        # missing capabilities (they blocked L1 with IMPL_MISSING and the agent redrafted
+        # from scratch, losing the verified structure)
+        block = re.search(r"```yaml model\n(.*?)```", text, re.S)
+        claimed = (
+            set((yaml.safe_load(block.group(1)) or {}).get("implements") or {}) if block else set()
+        )
+        left = [c for c in self.clauses if c["id"] not in claimed]
+        if left and claimed:
+            self.clauses = [c for c in self.clauses if c["id"] in claimed]
+            self.skeleton_left_out = left
+            self.notes.append(
+                "骨架没有实现的战术条款（已声明，不在本模型中；需要时补骨架模块或从零起草）："
+                + "；".join(f"{c['id']} {str(c.get('text', ''))[:40]}" for c in left)
+            )
         self.blocks = []
         self.notes += merge(self.blocks, text, (*STRUCTURE_KINDS, *CONTROL_KINDS, "verification"))
         check = self.check(pending=True)
@@ -1920,7 +1936,14 @@ async def run_draft3(
         if choice is not None:
             from afsim_research_agent.falcon.v3.skeleton import describe
 
-            (staging / "skeleton_choice.yaml").write_text(describe(choice), encoding="utf-8")
+            text = describe(choice)
+            if lead.skeleton_left_out:
+                text += yaml.safe_dump(
+                    {"left_out": [{"clause": c["id"], "text": str(c.get("text", ""))}
+                                  for c in lead.skeleton_left_out]},
+                    allow_unicode=True, sort_keys=False,
+                )  # fmt: skip
+            (staging / "skeleton_choice.yaml").write_text(text, encoding="utf-8")
         if history is not None:
             (staging / "afsim_rounds.md").write_text(_afsim_report(history), encoding="utf-8")
     except BaseException:

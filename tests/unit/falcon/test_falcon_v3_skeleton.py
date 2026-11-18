@@ -273,3 +273,47 @@ def test_a_strike_role_name_that_is_not_an_id_falls_back_to_the_skeleton_role(
     result = asyncio.run(run_draft3(request, ScriptedModel(script), out_dir=tmp_path / "out"))
     sheet = (result.package_dir / "tactic_sheet.md").read_text(encoding="utf-8")
     assert "```python member" in sheet and "成员车_" not in sheet
+
+
+def test_clauses_the_skeleton_does_not_carry_are_left_out_and_declared(
+    set_root: Path, tmp_path: Path
+):
+    import asyncio
+
+    _stub_langchain()
+    from afsim_research_agent.falcon.llm import ScriptedModel
+    from afsim_research_agent.falcon.v3.draft import run_draft3
+
+    request = tmp_path / "req.yaml"
+    request.write_text(
+        yaml.safe_dump(
+            {
+                "requirement": "三车编队集结后沿路线搜索前进；通信中断时各车独立行动。",
+                "model_id": "sk_left",
+                "roles": {
+                    "leader": {"capability_class": "ground_vehicle", "count": 1},
+                    "wingman": {"capability_class": "ground_vehicle", "count": 2},
+                },
+                "capability_set": str(set_root),
+                "drafting": "skeleton",
+                "extract_obligations": False,
+                "scenario_events": {"cancelled": "上级结束任务"},
+            },
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    choice = CHOICES["assemble_delay_reacquire"].model_dump() | {
+        "implements": {"rq_01": ["leader.ASSEMBLE"]}
+    }
+    script = {
+        "requirements": [
+            {"clauses": [{"text": "三车编队集结后沿路线搜索前进", "kind": "behavior"},
+                         {"text": "通信中断时各车独立行动", "kind": "behavior"}]}
+        ],
+        "v3:skeleton": [choice],
+    }  # fmt: skip
+    result = asyncio.run(run_draft3(request, ScriptedModel(script), out_dir=tmp_path / "out"))
+    assert not any("IMPL_MISSING" in p.render() for p in result.check.problems)
+    doc = yaml.safe_load((result.package_dir / "skeleton_choice.yaml").read_text(encoding="utf-8"))
+    assert [x["clause"] for x in doc["left_out"]] == ["rq_02"]
