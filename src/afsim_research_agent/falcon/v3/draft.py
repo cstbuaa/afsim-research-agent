@@ -924,6 +924,12 @@ class Drafter:
             return
         if any(o.kind == "advances" for o in self.obligations):
             return
+        if self.from_skeleton and getattr(self.skeleton_choice, "family", "") in (
+            "strike",
+            "reform",
+        ):
+            return  # these skeletons hold their position (s1 11-19: "advance 2 km" failed a
+            # defence that destroyed both enemies)
         bound = bind(iface, self.kit)
         length = 0.0
         for r in bound.routes.values():
