@@ -992,7 +992,7 @@ class Drafter:
         if choice.wait_start and "start_order" not in events:
             choice.wait_start = False
             self.notes.append("想定不会发出开始命令 start_order：骨架不等开始命令")
-        if choice.formation:
+        if choice.formation and choice.family == "formation":
             # every formation skeleton advances along the interface route ``approach``
             iface = dict(self.r.scenario_interface or {})
             routes = dict(iface.get("routes") or {})

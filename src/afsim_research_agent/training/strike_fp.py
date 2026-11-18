@@ -113,8 +113,8 @@ def member_machine(s: StrikeSpec) -> Machine:
     states += ["CEASE", "COMPLETE"]
     trees = {
         "PREPARE": "    perception.start_search()",
-        # clears a task whose validity ran out while waiting
-        "WAITING_TASK": "    threat_allocation.expire_assignment()",
+        # hold fire while waiting; clears a task whose validity ran out
+        "WAITING_TASK": "    engagement.cease_fire()\n    threat_allocation.expire_assignment()",
         "VALIDATING": _seq(VALIDATE),
         "SELECTING": _seq(SELECT),
         "FIRING": _seq(FIRE),

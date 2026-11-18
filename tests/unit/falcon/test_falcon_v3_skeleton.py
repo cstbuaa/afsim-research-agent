@@ -212,3 +212,28 @@ def test_the_skeleton_adds_the_advance_route_and_drops_an_unknown_start_order(
     assert req["scenario_interface"]["routes"]["approach"]["end"] == "ahead"
     sheet = (pkg / "tactic_sheet.md").read_text(encoding="utf-8")
     assert "WAIT_START" not in sheet and "start_order" not in sheet
+
+
+def test_a_strike_choice_builds_the_strike_skeleton_and_maps_tactic_role_names():
+    choice = SkeletonChoice(
+        applicable=True, family="strike", reattack=True, cease_order="nope",
+        leader_role="leader", member_role="member",
+        implements={"rq_01": ["lead_vehicle.ALLOCATING"], "rq_02": ["wingman_A.FIRING"],
+                    "rq_03": ["member.SEARCH"]},
+    )  # fmt: skip
+    text, notes, request = build(choice, events=EVENTS, clauses=["rq_01", "rq_02", "rq_03"])
+    assert "```mermaid leader" in text and "def ALLOCATING():" in text
+    model = yaml.safe_load(re.search(r"```yaml model\n(.*?)```", text, re.S).group(1))
+    assert model["implements"] == {"rq_01": ["leader.ALLOCATING"], "rq_02": ["member.FIRING"]}
+    assert "threat_allocation" in model["slices"]
+    assert any("nope" in n for n in notes) and any("member.SEARCH" in n for n in notes)
+    assert {o["id"] for o in request["obligations"]} >= {"allocate_before_fire", "cease_on_cancel"}
+
+
+def test_formation_implements_with_tactic_role_names_are_mapped_not_dropped():
+    choice = CHOICES["withdraw_order"].model_copy(
+        update={"implements": {"tc_02_s1": ["lead_vehicle.STANDOFF_TRACK", "wingman_A.TRACK"]}}
+    )
+    text, notes, _ = build(choice, events=EVENTS, clauses=["tc_02_s1"])
+    model = yaml.safe_load(re.search(r"```yaml model\n(.*?)```", text, re.S).group(1))
+    assert model["implements"] == {"tc_02_s1": ["leader.STANDOFF_TRACK", "member.TRACK"]}

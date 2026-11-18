@@ -33,6 +33,20 @@ class SkeletonChoice(BaseModel):
         description="有骨架能实现需求的主体时为 true；否则 false，退回从零起草"
     )
     reason: str = Field(default="", description="一句话：为什么选这个骨架，或为什么都不适用")
+    family: Literal["formation", "strike"] = Field(
+        default="formation",
+        description="formation：编队搜索跟踪/单车观察骨架；strike：排长集中分配、成员车交战骨架",
+    )
+    reattack: bool = Field(
+        default=True,
+        description="strike：目标未摧毁且开火未达上限时再次攻击；false 则每个任务只打一轮",
+    )
+    engage_limit_s: float | None = Field(
+        default=None, description="strike：交战时限（秒），到时排长停止分配并停火；需求没说就不填"
+    )
+    cease_order: str | None = Field(
+        default=None, description="strike：上级停火命令对应的外部事件（取自想定事件）；没有就不填"
+    )
     formation: bool = Field(
         default=True, description="三车编队（长车 1 + 僚车 2）为 true；单车定点观察为 false"
     )
@@ -96,6 +110,17 @@ CATALOG = """可选的骨架（已验证；状态、树、条件、事件、测�
 僚车状态：SEARCH → TRACK →（lost_hold 时 REACQUIRE）→ SHUTDOWN → COMPLETE；只做感知
 
 单车定点观察（formation=false）：原地 SEARCH → TRACK → REACQUIRE（超时回 SEARCH）→ SHUTDOWN → COMPLETE
+
+排长集中分配 + 成员车交战（family=strike；排长车 1 辆，成员车 2 辆）
+排长车：（wait_start：WAIT_START 等开始命令）→ PREPARE 开雷达 → ALLOCATING：每拍完成一次
+  收集目标、评估威胁、检查成员车、筛选、建候选、一车一目标分配、电台下发（任务 3 s 有效，每拍重发）
+  （engage_limit_s：交战时限到 → CEASE）→ CEASE 停火、关雷达 → COMPLETE
+成员车：PREPARE 开雷达 → WAITING_TASK（停火待命，清过期任务）→ 收到任务 → VALIDATING（采纳任务、
+  校验有效、武器状态、射线友军检查）→ SELECTING（筛选、打分、选定武器）→ FIRING（瞄准、开火）→
+  OBSERVING（观察毁伤；reattack：未摧毁且本任务开火不到 3 次 → VALIDATING 再攻击，否则 → WAITING_TASK）
+  每一步失败（任务过期、射线上有友车、射程外、未装填、开火上限）→ WAITING_TASK 停火等待新任务
+  CEASE 停火、关雷达 → COMPLETE
+任何状态收到 cancelled（及 cease_order 停火命令）→ CEASE
 """
 
 
@@ -127,10 +152,11 @@ def prompt(
 
 {CATALOG}
 回答要求：
-- 选能覆盖需求主体（阶段顺序、队形、发现/丢失/撤离的处理）的骨架和开关；需求没提到的开关保持默认（关）。
+- 先定 family：编队搜索/跟踪/观察类选 formation；排长分配目标、成员车开火交战类选 strike。
+- 选能覆盖需求主体（阶段顺序、队形、发现/丢失/撤离的处理）的骨架和开关；需求没提到的开关保持默认（关），不要为了"更完整"打开需求没要求的开关（如广播共享航迹）。
 - 数值只填需求明确给出的（如"保持 3 km"填 desired_range_m=3000，"约 10 秒后开始搜索"填 search_delay_s=10）；没给的不填，程序用默认值并标为待复核。
 - leader_role / member_role 填需求角色里的名字；需求把三辆车写成三个各 1 辆的角色时，长车那个填 leader_role，另两个里取一个填 member_role，并在 reason 里说明。
-- implements：每条条款写出实现它的状态，格式"角色名.状态"（角色名用 leader_role / member_role 的值），状态只能是上面列出的、并且由所选开关产生的状态。
+- implements：每条条款写出实现它的状态，格式"角色名.状态"。角色名只能用 leader_role / member_role 的值（就是需求角色里的名字），不要用战术卡里的角色名（如 lead_vehicle、wingman_A）；状态只能是上面列出的、并且由所选开关产生的状态。
 - 骨架做不到的条款（如梯队楔形队形、监视交接、单车隐蔽撤离）放进 uncovered，写清原因；不要为它们改骨架。
 - 需求主体（阶段顺序本身）与所有骨架都不符时 applicable=false。
 """
@@ -194,24 +220,14 @@ def build(
 ) -> tuple[str, list[str], dict[str, Any]]:
     """The tactic sheet for a choice, notes (dropped implements, defaults used) and the
     skeleton generator's own request (its tests and offline checks use it)."""
+    if choice.family == "strike":
+        return _build_strike(choice, events=events, display_name=display_name,
+                             intent=intent, clauses=clauses)  # fmt: skip
     s = to_spec(choice, events)
     notes: list[str] = []
     states = {r: set(m.states) for r, (_, m, _) in roles(s).items()}
-    implements: dict[str, list[str]] = {}
-    known = set(clauses or []) or None
-    for cid, refs in choice.implements.items():
-        if known is not None and cid not in known:
-            notes.append(f"implements 里的条款 {cid} 不在需求条款中，已去掉")
-            continue
-        good = []
-        for ref in refs:
-            role, _, st = str(ref).partition(".")
-            if st in states.get(role, set()):
-                good.append(f"{role}.{st}")
-            else:
-                notes.append(f"条款 {cid} 的 {ref} 不是骨架里的状态，已去掉")
-        if good:
-            implements[cid] = good
+    lead = s.name("leader" if s.formation else "observer")
+    implements = _implements(choice, states, lead, s.name("member"), clauses, notes)
     params: dict[str, Any] = {}
     defaults = {
         "desired_range_m": ("m", "保持距离"),
@@ -245,6 +261,93 @@ def build(
     text, request = sheet(s, extra)
     text = re.sub(
         r"^# 战术稿：.*$", f"# 战术稿：{display_name or s.model_id}", text, count=1, flags=re.M
+    )
+    for u in choice.uncovered:
+        notes.append(f"骨架未覆盖的条款 {u.clause}：{u.why}")
+    return text, notes, request
+
+
+LEADISH = re.compile(r"lead|leader|command|cmd|hq|chief|长车|排长|主|指挥", re.I)
+
+
+def _implements(
+    choice: SkeletonChoice,
+    states: dict[str, set[str]],
+    lead: str,
+    member: str,
+    clauses: list[str] | None,
+    notes: list[str],
+) -> dict[str, list[str]]:
+    """Clause → states, checked against the skeleton. A role name the skeleton does not
+    know (a tactic card's own, such as lead_vehicle / wingman_A) maps onto the leader when
+    it reads like one, else onto the member."""
+    out: dict[str, list[str]] = {}
+    known = set(clauses or []) or None
+    for cid, refs in choice.implements.items():
+        if known is not None and cid not in known:
+            notes.append(f"implements 里的条款 {cid} 不在需求条款中，已去掉")
+            continue
+        good: list[str] = []
+        for ref in refs:
+            role, _, st = str(ref).partition(".")
+            if role not in states:
+                mapped = lead if LEADISH.search(role) else member
+                if mapped in states and st in states[mapped]:
+                    notes.append(f"条款 {cid} 的角色 {role} 按 {mapped} 处理")
+                    role = mapped
+            if st in states.get(role, set()):
+                if f"{role}.{st}" not in good:
+                    good.append(f"{role}.{st}")
+            else:
+                notes.append(f"条款 {cid} 的 {ref} 不是骨架里的状态，已去掉")
+        if good:
+            out[cid] = good
+    return out
+
+
+def _build_strike(
+    choice: SkeletonChoice,
+    *,
+    events: dict[str, str],
+    display_name: str,
+    intent: str,
+    clauses: list[str] | None,
+) -> tuple[str, list[str], dict[str, Any]]:
+    from afsim_research_agent.training import strike_fp as SF
+
+    names = {}
+    if choice.leader_role:
+        names["leader"] = choice.leader_role
+    if choice.member_role:
+        names["member"] = choice.member_role
+    order = choice.cease_order if choice.cease_order in events else None
+    spec = SF.StrikeSpec(
+        reattack=choice.reattack,
+        wait_start=choice.wait_start and "start_order" in events,
+        engage_limit_s=choice.engage_limit_s or None,
+        cease_order=order if order != "cancelled" else None,
+        names=names,
+        event_text=dict(events),
+    )
+    notes: list[str] = []
+    if choice.cease_order and spec.cease_order is None:
+        notes.append(f"想定不会发出 {choice.cease_order}：骨架不加停火命令")
+    rl = SF.roles(spec)
+    states = {r: set(m.states) for r, (_, m, _) in rl.items()}
+    implements = _implements(
+        choice, states, spec.name("leader"), spec.name("member"), clauses, notes
+    )
+    extra: dict[str, Any] = {
+        "model": {
+            "display_name": display_name or "打击骨架",
+            "intent": intent or choice.reason or "按已验证的打击骨架生成",
+        },
+        "implements": implements or None,
+        "assumptions": [f"按已验证的打击骨架生成（{choice.reason}）"] if choice.reason else None,
+    }
+    text, request = SF.sheet(spec, extra)
+    text = re.sub(
+        r"^# 战术稿：.*$", f"# 战术稿：{display_name or spec.model_id}", text, count=1, flags=re.M
     )
     for u in choice.uncovered:
         notes.append(f"骨架未覆盖的条款 {u.clause}：{u.why}")
