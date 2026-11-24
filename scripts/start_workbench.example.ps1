@@ -41,7 +41,13 @@ function Start-Detached([string]$dir, [string]$command, [string]$log) {
 Push-Location $repo
 Start-Detached $repo "`"$(Join-Path (Split-Path $py) 'Scripts\langgraph.exe')`" dev --host 127.0.0.1 --port 2024 --no-browser --no-reload --allow-blocking" "$logs\langgraph"
 Push-Location frontend
-if ($Build -or -not (Test-Path ".next\BUILD_ID")) { & "$node\yarn.cmd" build }
+# rebuild when asked, when there is no build, or when a source file is newer than the build
+$stale = $false
+if (Test-Path ".next\BUILD_ID") {
+  $built = (Get-Item ".next\BUILD_ID").LastWriteTime
+  $stale = [bool](Get-ChildItem src, public -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt $built } | Select-Object -First 1)
+}
+if ($Build -or $stale -or -not (Test-Path ".next\BUILD_ID")) { & "$node\yarn.cmd" build }
 Start-Detached (Get-Location).Path "`"$node\yarn.cmd`" start" "$logs\frontend"
 Pop-Location
 Pop-Location
