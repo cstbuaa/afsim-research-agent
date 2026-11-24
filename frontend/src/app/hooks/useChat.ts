@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useStream } from "@langchain/langgraph-sdk/react";
 import {
   type Message,
@@ -61,14 +61,45 @@ export function useChat({
     experimental_thread: thread,
   });
 
+  // A thread whose checkpoints were lost (the dev server keeps them in memory and writes
+  // them out from time to time; a hard stop drops what was not written) loads with no
+  // history, but the thread record still holds its last values. Show those messages then.
+  const [saved, setSaved] = useState<{ id: string; values: Partial<StateType> } | null>(null);
+  const historyEmpty =
+    !!threadId &&
+    !stream.isThreadLoading &&
+    !stream.isLoading &&
+    (stream.messages?.length ?? 0) === 0;
+  useEffect(() => {
+    if (!historyEmpty || !client || !threadId || saved?.id === threadId) return;
+    let alive = true;
+    client.threads
+      .get(threadId)
+      .then((t) => {
+        const values = (t?.values ?? {}) as Partial<StateType>;
+        if (alive) setSaved({ id: threadId, values: Array.isArray(values) ? {} : values });
+      })
+      .catch(() => alive && setSaved({ id: threadId, values: {} }));
+    return () => {
+      alive = false;
+    };
+  }, [historyEmpty, client, threadId, saved?.id]);
+  const restored =
+    historyEmpty && saved?.id === threadId && (saved.values.messages?.length ?? 0) > 0
+      ? saved.values
+      : null;
+
   const sendMessage = useCallback(
     (content: string) => {
       const newMessage: Message = { id: uuidv4(), type: "human", content };
+      // continuing a thread shown from its record: put the earlier messages back into the
+      // state first, so the agent keeps the conversation
+      const earlier = restored ? ((restored.messages ?? []) as Message[]) : [];
       stream.submit(
-        { messages: [newMessage] },
+        { messages: [...earlier, newMessage] },
         {
           optimisticValues: (prev) => ({
-            messages: [...(prev.messages ?? []), newMessage],
+            messages: [...(prev.messages?.length ? prev.messages : earlier), newMessage],
           }),
           config: { ...(activeAssistant?.config ?? {}), recursion_limit: 100 },
         }
@@ -76,7 +107,7 @@ export function useChat({
       // Update thread list immediately when sending a message
       onHistoryRevalidate?.();
     },
-    [stream, activeAssistant?.config, onHistoryRevalidate]
+    [stream, activeAssistant?.config, onHistoryRevalidate, restored]
   );
 
   const runSingleStep = useCallback(
@@ -155,12 +186,14 @@ export function useChat({
 
   return {
     stream,
-    todos: stream.values.todos ?? [],
-    files: stream.values.files ?? {},
+    todos: stream.values.todos ?? restored?.todos ?? [],
+    files: stream.values.files ?? restored?.files ?? {},
     email: stream.values.email,
     ui: stream.values.ui,
     setFiles,
-    messages: stream.messages,
+    messages: restored ? (restored.messages as Message[]) : stream.messages,
+    // true: the messages come from the thread record (no checkpoints): read-only view
+    restoredFromRecord: restored !== null,
     isLoading: stream.isLoading,
     error: stream.error,
     isThreadLoading: stream.isThreadLoading,

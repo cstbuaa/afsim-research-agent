@@ -82,6 +82,7 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
     sendMessage,
     stopStream,
     resumeInterrupt,
+    restoredFromRecord,
   } = useChatContext();
 
   const submitDisabled = isLoading || !assistant;
@@ -257,6 +258,12 @@ export const ChatInterface = React.memo<ChatInterfaceProps>(({ assistant }) => {
             </div>
           ) : (
             <>
+              {restoredFromRecord && (
+                <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  这个会话的运行记录（检查点）已丢失，下面是保存下来的消息。可以继续发送消息，
+                  之前的对话会先放回会话里。
+                </div>
+              )}
               {processedMessages.map((data, index) => {
                 const messageUi = ui?.filter(
                   (u: any) => u.metadata?.message_id === data.message.id
