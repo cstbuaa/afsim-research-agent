@@ -5,7 +5,7 @@ One format for both sources, so the browser has one player::
     {"format": "replay/1", "source": "afsim" | "2d", "title": str,
      "duration_s": float, "step_s": float,
      "frame": {"units": "m", "x": "east", "y": "north", "origin": [lat, lon] | null},
-     "platforms": [{"id", "label", "side", "icon"}],
+     "platforms": [{"id", "label", "side", "icon", "kind": "vehicle" | "munition"}],
      "samples": {id: [[t, x, y, speed, heading_deg], ...]},     # every step_s
      "states": {id: [[t, state], ...]},
      "actions": [[t, id, "start" | "done" | "fail", action, code?], ...],
@@ -34,6 +34,10 @@ from afsim_research_agent.replay.aer import Recording
 from afsim_research_agent.replay.geo import Local, ecef_to_geodetic
 
 FORMAT = "replay/1"
+# A weapon launched as its own platform (shell, missile) is a "munition": the recording names
+# it as the weapon of a fired / terminated message, and its speed is far above any ground
+# vehicle's. Munitions get no radar ring and do not anchor the local frame.
+MUNITION_SPEED_MPS = 60.0
 _STATE = re.compile(r"^IR_STATE\|([^|]+)\|([^|]+)\|([^\r\n|]+)", re.M)
 _ACT = re.compile(r"^IR_(ACT|DONE|FAIL)\|([^|]+)\|([^|]+)\|([^\r\n|]+)(?:\|([^\r\n]+))?", re.M)
 _KIND = {"ACT": "start", "DONE": "done", "FAIL": "fail"}
@@ -65,6 +69,7 @@ def from_aer(
     routes: list[tuple[float, int, list[tuple[float, float]]]] = []
     aux_states: dict[int, list[list[Any]]] = {}
     events: list[list[Any]] = []
+    weapons: set[int] = set()
     end = 0.0
     for name, msg in rec:
         t = float(msg.get("simTime") or 0.0)
@@ -108,10 +113,14 @@ def from_aer(
         elif name == "MsgSensorDetectionChange" and not msg.get("detected", True):
             events.append([t, "lost", msg["ownerIndex"], msg.get("targetIndex")])
         elif name == "MsgWeaponFired":
+            if isinstance(msg.get("weaponPlatformIndex"), int):
+                weapons.add(msg["weaponPlatformIndex"])
             events.append(
                 [t, "fire", msg.get("firingPlatformIndex"), msg.get("targetPlatformIndex")]
             )
         elif name == "MsgWeaponTerminated":
+            if isinstance(msg.get("weaponPlatformIndex"), int):
+                weapons.add(msg["weaponPlatformIndex"])
             result = str(msg.get("geometryResult") or msg.get("extendedResult") or "")
             kind = "hit" if "hit" in result.lower() or "kill" in result.lower() else "miss"
             events.append([t, kind, msg.get("firingPlatformIndex"), msg.get("targetPlatformIndex")])
@@ -120,8 +129,12 @@ def from_aer(
     names = {i: str(v.get("name") or f"p{i}") for i, v in info.items()}
     for i in track:
         names.setdefault(i, f"p{i}")
-    blue = [i for i in sorted(track) if str(info.get(i, {}).get("side", "")).lower() == "blue"]
-    first = (blue or sorted(track) or [None])[0]
+    for i, seq in track.items():
+        if any(v is not None and math.hypot(*v) > MUNITION_SPEED_MPS for _, _, v in seq):
+            weapons.add(i)
+    vehicles = [i for i in sorted(track) if i not in weapons]
+    blue = [i for i in vehicles if str(info.get(i, {}).get("side", "")).lower() == "blue"]
+    first = (blue or vehicles or sorted(track) or [None])[0]
     if first is None:
         raise ValueError("the recording has no entity states")
     lat0, lon0, _ = ecef_to_geodetic(*track[first][0][1])
@@ -183,6 +196,7 @@ def from_aer(
                 "label": pid[i],
                 "side": str(info.get(i, {}).get("side") or "unknown").lower(),
                 "icon": info.get(i, {}).get("icon") or "",
+                "kind": "munition" if i in weapons else "vehicle",
             }
             for i in sorted(track)
         ],
@@ -274,7 +288,10 @@ def from_console(
             "y": "north",
             "origin": [lat0, lon0] if origin else None,
         },
-        "platforms": [{"id": p, "label": p, "side": s, "icon": ""} for p, s in sides.items()],
+        "platforms": [
+            {"id": p, "label": p, "side": s, "icon": "", "kind": "vehicle"}
+            for p, s in sides.items()
+        ],
         "samples": samples,
         "states": states,
         "actions": actions,
@@ -334,6 +351,7 @@ def from_sim(result: Any, binding: Any = None, *, title: str = "") -> dict[str, 
                 "label": p,
                 "side": sides.get(p, "blue" if p in states else "red"),
                 "icon": "",
+                "kind": "vehicle",
             }
             for p in platforms
         ],

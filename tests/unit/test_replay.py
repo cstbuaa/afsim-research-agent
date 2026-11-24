@@ -207,6 +207,29 @@ def test_replay_from_recording_dead_reckons_in_local_metres() -> None:
     assert r["sensors"] == {"car #1": {"range_m": 6000}}
 
 
+def test_a_fast_platform_is_a_munition_without_a_radar_ring() -> None:
+    # a blue shell fired at 4 s: 300 m/s east, gone at 6 s
+    local = Local(45.0, -121.0)
+    east = [300 * c for c in local.e]
+    out = _recording()
+    out += _msg(
+        2,
+        bytes([0b100101])
+        + _base(4.0)
+        + struct.pack("<I", 3)
+        + _s("shell_1")
+        + _s("blue")
+        + b"\x01",
+    )
+    out += _state(4.0, 3, 45.0, -121.0, east)
+    out += _msg(7, bytes([0b10]) + _base(6.0) + struct.pack("<I", 3))
+    r = from_aer(Recording(out), labels={"blue_car": "car #1"}, sensor_range_m=6000)
+    kinds = {p["id"]: p["kind"] for p in r["platforms"]}
+    assert kinds == {"car #1": "vehicle", "red_1": "vehicle", "shell_1": "munition"}
+    assert r["sensors"] == {"car #1": {"range_m": 6000}}
+    assert r["samples"]["car #1"][0][:3] == [0.0, 0.0, 0.0]  # the frame is still the car's
+
+
 def test_states_and_actions_come_from_the_console_of_older_runs() -> None:
     console = "IR_STATE|0|blue_car|MOVE\nIR_ACT|2|blue_car|movement.follow_route\n"
     console += "IR_FAIL|3|blue_car|perception.select_nearest_target|FAILURE:NO_VALID_TRACK\n"

@@ -1,14 +1,17 @@
 "use client";
 
 // Plays a replay/1 (2D run or AFSIM .aer recording) on a canvas: vehicles with heading,
-// trails, routes, interface points, sensor range, detections / shots; state timeline and
-// verdicts below. Units: metres east (x) / north (y) of the own start.
+// trails, routes, interface points, sensor range, detections / shots, munitions in flight
+// (a small round marker with a tail, not a vehicle arrow); state timeline and verdicts below.
+// Units: metres east (x) / north (y) of the own start.
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pause, Play, SkipBack, SkipForward, Maximize2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Replay,
+  munitionAt,
+  munitionIds,
   sampleAt,
   sideColor,
   stateAt,
@@ -23,6 +26,8 @@ interface View {
 
 const SPEEDS = [0.5, 1, 2, 4, 8, 16, 32];
 const FLASH_S = 4;
+const MUNITION_TAIL_S = 2; // seconds of flight path drawn behind a munition
+const MUNITION_FILL = "#f59e0b";
 
 function bounds(replay: Replay): [number, number, number, number] {
   let x0 = Infinity,
@@ -56,16 +61,32 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(4);
   const [view, setView] = useState<View | null>(null);
-  const [layers, setLayers] = useState({ trails: true, sensors: true, routes: true, labels: true });
+  const [layers, setLayers] = useState({
+    trails: true,
+    sensors: true,
+    routes: true,
+    labels: true,
+    munitions: true,
+  });
   const [selected, setSelected] = useState<string | null>(null);
   const drag = useRef<{ x: number; y: number; v: View } | null>(null);
   const moved = useRef(false); // the user panned or zoomed: keep the view on resize
 
   const duration = Math.max(replay.duration_s || 0, 1);
-  const platforms = replay.platforms;
+  const allPlatforms = replay.platforms;
   const side = useMemo(
-    () => Object.fromEntries(platforms.map((p) => [p.id, p.side])),
-    [platforms]
+    () => Object.fromEntries(allPlatforms.map((p) => [p.id, p.side])),
+    [allPlatforms]
+  );
+  // munitions are drawn apart and left out of vehicle lists, distances and selection
+  const munitions = useMemo(() => munitionIds(replay), [replay]);
+  const platforms = useMemo(
+    () => allPlatforms.filter((p) => !munitions.has(p.id)),
+    [allPlatforms, munitions]
+  );
+  const munitionList = useMemo(
+    () => allPlatforms.filter((p) => munitions.has(p.id)),
+    [allPlatforms, munitions]
   );
 
   const fit = useCallback(() => {
@@ -204,6 +225,7 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
     // sensors
     if (layers.sensors) {
       for (const [id, s] of Object.entries(replay.sensors)) {
+        if (munitions.has(id)) continue;
         const now = sampleAt(replay.samples[id], t);
         if (!now || !s.range_m) continue;
         ctx.strokeStyle = "#2563eb55";
@@ -297,13 +319,49 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
       }
     }
 
+    // munitions in flight: amber dot with a short tail in the shooter's side colour
+    if (layers.munitions) {
+      for (const p of munitionList) {
+        const tr = replay.samples[p.id];
+        const s = munitionAt(tr, t, replay.step_s || 1);
+        if (!s || !tr) continue;
+        const x = X(s[1]);
+        const y = Y(s[2]);
+        ctx.strokeStyle = sideColor(p.side);
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        let started = false;
+        for (const q of tr) {
+          if (q[0] < t - MUNITION_TAIL_S) continue;
+          if (q[0] > t + 1e-6) break;
+          if (!started) {
+            ctx.moveTo(X(q[1]), Y(q[2]));
+            started = true;
+          } else ctx.lineTo(X(q[1]), Y(q[2]));
+        }
+        if (started) {
+          ctx.lineTo(x, y);
+          ctx.stroke();
+        }
+        ctx.setLineDash([]);
+        ctx.fillStyle = MUNITION_FILL;
+        ctx.strokeStyle = sideColor(p.side);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+
     // scale bar
     const bar = niceStep(120 / view.scale);
     ctx.fillStyle = ink;
     ctx.fillRect(size.w - 20 - bar * view.scale, 16, bar * view.scale, 3);
     ctx.font = "11px var(--font-family-base, sans-serif)";
     ctx.fillText(bar >= 1000 ? `${bar / 1000} km` : `${bar} m`, size.w - 20 - bar * view.scale, 32);
-  }, [replay, view, size, t, layers, selected, platforms, side, lastAction]);
+  }, [replay, view, size, t, layers, selected, platforms, munitions, munitionList, side, lastAction]);
 
   // interaction
   const onWheel = (e: React.WheelEvent) => {
@@ -440,6 +498,7 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
             ["routes", "路线/点"],
             ["sensors", "雷达范围"],
             ["labels", "标注"],
+            ["munitions", "弹药"],
           ] as const
         ).map(([k, label]) => (
           <label key={k} className="flex items-center gap-1">
@@ -451,6 +510,17 @@ export function ReplayPlayer({ replay }: { replay: Replay }) {
             {label}
           </label>
         ))}
+        <span className="ml-1 flex items-center gap-2 text-muted-foreground" aria-label="图例">
+          <span>▲ 车辆</span>
+          <span className="flex items-center gap-1">
+            <span
+              className="inline-block h-2 w-2 rounded-full border border-slate-500"
+              style={{ background: "#f59e0b" }}
+            />
+            弹药
+          </span>
+          {munitionList.length > 0 && <span>（共 {munitionList.length} 发）</span>}
+        </span>
       </div>
 
       <input

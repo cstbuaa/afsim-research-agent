@@ -14,6 +14,7 @@ export interface ReplayPlatform {
   label: string;
   side: string;
   icon?: string;
+  kind?: "vehicle" | "munition"; // munition: a weapon platform (shell, missile) in flight
 }
 
 export interface Verdict {
@@ -119,6 +120,32 @@ export function sampleAt(track: number[][] | undefined, t: number): number[] | n
     else hi = mid - 1;
   }
   return track[lo];
+}
+
+// Ground vehicles stay well below this; shells and missiles are far above it.
+export const MUNITION_SPEED_MPS = 60;
+
+/** Ids of munition platforms: marked by the replay builder, or (replays built before the
+ * mark) a platform whose speed ever exceeds MUNITION_SPEED_MPS. */
+export function munitionIds(replay: Replay): Set<string> {
+  const out = new Set<string>();
+  for (const p of replay.platforms) {
+    const fast = (replay.samples[p.id] || []).some((s) => (s[3] || 0) > MUNITION_SPEED_MPS);
+    if (p.kind === "munition" || (p.kind === undefined && fast)) out.add(p.id);
+  }
+  return out;
+}
+
+/** A munition's sample at t, or null once it has ended (it does not stay on the map). */
+export function munitionAt(
+  track: number[][] | undefined,
+  t: number,
+  stepS: number
+): number[] | null {
+  const s = sampleAt(track, t);
+  if (!s || !track) return null;
+  const last = track[track.length - 1];
+  return t > last[0] + Math.max(stepS, 0.5) + 1e-6 ? null : s;
 }
 
 export function stateAt(seq: [number, string][] | undefined, t: number): string {
