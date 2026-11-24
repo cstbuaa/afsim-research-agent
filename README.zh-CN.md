@@ -29,12 +29,7 @@
 | 工作台 | 可用；LangGraph 智能体 + 网页前端，人工确认，回放面板 |
 | 小模型后训练 | 数据生成和 SFT 已完成（Qwen3-8B QLoRA）；GRPO 奖励函数已写好，尚未训练 |
 
-部分结果（详见 `docs/handoff/`）：
 
-- 编队类需求，骨架起草对比从零起草：AFSIM 通过 5/10 对 0/10。
-- 补充多车交战与通信模型后，通过二维检查的模型在 AFSIM 中的通过率为 86%（之前为 60%）。
-- 通用大模型驱动修复循环，在 100 份真实失败稿件上：L1 未通过的稿件中 84.8% 修到 L1 通过；完全修好的稿件 AFSIM 通过 12/14。
-- SFT 修复模型在留出的注入错误上：修改步修好率 0.3% → 91.1%（注入错误较模板化，另用真实失败稿件测试集评估泛化）。
 
 ## 目录结构
 
@@ -179,9 +174,7 @@ python -m afsim_research_agent.falcon fix <模型包> --max-steps 30 --with-l3  
 | 真实稿件评估 | `training/realeval.py` | 修复循环在真实失败稿件上运行，可选 AFSIM 闭环 |
 | 强化学习奖励 | `training/reward.py` | GRPO 轨迹奖励（草稿）：修复结果、势函数进展、留出想定、绕过 / 无效 / 只看不改惩罚、需求忠实度闸门 |
 
-## 早期版本：IR 1.0 与 Falcon v1
 
-`ir/`（IR 1.0、`behavior_spec.yaml`、联合仿真协议 `tbe-step/1`、`integrations/` 中的 C++ 引擎宿主骨架）和 `falcon/` v1（`draft`、`confirm`、`status`）是早期的接口。它们仍保留并有测试，但新的工作使用 Falcon v3 和 IR 2.0。
 
 ## 测试
 
