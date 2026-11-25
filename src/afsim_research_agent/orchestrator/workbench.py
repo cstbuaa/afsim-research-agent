@@ -8,7 +8,15 @@ Routes (local browser only; the frontend proxies ``/workbench/*`` to this server
 - ``GET /workbench/replay?id=<id>`` — one replay as ``replay/1`` JSON
   (:mod:`afsim_research_agent.replay.build`);
 - ``GET /workbench/info`` — the orchestrator's model name, this server's process id and start
-  time (which server process answers, and with which model).
+  time (which server process answers, and with which model);
+- ``GET /workbench/scenarios`` — the scenario files the agent wrote (``*/scenarios/*.yaml``)
+  under the same roots, newest first: ``[{id, title, dir, size, mtime}]``;
+- ``POST /workbench/open_folder`` — body ``{"id": <id of a replay or a scenario>}``: opens the
+  folder that holds that file in the computer's own file manager and answers
+  ``{"opened": <absolute path>}``. The server runs on the user's machine beside AFSIM, so
+  this is the only way the browser can reach a local folder. Only a folder is ever opened,
+  never a file (a file would be handed to whatever program is registered for it), and only
+  inside the roots below.
 
 Replay roots: ``<data>/runs`` and the directories in ``WORKBENCH_REPLAY_ROOTS`` (``;``
 separated; e.g. local lab runs). An id is ``<root index>:<path relative to that root>``; a
@@ -61,6 +69,69 @@ def _resolve(rid: str, bases: list[Path]) -> Path:
     if not (path.suffix == ".aer" or path.name.endswith(".replay.json")):
         raise ValueError("not a replay")
     return path
+
+
+def _resolve_any(rid: str, bases: list[Path]) -> Path:
+    """The file an id names, under its root. Any suffix: scenarios as well as replays."""
+    index, _, rel = rid.partition(":")
+    if not index.isdigit() or int(index) >= len(bases) or not rel:
+        raise ValueError("bad id")
+    base = bases[int(index)].resolve()
+    path = (base / rel).resolve()
+    if base != path and base not in path.parents:
+        raise ValueError("path leaves its root")
+    if not path.exists():
+        raise ValueError("no such file")
+    return path
+
+
+def list_scenarios(bases: list[Path] | None = None, limit: int = 200) -> list[dict[str, Any]]:
+    """Scenario files the agent wrote (``<tactics>/scenarios/<name>.yaml``), newest first."""
+    bases = bases if bases is not None else roots()
+    found = []
+    for i, base in enumerate(bases):
+        if not base.is_dir():
+            continue
+        for pattern in ("*/scenarios/*.yaml", "*/scenarios/*.yml"):
+            for p in base.glob("**/" + pattern):
+                try:
+                    st = p.stat()
+                except OSError:
+                    continue
+                rel = p.relative_to(base).as_posix()
+                found.append(
+                    {
+                        "id": f"{i}:{rel}",
+                        "title": f"{p.parent.parent.name} / {p.name}",
+                        "dir": str(p.parent),
+                        "size": st.st_size,
+                        "mtime": st.st_mtime,
+                    }
+                )
+    found.sort(key=lambda r: r["mtime"], reverse=True)
+    return found[:limit]
+
+
+def _launch(folder: Path) -> None:
+    """Show a folder in the computer's own file manager (no shell, the path as an argument)."""
+    import subprocess
+    import sys
+
+    if sys.platform == "win32":
+        os.startfile(str(folder))  # type: ignore[attr-defined]  # noqa: S606
+    elif sys.platform == "darwin":
+        subprocess.run(["/usr/bin/open", str(folder)], check=False)
+    else:
+        subprocess.run(["xdg-open", str(folder)], check=False)
+
+
+def open_folder(rid: str, bases: list[Path] | None = None) -> Path:
+    """Open the folder holding the file ``rid`` names; returns the folder."""
+    bases = bases if bases is not None else roots()
+    path = _resolve_any(rid, bases)
+    folder = path if path.is_dir() else path.parent
+    _launch(folder)
+    return folder
 
 
 def list_replays(bases: list[Path] | None = None, limit: int = 300) -> list[dict[str, Any]]:
@@ -212,10 +283,29 @@ async def _info(request: Request) -> JSONResponse:
     return JSONResponse(server_info())
 
 
+async def _scenarios(request: Request) -> JSONResponse:
+    return JSONResponse(list_scenarios())
+
+
+async def _open_folder(request: Request) -> JSONResponse:
+    try:
+        body = await request.json()
+    except (ValueError, TypeError):
+        body = {}
+    rid = str((body or {}).get("id") or request.query_params.get("id") or "")
+    try:
+        folder = open_folder(rid)
+    except (ValueError, OSError) as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    return JSONResponse({"opened": str(folder)})
+
+
 app = Starlette(
     routes=[
         Route("/workbench/info", _info, methods=["GET"]),
         Route("/workbench/replays", _list, methods=["GET"]),
         Route("/workbench/replay", _get, methods=["GET"]),
+        Route("/workbench/scenarios", _scenarios, methods=["GET"]),
+        Route("/workbench/open_folder", _open_folder, methods=["POST"]),
     ]
 )

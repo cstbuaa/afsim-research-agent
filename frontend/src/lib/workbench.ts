@@ -81,6 +81,32 @@ export async function listReplays(): Promise<ReplayEntry[]> {
   return res.json();
 }
 
+export type ScenarioEntry = {
+  id: string;
+  title: string;
+  dir: string; // the folder on this computer, for the tooltip
+  size: number;
+  mtime: number;
+};
+
+export async function listScenarios(): Promise<ScenarioEntry[]> {
+  const res = await fetch("/workbench/scenarios", { cache: "no-store" });
+  if (!res.ok) throw new Error(`想定列表读取失败（${res.status}）`);
+  return res.json();
+}
+
+/** Ask the local server to show a file's folder in the file manager; returns the folder. */
+export async function openFolder(id: string): Promise<string> {
+  const res = await fetch("/workbench/open_folder", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error || `打开文件夹失败（${res.status}）`);
+  return data?.opened || "";
+}
+
 export async function loadReplay(id: string): Promise<Replay> {
   const res = await fetch(`/workbench/replay?id=${encodeURIComponent(id)}`, {
     cache: "no-store",

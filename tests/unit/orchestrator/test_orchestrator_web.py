@@ -130,3 +130,34 @@ def test_events_from_messages_and_interrupts() -> None:
     Intr.value = {"type": "ask_human", "question": "q", "options": ["a"]}
     assert normalize_interrupt(Intr())["kind"] == "ask_human"
     time.sleep(0)
+
+
+def test_a_scenario_list_and_opening_its_folder(tmp_path, monkeypatch) -> None:
+    from afsim_research_agent.orchestrator import workbench
+
+    base = tmp_path / "runs"
+    scn = base / "tactics_a" / "scenarios" / "approach.yaml"
+    scn.parent.mkdir(parents=True)
+    scn.write_text("meta: {}\n", encoding="utf-8")
+    (base / "tactics_a" / "notes.yaml").write_text("x: 1\n", encoding="utf-8")  # not a scenario
+
+    rows = workbench.list_scenarios([base])
+    assert [r["id"] for r in rows] == ["0:tactics_a/scenarios/approach.yaml"]
+    assert rows[0]["title"] == "tactics_a / approach.yaml"
+
+    opened: list[str] = []
+    monkeypatch.setattr(workbench, "_launch", lambda folder: opened.append(str(folder)))
+    folder = workbench.open_folder(rows[0]["id"], [base])
+    assert folder == scn.parent and opened == [str(scn.parent)]  # the folder, never the file
+
+
+def test_opening_a_folder_outside_the_roots_is_refused(tmp_path, monkeypatch) -> None:
+    from afsim_research_agent.orchestrator import workbench
+
+    base = tmp_path / "runs"
+    (base / "a").mkdir(parents=True)
+    (tmp_path / "secret").mkdir()
+    monkeypatch.setattr(workbench, "_launch", lambda folder: pytest.fail("must not launch"))
+    for rid in ("0:../secret", "9:a", "0:", "0:missing.yaml"):
+        with pytest.raises(ValueError):
+            workbench.open_folder(rid, [base])
